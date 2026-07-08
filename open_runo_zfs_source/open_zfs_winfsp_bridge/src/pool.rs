@@ -80,6 +80,13 @@ pub struct Pool<V: Vdev> {
 struct Dataset {
     /// このデータセットが保持する物理ストライプのインデックス列(論理順)
     stripes: Vec<u64>,
+    /// 論理サイズ(バイト単位)。`stripes.len() * chunk_bytes`(物理割当容量、
+    /// 常にストライプ境界の倍数)とは別に持つ。`grow_dataset`経由での明示的な
+    /// 拡張は割当容量と同じ値だけ増える一方、[`Pool::write_unaligned_growing`]
+    /// (WinFspマウントの`write`が使う)はバイト単位の正確な値を保持するため、
+    /// 4KB未満の小さいファイルでも実際の書き込みバイト数どおりのサイズが
+    /// 報告できる(常に割当容量に切り上げられていた以前の挙動より正確)。
+    logical_size: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -127,6 +134,13 @@ impl<V: Vdev> Pool<V> {
 
     fn chunk_bytes(&self) -> u64 {
         (self.vdev.num_data_disks() * self.vdev.chunk_size()) as u64
+    }
+
+    /// 1ストライプが表す論理バイト数(`chunk_size × num_data_disks`)。
+    /// [`Self::usage`]が返す(ストライプ単位の)容量を、バイト単位の値が
+    /// 必要な呼び出し側(`mount.rs`の`get_volume_info`等)向けに公開する。
+    pub fn stripe_bytes(&self) -> u64 {
+        self.chunk_bytes()
     }
 
     /// 空きストライプを1つ払い出し、参照カウント1で確保済みにする。
@@ -184,7 +198,7 @@ impl<V: Vdev> Pool<V> {
 
     pub fn dataset_size(&self, name: &str) -> BridgeResult<u64> {
         let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
-        Ok(ds.stripes.len() as u64 * self.chunk_bytes())
+        Ok(ds.logical_size)
     }
 
     /// データセットの割当容量を`additional_bytes`ぶん拡張する
@@ -209,7 +223,9 @@ impl<V: Vdev> Pool<V> {
             newly_allocated.push(self.claim_stripe()?);
         }
 
-        self.datasets.get_mut(name).unwrap().stripes.extend(newly_allocated);
+        let ds = self.datasets.get_mut(name).unwrap();
+        ds.stripes.extend(newly_allocated);
+        ds.logical_size += additional_bytes;
         Ok(())
     }
 
@@ -392,7 +408,11 @@ impl<V: Vdev> Pool<V> {
         for &stripe in &stripes {
             self.retain_stripe(stripe);
         }
-        self.datasets.insert(new_dataset_name.to_string(), Dataset { stripes });
+        // スナップショット自体は論理サイズを別途持たないため、クローン直後の
+        // 論理サイズは(元データセットと同様)割当ストライプ数からの計算値を使う。
+        let logical_size = stripes.len() as u64 * self.chunk_bytes();
+        self.datasets
+            .insert(new_dataset_name.to_string(), Dataset { stripes, logical_size });
         Ok(())
     }
 
@@ -493,6 +513,109 @@ impl<V: Vdev> Pool<V> {
         buffer[start..start + data.len()].copy_from_slice(data);
 
         self.write(name, aligned_offset, &buffer)
+    }
+
+    /// データセットの物理割当容量が`min_logical_size`バイトを賄えるよう、
+    /// 不足分だけストライプを追加確保する(既に足りていれば何もしない)。
+    /// 論理サイズは`min_logical_size`未満にはならないよう引き上げる
+    /// (縮む方向には変更しない。縮小は[`Self::set_dataset_size`]が担当)。
+    ///
+    /// 追加確保ぶんに加えて、最低1ストライプの空きをプールに残すようにする。
+    /// これは呼び出し側([`Self::write_unaligned_growing`])がこの直後に
+    /// [`Self::write_unaligned`]でその範囲を埋めるためで、[`Self::write`]の
+    /// CoW実装は「新しいストライプへ書いてから古いストライプを解放する」
+    /// 順序で動く(1ストライプぶんの作業領域を常に必要とする)ため、ここで
+    /// 空きを使い切ってしまうと直後の書き込みが失敗する。ZFSのプールが
+    /// 常にわずかな予備領域(slop space)を残すのと同じ考え方。
+    fn ensure_min_capacity(&mut self, name: &str, min_logical_size: u64) -> BridgeResult<()> {
+        let chunk_bytes = self.chunk_bytes();
+        let current_stripes = self.datasets.get(name).ok_or_else(|| not_found(name))?.stripes.len() as u64;
+        let required_stripes = min_logical_size.div_ceil(chunk_bytes);
+
+        if required_stripes > current_stripes {
+            let additional_stripes = required_stripes - current_stripes;
+            if additional_stripes + 1 > self.free_stripes.len() as u64 {
+                return Err(BridgeError::CapacityExceeded(format!(
+                    "プールの空き容量が不足しています(必要{additional_stripes}ストライプ+CoW作業領域1、空き{}ストライプ)",
+                    self.free_stripes.len()
+                )));
+            }
+            let mut newly_allocated = Vec::with_capacity(additional_stripes as usize);
+            for _ in 0..additional_stripes {
+                newly_allocated.push(self.claim_stripe()?);
+            }
+            self.datasets.get_mut(name).unwrap().stripes.extend(newly_allocated);
+        }
+
+        let ds = self.datasets.get_mut(name).unwrap();
+        ds.logical_size = ds.logical_size.max(min_logical_size);
+        Ok(())
+    }
+
+    /// [`Self::write_unaligned`]と同じ read-modify-write だが、書き込み範囲が
+    /// 現在の割当容量を超える場合は([`Self::write_unaligned`]のようにエラーに
+    /// せず)自動的に容量を拡張してから書き込む。WinFspマウント経由の書き込み
+    /// (`mount.rs`)は、通常のファイルシステムと同様「書き込めばファイルが
+    /// 自動的に伸びる」ことが期待されるため、こちらを使う。
+    ///
+    /// 明示的に`grow_dataset`で容量管理したいAPI利用者向けには、意図しない
+    /// 自動拡張が起きない[`Self::write_unaligned`]を引き続き使うこと。
+    pub fn write_unaligned_growing(&mut self, name: &str, offset: u64, data: &[u8]) -> BridgeResult<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let required_logical_size = offset + data.len() as u64;
+        self.ensure_min_capacity(name, required_logical_size)?;
+        self.write_unaligned(name, offset, data)
+    }
+
+    /// データセットの論理サイズを`new_size`ちょうどへ設定する(WinFspの
+    /// `set_file_size`/ファイル切り詰め用)。
+    ///
+    /// - 拡張の場合: 不足する物理容量を確保してから論理サイズを引き上げる
+    ///   (拡張された領域の中身はゼロ、通常のファイルシステムのスパースな
+    ///   拡張と同じ)。
+    /// - 縮小の場合: 論理サイズを引き下げ、不要になったストライプは
+    ///   プールの空き領域へ返却する(スナップショット等から参照されていれば
+    ///   参照カウントにより実際には解放されない)。
+    pub fn set_dataset_size(&mut self, name: &str, new_size: u64) -> BridgeResult<()> {
+        let current_size = self.dataset_size(name)?;
+        if new_size >= current_size {
+            return self.ensure_min_capacity(name, new_size);
+        }
+
+        let chunk_bytes = self.chunk_bytes();
+        let keep_stripes = new_size.div_ceil(chunk_bytes) as usize;
+        let removed = {
+            let ds = self.datasets.get_mut(name).ok_or_else(|| not_found(name))?;
+            ds.logical_size = new_size;
+            ds.stripes.split_off(keep_stripes)
+        };
+        for stripe in removed {
+            self.release_stripe(stripe);
+        }
+        Ok(())
+    }
+
+    /// データセットの名前を変更する(`new_name`が既に使われていればエラー)。
+    ///
+    /// 【既知の制約】`mount.rs`の`FileHandle`は名前を直接保持するため、
+    /// リネーム対象のデータセットを指す既存のオープンハンドルが他に残って
+    /// いる状態でリネームすると、そのハンドル経由の以後の操作(read/write等)
+    /// は古い名前を探して失敗する(WinFspの`FileContext`はハンドルを閉じるまで
+    /// 不変な設計のため)。ハンドルを開いたまま行うリネーム(他プロセスからの
+    /// 同時操作等)を正しく扱うには、名前ではなく不変なID(inode相当)で
+    /// データセットを参照するよう`FileHandle`を作り直す必要がある。
+    pub fn rename_dataset(&mut self, old_name: &str, new_name: &str) -> BridgeResult<()> {
+        if old_name == new_name {
+            return self.datasets.contains_key(old_name).then_some(()).ok_or_else(|| not_found(old_name));
+        }
+        if self.datasets.contains_key(new_name) {
+            return Err(BridgeError::AlreadyExists(format!("データセット'{new_name}'")));
+        }
+        let dataset = self.datasets.remove(old_name).ok_or_else(|| not_found(old_name))?;
+        self.datasets.insert(new_name.to_string(), dataset);
+        Ok(())
     }
 
     /// `[offset, offset + len)`を含む最小のストライプ境界範囲
