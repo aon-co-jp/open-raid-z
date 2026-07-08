@@ -12,6 +12,20 @@
 //! - ストライプ境界単位での粗い割り当て(ZFSのメタスラブ/SPAほど細かい
 //!   バイト単位のアロケータではない)
 //!
+//! ## 任意オフセットの読み書き([`Pool::read_unaligned`] / [`Pool::write_unaligned`])
+//!
+//! [`Pool::read`] / [`Pool::write`]はストライプ境界(`chunk_size ×
+//! num_data_disks`)に一致するオフセット・長さしか受け付けない
+//! (WinFspマウント層(`mount.rs`)がこの制約を抱えたままになっている
+//! 主因)。[`Pool::read_unaligned`] / [`Pool::write_unaligned`]は、
+//! 要求範囲を含む最小のストライプ境界範囲へ内部的に切り上げてから
+//! 既存の`read`/`write`へ委譲する read-modify-write 層であり、
+//! バイト単位の任意オフセット・任意長の読み書きを提供する。
+//! 書き込みは対象範囲全体を一度読み出してから書き戻すため、境界を
+//! はみ出さない未変更部分のバイトは保持される。内部で使う`write`が
+//! CoWで実装されているため、read-modify-write全体としてもCoW特性
+//! (書き込み失敗時に既存データが無傷)を保つ。
+//!
 //! ## コピーオンライト(CoW)
 //!
 //! `Dataset.stripes`は「論理ストライプ番号 -> 物理ストライプ番号」の間接参照
@@ -445,5 +459,59 @@ impl<V: Vdev> Pool<V> {
             out.extend_from_slice(&self.vdev.read_stripe(phys_stripe)?);
         }
         Ok(out)
+    }
+
+    /// [`Self::read`]と同じ内容を、ストライプ境界に揃っていない任意の
+    /// `offset`/`len`で読み出す。
+    ///
+    /// 要求範囲を含む最小のストライプ境界範囲を計算して[`Self::read`]で
+    /// まとめて読み出し、実際に要求された部分だけを切り出して返す
+    /// (境界を跨ぐ場合は複数ストライプにまたがって読み出す)。
+    pub fn read_unaligned(&mut self, name: &str, offset: u64, len: u64) -> BridgeResult<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let chunk_bytes = self.chunk_bytes();
+        let (aligned_offset, aligned_len) = Self::align_range(chunk_bytes, offset, len);
+
+        let buffer = self.read(name, aligned_offset, aligned_len)?;
+        let start = (offset - aligned_offset) as usize;
+        Ok(buffer[start..start + len as usize].to_vec())
+    }
+
+    /// [`Self::write`]と同じ内容を、ストライプ境界に揃っていない任意の
+    /// `offset`/`data.len()`で書き込む(read-modify-write)。
+    ///
+    /// 1. 要求範囲を含む最小のストライプ境界範囲を[`Self::read`]で読み出す
+    ///    (境界からはみ出す部分の既存バイトを保持するため)。
+    /// 2. 読み出したバッファの該当部分を`data`で上書きする。
+    /// 3. バッファ全体を[`Self::write`]でストライプ境界単位で書き戻す
+    ///    ([`Self::write`]自体がCoWで実装されているため、この関数全体としても
+    ///    「書き込み失敗時は既存データが無傷」というCoW特性を保つ)。
+    ///
+    /// 対象範囲がデータセットの割当容量([`Self::grow_dataset`]で確保済みの
+    /// 範囲)を超える場合は、[`Self::read`]/[`Self::write`]と同様にエラーを
+    /// 返す(暗黙の自動拡張は行わない)。
+    pub fn write_unaligned(&mut self, name: &str, offset: u64, data: &[u8]) -> BridgeResult<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let chunk_bytes = self.chunk_bytes();
+        let (aligned_offset, aligned_len) = Self::align_range(chunk_bytes, offset, data.len() as u64);
+
+        let mut buffer = self.read(name, aligned_offset, aligned_len)?;
+        let start = (offset - aligned_offset) as usize;
+        buffer[start..start + data.len()].copy_from_slice(data);
+
+        self.write(name, aligned_offset, &buffer)
+    }
+
+    /// `[offset, offset + len)`を含む最小のストライプ境界範囲
+    /// `[aligned_offset, aligned_offset + aligned_len)`を計算する。
+    fn align_range(chunk_bytes: u64, offset: u64, len: u64) -> (u64, u64) {
+        let aligned_offset = (offset / chunk_bytes) * chunk_bytes;
+        let end = offset + len;
+        let aligned_end = end.div_ceil(chunk_bytes) * chunk_bytes;
+        (aligned_offset, aligned_end - aligned_offset)
     }
 }

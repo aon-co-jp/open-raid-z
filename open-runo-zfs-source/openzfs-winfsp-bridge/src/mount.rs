@@ -9,12 +9,12 @@
 //!   (ディレクトリ階層・ファイル単位でのcreate/delete/rename は未対応。
 //!   データセットの追加/削除自体は[`Pool::create_dataset`]/
 //!   [`Pool::destroy_dataset`]をマウント外から呼ぶ運用を想定)。
-//! - 読み書きは、`Pool::read`/`Pool::write`がストライプ境界単位でしか
-//!   受け付けないため、オフセット・長さともデータセットのチャンク境界
-//!   (`chunk_size × num_data_disks`)に一致するリクエストのみ成功する。
-//!   境界に合わないリクエストはエラーになる(将来、任意オフセットの
-//!   read-modify-write用バッファリング層を追加することで解消する予定の、
-//!   意図的に残した制約)。
+//! - 読み書きは[`Pool::read_unaligned`]/[`Pool::write_unaligned`]
+//!   (read-modify-write層)経由で行うため、バイト単位の任意オフセット・
+//!   任意長のリクエストを受け付ける(以前の版はストライプ境界に一致する
+//!   リクエストしか受け付けなかった。詳細は`pool.rs`参照)。
+//!   データセットの割当容量([`Pool::grow_dataset`]で確保済みの範囲)を
+//!   超えるリクエストは引き続きエラーになる(暗黙の自動拡張は行わない)。
 //! - データセット名はそのままファイル名として使うため、Windowsのファイル名
 //!   として不正な文字(`\ / : * ? " < > |`)を含む名前は使えない
 //!   (ZFSの`pool/child`のような階層名はこの制約に抵触するため、この段階では
@@ -143,7 +143,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         }
         let len = buffer.len().min((dataset_size - offset) as usize) as u64;
         let data = pool
-            .read(name, offset, len)
+            .read_unaligned(name, offset, len)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         buffer[..data.len()].copy_from_slice(&data);
         Ok(data.len() as u32)
@@ -162,7 +162,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        pool.write(name, offset, buffer)
+        pool.write_unaligned(name, offset, buffer)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         self.fill_file_info(&pool, context, file_info)?;
         Ok(buffer.len() as u32)
