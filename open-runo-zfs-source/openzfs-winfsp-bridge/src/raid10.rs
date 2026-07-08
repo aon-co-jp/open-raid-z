@@ -11,15 +11,15 @@
 //! グローバルなストライプ番号をグループ数でラウンドロビンして
 //! 各グループへ委譲する、別レイヤーとして実装する。
 //!
-//! 【現状の制約】[`crate::pool::Pool`]は`RaidZVdev`に直接結合しており、
-//! 本`Raid10Vdev`はまだ`Pool`からは利用できない(将来的に`Pool`を
-//! vdevトレイトへ一般化すれば統合できる設計だが、既存の多数のテストに
-//! 影響する破壊的変更になるため、本パスでは見送った)。単体では
-//! 完全に動作し、書き込み・読み出し・障害耐性・resilverまで検証済み。
+//! [`crate::vdev::Vdev`]トレイトを実装しているため、[`crate::pool::Pool`]
+//! からも`RaidZVdev`と同じように利用できる(`Pool<Raid10Vdev<D>>`)。
+//! `Vdev::num_data_disks`は常に1を返す点に注意(1回の`write_stripe`は
+//! 担当グループ1組ぶん=`chunk_size`バイトのみを扱うため。集約的な
+//! 並列度を知りたい場合は[`Raid10Vdev::num_groups`]を使うこと)。
 
 use crate::block_device::BlockDevice;
 use crate::error::{BridgeError, BridgeResult};
-use crate::vdev::{RaidLevel, RaidZVdev};
+use crate::vdev::{RaidLevel, RaidZVdev, Vdev};
 
 pub struct Raid10Vdev<D: BlockDevice> {
     /// 各要素が1つのミラーグループ(`RaidLevel::Raid1`で構成した`RaidZVdev`)。
@@ -97,6 +97,25 @@ impl<D: BlockDevice> Raid10Vdev<D> {
 
 fn invalid_config(msg: &str) -> BridgeError {
     BridgeError::Io(std::io::Error::other(msg.to_string()))
+}
+
+impl<D: BlockDevice> Vdev for Raid10Vdev<D> {
+    /// 常に1(1回の`write_stripe`は担当グループ1組ぶん=`chunk_size`バイトのみを扱うため)。
+    fn num_data_disks(&self) -> usize {
+        1
+    }
+
+    fn chunk_size(&self) -> usize {
+        Raid10Vdev::chunk_size(self)
+    }
+
+    fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()> {
+        Raid10Vdev::write_stripe(self, stripe_index, data)
+    }
+
+    fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
+        Raid10Vdev::read_stripe(self, stripe_index)
+    }
 }
 
 #[cfg(test)]

@@ -44,13 +44,12 @@
 //! 複製しない)。クローンへの書き込みはCoW経由で新しいストライプへ分岐する
 //! ため、スナップショット・クローンいずれのデータも壊れない。
 
-use crate::block_device::BlockDevice;
 use crate::error::{BridgeError, BridgeResult};
-use crate::vdev::RaidZVdev;
+use crate::vdev::Vdev;
 use std::collections::HashMap;
 
-pub struct Pool<D: BlockDevice> {
-    vdev: RaidZVdev<D>,
+pub struct Pool<V: Vdev> {
+    vdev: V,
     total_stripes: u64,
     /// 空きストライプのインデックス集合(スタックとして扱う: popで払い出す)
     free_stripes: Vec<u64>,
@@ -88,9 +87,9 @@ fn not_found(name: &str) -> BridgeError {
     )))
 }
 
-impl<D: BlockDevice> Pool<D> {
+impl<V: Vdev> Pool<V> {
     /// `total_stripes`個のストライプ(=`vdev`の総容量)を持つプールを作成する。
-    pub fn new(vdev: RaidZVdev<D>, total_stripes: u64) -> Self {
+    pub fn new(vdev: V, total_stripes: u64) -> Self {
         let free_stripes = (0..total_stripes).rev().collect();
         Self {
             vdev,

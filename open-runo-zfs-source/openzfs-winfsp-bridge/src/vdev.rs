@@ -38,10 +38,11 @@ use zfs_accel_hlsl::raidz23_parity;
 /// 【Raid0(ストライプのみ)】パリティ無し(`parity_count=0`)。冗長性が
 /// 一切無いため、1台でも故障すると復旧不能(通常のRAID0と同じ)。
 ///
-/// 【Raid10は未対応】ストライプ+ミラーの入れ子構成はストライプ単位で
+/// 【Raid10は別レイヤー】ストライプ+ミラーの入れ子構成はストライプ単位で
 /// 全ディスクへ書く現在のモデルに乗らないため(各ストライプがミラー
-/// ペアのうち1組だけを使う構成が必要)、本vdevでは表現できない。
-/// 複数の`RaidZVdev`(各々`Raid1`)をラウンドロビンで束ねる別レイヤーが必要。
+/// ペアのうち1組だけを使う構成が必要)、本vdevの`RaidLevel`には含まれない。
+/// 複数の`RaidZVdev`(各々`Raid1`)をラウンドロビンで束ねる
+/// [`crate::raid10::Raid10Vdev`]として実装している。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RaidLevel {
     Raid0,
@@ -386,6 +387,35 @@ impl<D: BlockDevice> RaidZVdev<D> {
             report.corruptions_healed += healed.len();
         }
         Ok(report)
+    }
+}
+
+/// [`crate::pool::Pool`]がストライプ単位の読み書きに必要とする最小限の操作。
+/// [`RaidZVdev`]と[`crate::raid10::Raid10Vdev`]の両方がこれを実装することで、
+/// `Pool`はどちらの実装でも(RAID0/1/5/6/Z2/Z3でもRAID10でも)同じように
+/// 使えるようになる。
+pub trait Vdev {
+    fn num_data_disks(&self) -> usize;
+    fn chunk_size(&self) -> usize;
+    fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()>;
+    fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>>;
+}
+
+impl<D: BlockDevice> Vdev for RaidZVdev<D> {
+    fn num_data_disks(&self) -> usize {
+        RaidZVdev::num_data_disks(self)
+    }
+
+    fn chunk_size(&self) -> usize {
+        RaidZVdev::chunk_size(self)
+    }
+
+    fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()> {
+        RaidZVdev::write_stripe(self, stripe_index, data)
+    }
+
+    fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
+        RaidZVdev::read_stripe(self, stripe_index)
     }
 }
 
