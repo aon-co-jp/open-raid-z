@@ -18,6 +18,7 @@ pub mod error;
 pub mod exfat_emulation;
 pub mod fs_ops;
 pub mod id_mapping;
+pub mod partition;
 pub mod pool;
 pub mod raid10;
 pub mod vdev;

@@ -120,23 +120,25 @@ pub struct Raid10InitRequest {
     pub disk_count: u32,
     /// 1ミラーグループあたりの台数(通常は2)。
     pub mirror_width: u32,
+    pub dataset_name: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Raid10InitResult {
     pub accelerator: String,
     pub num_groups: usize,
-    /// プレビューとして実際に1ストライプぶん書き込み・読み出しを行い、
-    /// 内容が一致したことを確認できたかどうか。
-    pub round_trip_verified: bool,
+    pub total_stripes: u64,
+    pub used_stripes: u64,
+    pub free_stripes: u64,
+    pub dataset_size_bytes: u64,
 }
 
 /// RAID10(ストライプ+ミラー)のプレビュー。
 ///
-/// 【現状の制約】[`Pool`]はまだ`RaidZVdev`専用のため、RAID10は
-/// `Pool`を経由しない単体の[`Raid10Vdev`]として動作確認する
-/// (`raid10.rs`のモジュールドキュメント参照)。データセット容量計算などの
-/// `Pool`機能とはまだ統合されていない。
+/// [`Raid10Vdev`]は[`openzfs_winfsp_bridge::vdev::Vdev`]トレイトを実装して
+/// いるため、[`Pool`]は`RaidZVdev`と全く同じデータセットAPI
+/// (`create_dataset`/`grow_dataset`/`write`/`read`)でRAID10も扱える
+/// (`raid10.rs`のモジュールドキュメント参照)。
 pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, String> {
     let mirror_width = req.mirror_width as usize;
     if mirror_width < 2 {
@@ -163,21 +165,31 @@ pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, S
         devices.push(dev);
     }
 
-    let accelerator = zfs_accel_hlsl::detect_best_accelerator()
+    let accel_device = zfs_accel_hlsl::detect_best_accelerator().ok();
+    let accelerator = accel_device
+        .as_ref()
         .map(|a| format!("{:?}: {}", a.kind, a.adapter_description))
-        .unwrap_or_else(|e| format!("検出失敗: {e}"));
+        .unwrap_or_else(|| "検出失敗".to_string());
 
-    let mut vdev = Raid10Vdev::new(devices, mirror_width, CHUNK_SIZE)
+    let vdev = Raid10Vdev::new(devices, mirror_width, CHUNK_SIZE)
         .map_err(|e| format!("RAID10 vdevの構築に失敗しました: {e}"))?;
     let num_groups = vdev.num_groups();
 
-    let sample: Vec<u8> = (0..CHUNK_SIZE).map(|i| (i % 256) as u8).collect();
-    vdev.write_stripe(0, &sample)
-        .map_err(|e| format!("プレビュー書き込みに失敗しました: {e}"))?;
-    let read_back = vdev
-        .read_stripe(0)
-        .map_err(|e| format!("プレビュー読み出しに失敗しました: {e}"))?;
-    let round_trip_verified = read_back == sample;
+    // CoW書き込みには常に1ストライプ以上の空きが必要なため、プール容量を
+    // 丸ごとデータセットへ割り当てず、1ストライプぶんの余裕を残す。
+    let total_stripes = num_groups as u64 * STRIPES_PER_DISK;
+    let dataset_stripes = total_stripes.saturating_sub(1).max(1);
+
+    let mut pool = Pool::new(vdev, total_stripes);
+    pool.create_dataset(&req.dataset_name)
+        .map_err(|e| format!("データセットの作成に失敗しました: {e}"))?;
+    pool.grow_dataset(&req.dataset_name, dataset_stripes * CHUNK_SIZE as u64)
+        .map_err(|e| format!("データセットの容量確保に失敗しました: {e}"))?;
+
+    let usage = pool.usage();
+    let dataset_size_bytes = pool
+        .dataset_size(&req.dataset_name)
+        .map_err(|e| format!("データセットサイズの取得に失敗しました: {e}"))?;
 
     for path in scratch_paths {
         std::fs::remove_file(&path).ok();
@@ -186,7 +198,10 @@ pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, S
     Ok(Raid10InitResult {
         accelerator,
         num_groups,
-        round_trip_verified,
+        total_stripes: usage.total_stripes,
+        used_stripes: usage.used_stripes,
+        free_stripes: usage.free_stripes,
+        dataset_size_bytes,
     })
 }
 
@@ -266,14 +281,17 @@ mod tests {
     }
 
     #[test]
-    fn raid10_preview_round_trips_across_mirror_groups() {
+    fn raid10_preview_creates_dataset_via_pool() {
         let result = init_raid10_preview(Raid10InitRequest {
             disk_count: 4,
             mirror_width: 2,
+            dataset_name: "tank".to_string(),
         })
         .unwrap();
         assert_eq!(result.num_groups, 2);
-        assert!(result.round_trip_verified);
+        assert!(result.dataset_size_bytes > 0);
+        // CoW用に1ストライプぶんの空きを残しているはず。
+        assert_eq!(result.free_stripes, 1);
     }
 
     #[test]
@@ -281,6 +299,7 @@ mod tests {
         let err = init_raid10_preview(Raid10InitRequest {
             disk_count: 3,
             mirror_width: 2,
+            dataset_name: "tank".to_string(),
         })
         .unwrap_err();
         assert!(err.contains("倍数"));

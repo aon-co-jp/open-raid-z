@@ -21,7 +21,7 @@ fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
-fn build_pool(dir: &std::path::Path) -> Pool<FileBackedDevice> {
+fn build_pool(dir: &std::path::Path) -> Pool<RaidZVdev<FileBackedDevice>> {
     let devices: Vec<FileBackedDevice> = (0..6)
         .map(|i| {
             let path = dir.join(format!("disk{i}.img"));
