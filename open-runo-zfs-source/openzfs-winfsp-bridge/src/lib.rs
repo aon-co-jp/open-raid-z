@@ -13,6 +13,7 @@
 
 pub mod acl_emulation;
 pub mod block_device;
+pub mod checksum;
 pub mod error;
 pub mod fs_ops;
 pub mod id_mapping;

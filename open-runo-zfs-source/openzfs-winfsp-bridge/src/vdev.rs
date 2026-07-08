@@ -4,9 +4,17 @@
 //! ストライプ設計は単純化のため「1ストライプ内の1チャンクは必ず同じ1台の
 //! ディスクへ書く」固定割り当てとする(OpenZFSの実際のRAID-Zも同様の考え方)。
 //! パリティ計算は[`zfs_accel_hlsl::raidz23_parity`]に委譲する。
+//!
+//! ZFSの「全書き込みへのチェックサム付与+読み込み時検証+自己修復」も
+//! [`crate::checksum`]を使って実装している。読み込んだチャンクが実際には
+//! ディスク上で読めた(エラーにならなかった)場合でも、チェックサムが
+//! 記録済みの値と一致しなければ「サイレント破損(ビットロット)」として扱い、
+//! パリティから再構築した上で該当ディスクへ書き戻す(自己修復)。
 
 use crate::block_device::BlockDevice;
+use crate::checksum::{compute_checksum, Checksum};
 use crate::error::{BridgeError, BridgeResult};
+use std::collections::HashMap;
 use zfs_accel_hlsl::galois::GaloisTables;
 use zfs_accel_hlsl::raidz23_parity;
 
@@ -25,11 +33,22 @@ impl RaidLevel {
     }
 }
 
+/// [`RaidZVdev::scrub`]の結果サマリ。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScrubReport {
+    pub stripes_scanned: u64,
+    pub corruptions_healed: usize,
+}
+
 pub struct RaidZVdev<D: BlockDevice> {
     devices: Vec<D>,
     parity_count: usize,
     chunk_size: usize,
     gf: GaloisTables,
+    /// (ディスクインデックス, ストライプ番号) -> そのチャンクを書いた時点のチェックサム。
+    /// 本物のZFSはこれをブロックポインタ木としてディスク上に永続化するが、
+    /// 本層はメモリ上のテーブルとして保持する簡易実装。
+    checksums: HashMap<(usize, u64), Checksum>,
 }
 
 impl<D: BlockDevice> RaidZVdev<D> {
@@ -44,6 +63,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
             parity_count,
             chunk_size,
             gf: GaloisTables::new(),
+            checksums: HashMap::new(),
         }
     }
 
@@ -74,6 +94,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
     }
 
     /// 1ストライプ分のデータ(`num_data_disks() * chunk_size`バイト)を書き込む。
+    /// 書き込んだ各チャンク(データ・パリティ双方)のチェックサムも記録する。
     pub fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()> {
         let num_data = self.num_data_disks();
         assert_eq!(
@@ -88,16 +109,30 @@ impl<D: BlockDevice> RaidZVdev<D> {
 
         for (i, chunk) in chunks.iter().enumerate() {
             self.devices[i].write_at(offset, chunk)?;
+            self.checksums.insert((i, stripe_index), compute_checksum(chunk));
         }
         for (i, par) in parity.iter().enumerate() {
-            self.devices[num_data + i].write_at(offset, par)?;
+            let disk_idx = num_data + i;
+            self.devices[disk_idx].write_at(offset, par)?;
+            self.checksums.insert((disk_idx, stripe_index), compute_checksum(par));
         }
         Ok(())
     }
 
-    /// 1ストライプ分のデータを読み出す。読めないディスクが`parity_count`台以内
-    /// なら、パリティから自動的に復旧して返す。
+    /// 1ストライプ分のデータを読み出す。読めない、またはチェックサムが
+    /// 一致しない(サイレント破損)ディスクが`parity_count`台以内なら、
+    /// パリティから自動的に復旧して返す(破損していたディスクへは
+    /// 復旧結果を書き戻して自己修復する)。
     pub fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
+        self.read_stripe_forcing_missing(stripe_index, &[]).map(|(data, _)| data)
+    }
+
+    /// [`Self::read_stripe`]と同じだが、実際に検知・修復した破損ディスクの
+    /// インデックス一覧も返す([`Self::scrub`]用)。
+    pub fn read_stripe_with_report(
+        &mut self,
+        stripe_index: u64,
+    ) -> BridgeResult<(Vec<u8>, Vec<usize>)> {
         self.read_stripe_forcing_missing(stripe_index, &[])
     }
 
@@ -109,16 +144,19 @@ impl<D: BlockDevice> RaidZVdev<D> {
     /// 誤って信頼しないようにするために必要。実運用でも「交換した新品ディスクは
     /// 読めるが中身は空(信用できない)」という状況は同じであり、この関数は
     /// それを正しくモデル化する。
+    ///
+    /// 戻り値の`Vec<usize>`は、チェックサム不一致(サイレント破損)を検知して
+    /// 実際に自己修復(書き戻し)したディスクのインデックス一覧。
     fn read_stripe_forcing_missing(
         &mut self,
         stripe_index: u64,
         force_missing: &[usize],
-    ) -> BridgeResult<Vec<u8>> {
+    ) -> BridgeResult<(Vec<u8>, Vec<usize>)> {
         let num_data = self.num_data_disks();
         let offset = stripe_index * self.chunk_size as u64;
         let chunk_size = self.chunk_size;
 
-        let reads: Vec<Option<Vec<u8>>> = self
+        let mut reads: Vec<Option<Vec<u8>>> = self
             .devices
             .iter_mut()
             .enumerate()
@@ -130,6 +168,20 @@ impl<D: BlockDevice> RaidZVdev<D> {
                 }
             })
             .collect();
+
+        // チェックサム検証: 読めたチャンクでも、記録済みチェックサムと
+        // 一致しなければ「サイレント破損」として欠損扱いに切り替える。
+        let mut corrupted: Vec<usize> = Vec::new();
+        for (i, read) in reads.iter_mut().enumerate() {
+            if let Some(data) = read {
+                if let Some(expected) = self.checksums.get(&(i, stripe_index)) {
+                    if compute_checksum(data) != *expected {
+                        corrupted.push(i);
+                        *read = None;
+                    }
+                }
+            }
+        }
 
         let missing: Vec<usize> = reads
             .iter()
@@ -143,7 +195,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
             for read in reads.iter().take(num_data) {
                 out.extend_from_slice(read.as_ref().unwrap());
             }
-            return Ok(out);
+            return Ok((out, Vec::new()));
         }
 
         if missing.len() > self.parity_count {
@@ -189,15 +241,47 @@ impl<D: BlockDevice> RaidZVdev<D> {
         for (i, d) in known {
             full[i] = d.to_vec();
         }
-        for (i, d) in recovered {
-            full[i] = d;
+        for (i, d) in &recovered {
+            full[*i] = d.clone();
+        }
+
+        // 自己修復: チェックサム不一致で欠損扱いにしたディスク(=物理的には
+        // まだオンライン)には、正しいデータを書き戻す。
+        // force_missingで意図的に欠損扱いにしただけのディスク(resilver対象等)は
+        // 対象外。データディスクは復旧結果をそのまま書き戻し、パリティ
+        // ディスクは(復旧済みの)全データから改めて計算し直して書き戻す。
+        let mut healed: Vec<usize> = Vec::new();
+        for (i, data) in &recovered {
+            if corrupted.contains(i) {
+                if self.devices[*i].write_at(offset, data).is_ok() {
+                    self.checksums.insert((*i, stripe_index), compute_checksum(data));
+                    healed.push(*i);
+                }
+            }
+        }
+        let corrupted_parity: Vec<usize> = corrupted
+            .iter()
+            .copied()
+            .filter(|&i| i >= num_data)
+            .collect();
+        if !corrupted_parity.is_empty() {
+            let full_refs: Vec<&[u8]> = full.iter().map(|c| c.as_slice()).collect();
+            let recomputed_parity = self.compute_parity(&full_refs);
+            for parity_disk in corrupted_parity {
+                let parity_idx = parity_disk - num_data;
+                let correct = &recomputed_parity[parity_idx];
+                if self.devices[parity_disk].write_at(offset, correct).is_ok() {
+                    self.checksums.insert((parity_disk, stripe_index), compute_checksum(correct));
+                    healed.push(parity_disk);
+                }
+            }
         }
 
         let mut out = Vec::with_capacity(num_data * chunk_size);
         for chunk in full {
             out.extend_from_slice(&chunk);
         }
-        Ok(out)
+        Ok((out, healed))
     }
 
     /// resilver(自動復旧): `target_index`のディスクを、他ディスク+パリティ
@@ -210,19 +294,34 @@ impl<D: BlockDevice> RaidZVdev<D> {
         for stripe in 0..num_stripes {
             // target_indexは(たとえ現在読めても)常に「欠損」として扱い、
             // 交換直後ディスクの古い/空の中身を誤って信頼しないようにする。
-            let data = self.read_stripe_forcing_missing(stripe, &[target_index])?;
+            let (data, _) = self.read_stripe_forcing_missing(stripe, &[target_index])?;
             let offset = stripe * chunk_size as u64;
 
             if target_index < num_data {
                 let chunk = &data[target_index * chunk_size..(target_index + 1) * chunk_size];
                 self.devices[target_index].write_at(offset, chunk)?;
+                self.checksums.insert((target_index, stripe), compute_checksum(chunk));
             } else {
                 let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
                 let parity = self.compute_parity(&chunks);
                 let parity_idx = target_index - num_data;
                 self.devices[target_index].write_at(offset, &parity[parity_idx])?;
+                self.checksums
+                    .insert((target_index, stripe), compute_checksum(&parity[parity_idx]));
             }
         }
         Ok(())
+    }
+
+    /// scrub: 全ストライプを読み込み、チェックサム不一致(サイレント破損)を
+    /// 検知・修復する。ZFSの`zpool scrub`に相当する。
+    pub fn scrub(&mut self, num_stripes: u64) -> BridgeResult<ScrubReport> {
+        let mut report = ScrubReport::default();
+        for stripe in 0..num_stripes {
+            let (_, healed) = self.read_stripe_with_report(stripe)?;
+            report.stripes_scanned += 1;
+            report.corruptions_healed += healed.len();
+        }
+        Ok(report)
     }
 }
