@@ -2,7 +2,7 @@ mod hardware;
 mod zpool_wizard;
 
 use hardware::{AcceleratorInfo, DiskInfo};
-use zpool_wizard::{ZpoolInitRequest, ZpoolInitResult};
+use zpool_wizard::{Raid10InitRequest, Raid10InitResult, ZpoolInitRequest, ZpoolInitResult};
 
 #[tauri::command]
 fn detect_accelerator() -> AcceleratorInfo {
@@ -19,6 +19,11 @@ fn init_zpool_preview(req: ZpoolInitRequest) -> Result<ZpoolInitResult, String> 
     zpool_wizard::init_zpool_preview(req)
 }
 
+#[tauri::command]
+fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, String> {
+    zpool_wizard::init_raid10_preview(req)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -26,7 +31,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_accelerator,
             list_physical_disks,
-            init_zpool_preview
+            init_zpool_preview,
+            init_raid10_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

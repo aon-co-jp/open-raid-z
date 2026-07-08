@@ -10,6 +10,7 @@
 
 use openzfs_winfsp_bridge::block_device::FileBackedDevice;
 use openzfs_winfsp_bridge::pool::Pool;
+use openzfs_winfsp_bridge::raid10::Raid10Vdev;
 use openzfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
 use serde::{Deserialize, Serialize};
 
@@ -114,6 +115,81 @@ pub fn init_zpool_preview(req: ZpoolInitRequest) -> Result<ZpoolInitResult, Stri
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Raid10InitRequest {
+    pub disk_count: u32,
+    /// 1ミラーグループあたりの台数(通常は2)。
+    pub mirror_width: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Raid10InitResult {
+    pub accelerator: String,
+    pub num_groups: usize,
+    /// プレビューとして実際に1ストライプぶん書き込み・読み出しを行い、
+    /// 内容が一致したことを確認できたかどうか。
+    pub round_trip_verified: bool,
+}
+
+/// RAID10(ストライプ+ミラー)のプレビュー。
+///
+/// 【現状の制約】[`Pool`]はまだ`RaidZVdev`専用のため、RAID10は
+/// `Pool`を経由しない単体の[`Raid10Vdev`]として動作確認する
+/// (`raid10.rs`のモジュールドキュメント参照)。データセット容量計算などの
+/// `Pool`機能とはまだ統合されていない。
+pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, String> {
+    let mirror_width = req.mirror_width as usize;
+    if mirror_width < 2 {
+        return Err("ミラー幅(mirror_width)は2台以上を指定してください".to_string());
+    }
+    if req.disk_count == 0 || req.disk_count as usize % mirror_width != 0 {
+        return Err(format!(
+            "ディスク台数({})はミラー幅({mirror_width})の倍数である必要があります",
+            req.disk_count
+        ));
+    }
+
+    let mut scratch_paths = Vec::with_capacity(req.disk_count as usize);
+    let mut devices = Vec::with_capacity(req.disk_count as usize);
+    for i in 0..req.disk_count {
+        let path = std::env::temp_dir().join(format!(
+            "openruno_installer_raid10_preview_{}_{}.img",
+            std::process::id(),
+            i
+        ));
+        let dev = FileBackedDevice::create_fixed_size(&path, CHUNK_SIZE as u64 * STRIPES_PER_DISK)
+            .map_err(|e| format!("スクラッチイメージの作成に失敗しました: {e}"))?;
+        scratch_paths.push(path);
+        devices.push(dev);
+    }
+
+    let accelerator = zfs_accel_hlsl::detect_best_accelerator()
+        .map(|a| format!("{:?}: {}", a.kind, a.adapter_description))
+        .unwrap_or_else(|e| format!("検出失敗: {e}"));
+
+    let mut vdev = Raid10Vdev::new(devices, mirror_width, CHUNK_SIZE)
+        .map_err(|e| format!("RAID10 vdevの構築に失敗しました: {e}"))?;
+    let num_groups = vdev.num_groups();
+
+    let sample: Vec<u8> = (0..CHUNK_SIZE).map(|i| (i % 256) as u8).collect();
+    vdev.write_stripe(0, &sample)
+        .map_err(|e| format!("プレビュー書き込みに失敗しました: {e}"))?;
+    let read_back = vdev
+        .read_stripe(0)
+        .map_err(|e| format!("プレビュー読み出しに失敗しました: {e}"))?;
+    let round_trip_verified = read_back == sample;
+
+    for path in scratch_paths {
+        std::fs::remove_file(&path).ok();
+    }
+
+    Ok(Raid10InitResult {
+        accelerator,
+        num_groups,
+        round_trip_verified,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +263,27 @@ mod tests {
         })
         .unwrap();
         assert!(result.dataset_size_bytes > 0);
+    }
+
+    #[test]
+    fn raid10_preview_round_trips_across_mirror_groups() {
+        let result = init_raid10_preview(Raid10InitRequest {
+            disk_count: 4,
+            mirror_width: 2,
+        })
+        .unwrap();
+        assert_eq!(result.num_groups, 2);
+        assert!(result.round_trip_verified);
+    }
+
+    #[test]
+    fn raid10_preview_rejects_disk_count_not_multiple_of_mirror_width() {
+        let err = init_raid10_preview(Raid10InitRequest {
+            disk_count: 3,
+            mirror_width: 2,
+        })
+        .unwrap_err();
+        assert!(err.contains("倍数"));
     }
 
     #[test]
