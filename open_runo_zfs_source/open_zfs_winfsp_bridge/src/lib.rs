@@ -18,6 +18,7 @@ pub mod error;
 pub mod exfat_emulation;
 pub mod fs_ops;
 pub mod id_mapping;
+pub mod migrate;
 #[cfg(feature = "winfsp_backend")]
 pub mod mount;
 pub mod partition;
