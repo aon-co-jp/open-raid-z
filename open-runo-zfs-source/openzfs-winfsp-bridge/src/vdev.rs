@@ -19,17 +19,50 @@ use zfs_accel_hlsl::device::AccelDevice;
 use zfs_accel_hlsl::galois::GaloisTables;
 use zfs_accel_hlsl::raidz23_parity;
 
+/// 対応するRAIDレベル。
+///
+/// 【Z2/Z3とRaid6/Raid5の関係】RAID6の二重パリティ(P/Q)とRAID-Z2は
+/// 数学的に同一(GF(2^8)上のReed-Solomon)であり、`Raid6`はそのまま`Z2`と
+/// 同じ`parity_count=2`として扱う(業界標準の呼び方を選びたいユーザ向けの
+/// 別名という位置づけ)。RAID5はRAID-Z1相当(単一XORパリティ、
+/// `parity_count=1`)。
+///
+/// 【Raid1(ミラー)の実装】N面ミラーは、実は「データディスク1台+パリティ
+/// N-1台」のRAID-Z計算の退化形と数学的に完全に一致する: データディスクが
+/// 1台だけの場合、P=D0(そのままXOR)、Q=D0*2^0=D0、R=D0*4^0=D0となり、
+/// 全パリティがデータの単純コピーになる(= ミラー)。そのため既存の
+/// P/Q/R計算・復旧ロジックをそのまま流用でき、専用実装は不要。
+/// `parity_count`はディスク総数に応じて動的に決まる(`devices.len() - 1`)ため、
+/// [`RaidZVdev::new`]側で特別扱いする。
+///
+/// 【Raid0(ストライプのみ)】パリティ無し(`parity_count=0`)。冗長性が
+/// 一切無いため、1台でも故障すると復旧不能(通常のRAID0と同じ)。
+///
+/// 【Raid10は未対応】ストライプ+ミラーの入れ子構成はストライプ単位で
+/// 全ディスクへ書く現在のモデルに乗らないため(各ストライプがミラー
+/// ペアのうち1組だけを使う構成が必要)、本vdevでは表現できない。
+/// 複数の`RaidZVdev`(各々`Raid1`)をラウンドロビンで束ねる別レイヤーが必要。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RaidLevel {
+    Raid0,
+    Raid1,
+    Raid5,
+    Raid6,
     Z2,
     Z3,
 }
 
 impl RaidLevel {
-    fn parity_count(self) -> usize {
+    /// `total_disks`(vdevに参加する全ディスク数)を渡すことで決まる
+    /// パリティディスク数。`Raid1`のみディスク総数に依存する
+    /// (残り全台をミラーコピーとして扱うため)。
+    pub fn parity_count(self, total_disks: usize) -> usize {
         match self {
-            RaidLevel::Z2 => 2,
+            RaidLevel::Raid0 => 0,
+            RaidLevel::Raid5 => 1,
+            RaidLevel::Raid6 | RaidLevel::Z2 => 2,
             RaidLevel::Z3 => 3,
+            RaidLevel::Raid1 => total_disks.saturating_sub(1),
         }
     }
 }
@@ -59,7 +92,7 @@ pub struct RaidZVdev<D: BlockDevice> {
 
 impl<D: BlockDevice> RaidZVdev<D> {
     pub fn new(devices: Vec<D>, level: RaidLevel, chunk_size: usize) -> Self {
-        let parity_count = level.parity_count();
+        let parity_count = level.parity_count(devices.len());
         assert!(
             devices.len() > parity_count,
             "データディスクが最低1台は必要です(devices.len() > parity_count)"
@@ -97,15 +130,29 @@ impl<D: BlockDevice> RaidZVdev<D> {
     }
 
     fn compute_parity(&self, chunks: &[&[u8]]) -> Vec<Vec<u8>> {
-        if self.parity_count == 2 {
-            let (p, q) = match &self.accel {
-                Some(accel) => raidz23_parity::compute_pq_accelerated(accel, chunks, &self.gf),
-                None => raidz23_parity::compute_pq(chunks, &self.gf),
-            };
-            vec![p, q]
-        } else {
-            let (p, q, r) = raidz23_parity::compute_pqr(chunks, &self.gf);
-            vec![p, q, r]
+        // ミラー(データディスク1台)の場合、P=Q=R=データそのもの(GF数式が
+        // 1台のみへ退化するため)なので、パリティ数に関わらず単純コピーで
+        // 済む(3台を超えるミラーコピーにも対応できる一般化)。
+        if self.num_data_disks() == 1 {
+            return (0..self.parity_count).map(|_| chunks[0].to_vec()).collect();
+        }
+        match self.parity_count {
+            0 => vec![],
+            1 => vec![raidz23_parity::compute_p(chunks)],
+            2 => {
+                let (p, q) = match &self.accel {
+                    Some(accel) => raidz23_parity::compute_pq_accelerated(accel, chunks, &self.gf),
+                    None => raidz23_parity::compute_pq(chunks, &self.gf),
+                };
+                vec![p, q]
+            }
+            3 => {
+                let (p, q, r) = raidz23_parity::compute_pqr(chunks, &self.gf);
+                vec![p, q, r]
+            }
+            other => unreachable!(
+                "parity_count={other}はミラー(データディスク1台)以外では未対応です"
+            ),
         }
     }
 
