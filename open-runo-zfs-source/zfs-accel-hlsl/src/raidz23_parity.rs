@@ -87,21 +87,31 @@ pub fn compute_pq_accelerated(
 ) -> (Vec<u8>, Vec<u8>) {
     match device.kind {
         crate::device::AccelKind::Npu | crate::device::AccelKind::Gpu => {
-            match compute_pq_gpu(data_disks) {
-                Ok(result) => result,
-                Err(e) => {
-                    tracing::warn!(
-                        "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
-                        device.adapter_description
-                    );
-                    compute_pq(data_disks, gf)
+            #[cfg(feature = "gpu")]
+            {
+                match compute_pq_gpu(data_disks) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pq(data_disks, gf)
+                    }
                 }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                // `gpu` feature無効ビルドではNpu/Gpuが検出されることは無いが
+                // 型として到達しうるためCPU実装へ委譲しておく。
+                compute_pq(data_disks, gf)
             }
         }
         crate::device::AccelKind::CpuFallback => compute_pq(data_disks, gf),
     }
 }
 
+#[cfg(feature = "gpu")]
 fn compute_pq_gpu(data_disks: &[&[u8]]) -> crate::compute::ComputeResult<(Vec<u8>, Vec<u8>)> {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");

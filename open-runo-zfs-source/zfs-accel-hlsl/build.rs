@@ -33,6 +33,13 @@ fn compile_shader(dxc: &str, src: &str, out_dir: &std::path::Path, out_name: &st
 }
 
 fn main() {
+    // `gpu` feature が無効な場合(CPUフォールバックのみ使う場合)は、
+    // dxc(DirectX Shader Compiler)が無い環境でもビルドできるよう
+    // シェーダのコンパイル自体をスキップする。
+    if std::env::var("CARGO_FEATURE_GPU").is_err() {
+        return;
+    }
+
     let dxc = find_dxc();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 

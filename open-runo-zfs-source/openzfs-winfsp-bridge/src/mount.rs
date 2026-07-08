@@ -3,20 +3,26 @@
 //! `fs_ops.rs`のトレイト骨組みを、実際にWindows上へドライブレターとして
 //! マウントできる`winfsp`クレート連携へ置き換えたもの。
 //!
-//! 【現状のスコープ(ひな型段階)】
-//! - ルート直下に固定ファイル`\pool.dat`が1つだけあるフラットな名前空間
-//!   (ディレクトリ階層・複数ファイル・削除/リネームは未対応)。
-//! - `\pool.dat`の実体は[`Pool`]の1データセットに対応する。
+//! 【現状のスコープ】
+//! - ルート直下に、[`Pool`]へ`create_dataset`済みの全データセットが、それぞれ
+//!   1つのファイル(`\<データセット名>`)として並ぶフラットな名前空間
+//!   (ディレクトリ階層・ファイル単位でのcreate/delete/rename は未対応。
+//!   データセットの追加/削除自体は[`Pool::create_dataset`]/
+//!   [`Pool::destroy_dataset`]をマウント外から呼ぶ運用を想定)。
 //! - 読み書きは、`Pool::read`/`Pool::write`がストライプ境界単位でしか
 //!   受け付けないため、オフセット・長さともデータセットのチャンク境界
 //!   (`chunk_size × num_data_disks`)に一致するリクエストのみ成功する。
 //!   境界に合わないリクエストはエラーになる(将来、任意オフセットの
 //!   read-modify-write用バッファリング層を追加することで解消する予定の、
 //!   意図的に残した制約)。
+//! - データセット名はそのままファイル名として使うため、Windowsのファイル名
+//!   として不正な文字(`\ / : * ? " < > |`)を含む名前は使えない
+//!   (ZFSの`pool/child`のような階層名はこの制約に抵触するため、この段階では
+//!   フラットな名前のデータセットのみを想定する)。
 //!
 //! これはあくまで「実際にマウントできる」ことを証明する最小のひな型であり、
-//! 本格的なファイルシステムとしての完成度(複数ファイル・ディレクトリ・
-//! ACL・任意オフセット書き込み等)は今後の拡張で高めていく。
+//! 本格的なファイルシステムとしての完成度(ディレクトリ階層・ACL・
+//! 任意オフセット書き込み等)は今後の拡張で高めていく。
 
 use crate::pool::Pool;
 use crate::vdev::Vdev;
@@ -32,38 +38,42 @@ use winfsp::filesystem::{
 use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
 use winfsp::{winfsp_init, FspError, FspInit, Result as FspResult};
 
-const DATA_FILE_NAME: &str = "\\pool.dat";
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+/// Windowsのファイル名として使えない文字。データセット名がこれらを
+/// 含む場合はマウント上に公開しない(`list_exposable_datasets`参照)。
+const INVALID_NAME_CHARS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
 
 /// マウントしたファイルシステム内で開かれているハンドルが指す対象。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileHandle {
     Root,
-    DataFile,
+    /// 対応するデータセット名。
+    DataFile(String),
 }
 
-/// `Pool<V>`を1つの固定ファイルとしてWinFsp経由でマウント可能にする
-/// ファイルシステムコンテキスト。
+/// `Pool<V>`が保持する全データセットを、ルート直下のファイル群として
+/// WinFsp経由でマウント可能にするファイルシステムコンテキスト。
 pub struct PoolFileSystem<V: Vdev> {
     pool: Mutex<Pool<V>>,
-    dataset_name: String,
-    dataset_size: u64,
     dir_buffer: DirBuffer,
 }
 
 impl<V: Vdev> PoolFileSystem<V> {
-    pub fn new(pool: Pool<V>, dataset_name: impl Into<String>) -> FspResult<Self> {
-        let dataset_name = dataset_name.into();
-        let dataset_size = pool
-            .dataset_size(&dataset_name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+    pub fn new(pool: Pool<V>) -> FspResult<Self> {
         Ok(Self {
             pool: Mutex::new(pool),
-            dataset_name,
-            dataset_size,
             dir_buffer: DirBuffer::new(),
         })
+    }
+
+    /// ファイル名として公開可能な(Windowsで不正な文字を含まない)
+    /// データセット名だけを、ソート済みで返す。
+    fn list_exposable_datasets(pool: &Pool<V>) -> Vec<String> {
+        pool.dataset_names()
+            .into_iter()
+            .filter(|name| !name.is_empty() && !name.contains(INVALID_NAME_CHARS))
+            .collect()
     }
 }
 
@@ -82,13 +92,14 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         _security_descriptor: Option<&mut [std::ffi::c_void]>,
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> FspResult<FileSecurity> {
-        match classify(file_name) {
+        let pool = self.pool.lock().expect("プールのロックに失敗しました");
+        match self.classify(&pool, file_name) {
             Some(FileHandle::Root) => Ok(FileSecurity {
                 reparse: false,
                 sz_security_descriptor: 0,
                 attributes: FILE_ATTRIBUTE_DIRECTORY,
             }),
-            Some(FileHandle::DataFile) => Ok(FileSecurity {
+            Some(FileHandle::DataFile(_)) => Ok(FileSecurity {
                 reparse: false,
                 sz_security_descriptor: 0,
                 attributes: FILE_ATTRIBUTE_NORMAL,
@@ -104,29 +115,35 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         _granted_access: u32,
         file_info: &mut OpenFileInfo,
     ) -> FspResult<Self::FileContext> {
-        let handle = classify(file_name).ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
-        self.fill_file_info(handle, file_info.as_mut());
+        let pool = self.pool.lock().expect("プールのロックに失敗しました");
+        let handle = self
+            .classify(&pool, file_name)
+            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+        self.fill_file_info(&pool, &handle, file_info.as_mut())?;
         Ok(handle)
     }
 
     fn close(&self, _context: Self::FileContext) {}
 
     fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> FspResult<()> {
-        self.fill_file_info(*context, file_info);
-        Ok(())
+        let pool = self.pool.lock().expect("プールのロックに失敗しました");
+        self.fill_file_info(&pool, context, file_info)
     }
 
     fn read(&self, context: &Self::FileContext, buffer: &mut [u8], offset: u64) -> FspResult<u32> {
-        if *context != FileHandle::DataFile {
+        let FileHandle::DataFile(name) = context else {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
-        }
-        if offset >= self.dataset_size {
+        };
+        let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+        let dataset_size = pool
+            .dataset_size(name)
+            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        if offset >= dataset_size {
             return Err(FspError::NTSTATUS(STATUS_END_OF_FILE.0));
         }
-        let len = buffer.len().min((self.dataset_size - offset) as usize) as u64;
-        let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+        let len = buffer.len().min((dataset_size - offset) as usize) as u64;
         let data = pool
-            .read(&self.dataset_name, offset, len)
+            .read(name, offset, len)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         buffer[..data.len()].copy_from_slice(&data);
         Ok(data.len() as u32)
@@ -141,14 +158,13 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         _constrained_io: bool,
         file_info: &mut FileInfo,
     ) -> FspResult<u32> {
-        if *context != FileHandle::DataFile {
+        let FileHandle::DataFile(name) = context else {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
-        }
+        };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        pool.write(&self.dataset_name, offset, buffer)
+        pool.write(name, offset, buffer)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
-        drop(pool);
-        self.fill_file_info(FileHandle::DataFile, file_info);
+        self.fill_file_info(&pool, context, file_info)?;
         Ok(buffer.len() as u32)
     }
 
@@ -162,16 +178,22 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         if *context != FileHandle::Root {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         }
+        let pool = self.pool.lock().expect("プールのロックに失敗しました");
+        let names = Self::list_exposable_datasets(&pool);
+
         let lock = self
             .dir_buffer
-            .acquire(marker.is_none(), Some(1))
+            .acquire(marker.is_none(), Some(names.len()))
             .map_err(|_| FspError::NTSTATUS(0xC00000E9u32 as i32))?;
 
         if marker.is_none() {
-            let mut info: DirInfo = DirInfo::new();
-            info.set_name(&DATA_FILE_NAME[1..]).ok();
-            self.fill_file_info(FileHandle::DataFile, info.file_info_mut());
-            lock.write(&mut info).ok();
+            for name in &names {
+                let mut info: DirInfo = DirInfo::new();
+                info.set_name(name).ok();
+                let handle = FileHandle::DataFile(name.clone());
+                self.fill_file_info(&pool, &handle, info.file_info_mut())?;
+                lock.write(&mut info).ok();
+            }
         }
         drop(lock);
         Ok(self.dir_buffer.read(marker, buffer))
@@ -180,9 +202,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
     fn get_volume_info(&self, out_volume_info: &mut VolumeInfo) -> FspResult<()> {
         let pool = self.pool.lock().expect("プールのロックに失敗しました");
         let usage = pool.usage();
-        // チャンクサイズが分からないため、ストライプ数をそのままバイト換算の
-        // 概算として使う(vdev側にchunk_size取得が無いため近似値)。
-        out_volume_info.total_size = self.dataset_size.max(usage.total_stripes);
+        out_volume_info.total_size = usage.total_stripes;
         out_volume_info.free_size = usage.free_stripes;
         out_volume_info.set_volume_label("OpenRuno");
         Ok(())
@@ -190,44 +210,59 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
 }
 
 impl<V: Vdev> PoolFileSystem<V> {
-    fn fill_file_info(&self, handle: FileHandle, file_info: &mut FileInfo) {
+    fn fill_file_info(
+        &self,
+        pool: &Pool<V>,
+        handle: &FileHandle,
+        file_info: &mut FileInfo,
+    ) -> FspResult<()> {
         *file_info = FileInfo::default();
         match handle {
             FileHandle::Root => {
                 file_info.file_attributes = FILE_ATTRIBUTE_DIRECTORY;
             }
-            FileHandle::DataFile => {
+            FileHandle::DataFile(name) => {
+                let size = pool
+                    .dataset_size(name)
+                    .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
                 file_info.file_attributes = FILE_ATTRIBUTE_NORMAL;
-                file_info.file_size = self.dataset_size;
-                file_info.allocation_size = self.dataset_size;
+                file_info.file_size = size;
+                file_info.allocation_size = size;
             }
+        }
+        Ok(())
+    }
+
+    /// `\`(ルート)または`\<データセット名>`をファイルハンドルへ分類する。
+    /// 存在しないデータセット名、または公開不可(不正文字を含む)な
+    /// データセット名は`None`を返す。
+    fn classify(&self, pool: &Pool<V>, file_name: &U16CStr) -> Option<FileHandle> {
+        if file_name == u16cstr!("\\") {
+            return Some(FileHandle::Root);
+        }
+        let name = file_name.to_string().ok()?;
+        let name = name.strip_prefix('\\')?;
+        if name.is_empty() || name.contains(INVALID_NAME_CHARS) {
+            return None;
+        }
+        if pool.dataset_names().iter().any(|d| d == name) {
+            Some(FileHandle::DataFile(name.to_string()))
+        } else {
+            None
         }
     }
 }
 
-fn classify(file_name: &U16CStr) -> Option<FileHandle> {
-    if file_name == u16cstr!("\\") {
-        Some(FileHandle::Root)
-    } else if file_name.to_string().ok()?.eq_ignore_ascii_case(DATA_FILE_NAME) {
-        Some(FileHandle::DataFile)
-    } else {
-        None
-    }
-}
-
-/// WinFspを初期化し、`pool`を`mount_point`(例: `"Z:"`)へ実際にマウントする。
-/// `FileSystemHost`を返すので、呼び出し側は不要になったら`drop`(または
-/// `unmount`)することでマウントを解除できる。
-pub fn mount_pool<V>(
-    pool: Pool<V>,
-    dataset_name: impl Into<String>,
-    mount_point: &str,
-) -> FspResult<FileSystemHost<PoolFileSystem<V>>>
+/// WinFspを初期化し、`pool`(が保持する全データセット)を`mount_point`
+/// (例: `"Z:"`)へ実際にマウントする。`FileSystemHost`を返すので、
+/// 呼び出し側は不要になったら`drop`(または`unmount`)することでマウントを
+/// 解除できる。
+pub fn mount_pool<V>(pool: Pool<V>, mount_point: &str) -> FspResult<FileSystemHost<PoolFileSystem<V>>>
 where
     V: Vdev + Send + Sync,
 {
     let _init: FspInit = winfsp_init()?;
-    let context = PoolFileSystem::new(pool, dataset_name)?;
+    let context = PoolFileSystem::new(pool)?;
 
     let mut volume_params = VolumeParams::new();
     volume_params
