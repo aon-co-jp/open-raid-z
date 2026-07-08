@@ -228,3 +228,61 @@ Windows実機(Rust 1.85以降、WinFsp SDKインストール済み)で
 5. (元からの課題)`openruno-installer`の実装確認、
    `feature/raid-z2-z3-scaffolding` → `main`へのPR作成、
    NTFS ACL⇔ZFS ACLのAD/SAM連携の実運用設計。
+
+---
+
+## 追記2: 任意オフセットread-modify-write層の追加(README「現状の制約」のもう1点を解消)
+
+前回セッションで洗い出した3つの実用性課題のうち、**「チャンク境界に揃った
+読み書きしかできない(任意オフセット不可)」**を解消した。これは`Pool`層
+(純粋なRust/CPUロジックで、Windows/WinFsp/dxc無しで完全にテスト可能)への
+追加なので、今回も土台のロジックを壊さずに実機無しで検証できている。
+
+### 変更内容
+
+- `pool.rs`に`Pool::read_unaligned` / `Pool::write_unaligned`を追加。
+  要求範囲を含む最小のストライプ境界範囲を計算し、既存の
+  `Pool::read`/`Pool::write`(ストライプ境界前提・CoW実装)へ委譲する
+  read-modify-write層。バイト単位の任意オフセット・任意長の読み書きを
+  提供し、書き込みは対象範囲を丸ごと読み出してから対象部分だけ書き換えて
+  書き戻すため、境界からはみ出す未変更バイトは保持される。
+- `mount.rs`の`read`/`write`トレイト実装を、`Pool::read`/`Pool::write`
+  (ストライプ境界必須)から`Pool::read_unaligned`/`Pool::write_unaligned`
+  へ配線し直した。これにより(実機で検証でき次第)WinFspマウント経由でも
+  任意オフセットの読み書きができるようになる想定。
+- `tests/unaligned_io.rs`を新規追加(5テスト、全てパス確認済み):
+  単一ストライプ内の非境界書き込み/読み出しの往復、複数ストライプに
+  またがる非境界書き込み、書き込み範囲の前後バイトが変化しないこと
+  (read-modify-writeの正しさ)、長さ0の呼び出し、割当容量超過時に
+  エラーになり既存データが無傷なままであること、をそれぞれ検証。
+- READMEの「主な機能」「現状の制約」「ビルド・テスト」節を、新しいfeature
+  構成(`gpu-accel`)と今回の変更に合わせて更新。
+
+### 検証状況
+
+`cargo test --no-default-features`で**全75テスト(既存70+新規5)が
+Windows/WinFsp/dxc無しでパス**することを確認済み
+(`openzfs-winfsp-bridge`側)。`zfs-accel-hlsl`単体は変更無し(20テスト
+引き続きパス)。
+
+**⚠️ `mount.rs`の変更(read/writeの配線変更)自体は、前回同様
+`winfsp-backend` feature配下であり、この作業環境ではコンパイルを
+一度も試せていない**。ロジック自体は単純な呼び出し先の差し替え
+(`pool.read(...)` → `pool.read_unaligned(...)`など、シグネチャは同一)
+であり、`pool.rs`側は完全にテスト済みなのでリスクは小さいと判断しているが、
+Windows実機での`cargo test --features winfsp-backend,gpu-accel`実行時に
+念のため確認すること。
+
+### 残る実用性課題(次回優先度の参考)
+
+1. **ディレクトリ階層・create/delete/rename未対応**(フラットな名前空間のまま)。
+   これは`mount.rs`(WinFsp API)に踏み込む変更が必須で、実機無しでは
+   検証できない領域。次にWindows実機での検証機会が来たタイミングで
+   着手するのが良い。
+2. Windows実機(Rust 1.85+, WinFsp SDK, dxc導入済み)での
+   `cargo test --features winfsp-backend,gpu-accel`実行(累積2回分の
+   `mount.rs`変更をまとめて検証できる)。
+3. GitHub Actionsへの`ubuntu-latest`向けCI追加(`cargo test
+   --no-default-features`、既に実現可能)。
+4. `openruno-installer`の実装確認、`feature/raid-z2-z3-scaffolding` →
+   `main`へのPR作成、NTFS ACL⇔ZFS ACLのAD/SAM連携の実運用設計。
