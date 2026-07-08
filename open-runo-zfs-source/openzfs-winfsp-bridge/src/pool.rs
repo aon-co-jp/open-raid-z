@@ -11,6 +11,22 @@
 //! - 1プール = 1vdevのみ対応(複数vdevをまたぐプールの容量拡張は未実装)
 //! - ストライプ境界単位での粗い割り当て(ZFSのメタスラブ/SPAほど細かい
 //!   バイト単位のアロケータではない)
+//!
+//! ## コピーオンライト(CoW)
+//!
+//! `Dataset.stripes`は「論理ストライプ番号 -> 物理ストライプ番号」の間接参照
+//! テーブルであり、これがそのままCoWの実装基盤になる。[`Pool::write`]は
+//! 既存の物理ストライプを上書きするのではなく、
+//!
+//! 1. 新しいデータを**空き**物理ストライプへ書き込み、
+//! 2. 書き込みが成功して初めて、論理ストライプ番号が指す物理ストライプ番号を
+//!    新しい方へ差し替え、
+//! 3. (スナップショット等の他参照が無ければ)古い物理ストライプを空き領域へ
+//!    返却する
+//!
+//! という順序で行う。書き込み中に電源断等でクラッシュしても、ステップ2の
+//! 参照切り替えが完了するまでは古いデータが指されたままなので、
+//! データが破壊されることはない(ZFSのCoWと同じ考え方)。
 
 use crate::block_device::BlockDevice;
 use crate::error::{BridgeError, BridgeResult};
@@ -122,7 +138,12 @@ impl<D: BlockDevice> Pool<D> {
         Ok(())
     }
 
-    /// データセットへストライプ境界単位で書き込む。
+    /// データセットへストライプ境界単位でコピーオンライト書き込みを行う。
+    ///
+    /// 論理ストライプ位置ごとに新しい空き物理ストライプへデータを書き、
+    /// 成功した場合のみそのストライプの参照先を新しい物理ストライプへ
+    /// 切り替える。既存の物理ストライプの中身は(参照が切り替わるまで)
+    /// 一切変更しない。
     pub fn write(&mut self, name: &str, logical_offset: u64, data: &[u8]) -> BridgeResult<()> {
         let chunk_bytes = self.chunk_bytes();
         assert_eq!(
@@ -139,22 +160,67 @@ impl<D: BlockDevice> Pool<D> {
         let start = (logical_offset / chunk_bytes) as usize;
         let count = (data.len() as u64 / chunk_bytes) as usize;
 
-        let physical_stripes: Vec<u64> = {
+        {
             let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
             if start + count > ds.stripes.len() {
                 return Err(BridgeError::Io(std::io::Error::other(format!(
                     "データセット'{name}'の割当容量を超える書き込みです(grow_datasetが必要)"
                 ))));
             }
-            ds.stripes[start..start + count].to_vec()
-        };
+        }
 
-        for (i, &phys_stripe) in physical_stripes.iter().enumerate() {
+        for i in 0..count {
+            let logical_idx = start + i;
             let chunk_start = i * chunk_bytes as usize;
             let chunk = &data[chunk_start..chunk_start + chunk_bytes as usize];
-            self.vdev.write_stripe(phys_stripe, chunk)?;
+
+            // 1. まず空き物理ストライプへ新データを書く(既存データには一切触れない)
+            let new_phys = self.free_stripes.pop().ok_or_else(|| {
+                BridgeError::Io(std::io::Error::other(
+                    "CoW書き込み用の空きストライプがプールにありません",
+                ))
+            })?;
+            if let Err(e) = self.vdev.write_stripe(new_phys, chunk) {
+                // 書き込みに失敗した場合は確保したストライプを空きに戻し、
+                // 参照テーブルには一切触れない(=古いデータは無傷のまま)
+                self.free_stripes.push(new_phys);
+                return Err(e);
+            }
+
+            // 2. 書き込み成功後にのみ、参照(論理->物理)を新ストライプへ切り替える
+            let old_phys = {
+                let ds = self.datasets.get_mut(name).unwrap();
+                let old = ds.stripes[logical_idx];
+                ds.stripes[logical_idx] = new_phys;
+                old
+            };
+
+            // 3. 古い物理ストライプは(他に参照者が無いため)空き領域へ返却する。
+            //    スナップショットを実装する際は、ここで「他に参照しているか」を
+            //    確認してから返却するかどうかを判断する形へ拡張する。
+            self.free_stripes.push(old_phys);
         }
         Ok(())
+    }
+
+    /// 物理ストライプ番号を直接指定して読み出す(CoWの検証・デバッグ用。
+    /// 通常のデータアクセスは`read`/`write`をデータセット経由で使うこと)。
+    pub fn read_physical_stripe(&mut self, physical_stripe: u64) -> BridgeResult<Vec<u8>> {
+        self.vdev.read_stripe(physical_stripe)
+    }
+
+    /// データセットの論理ストライプ番号が指す物理ストライプ番号を返す
+    /// (CoWの検証・デバッグ用)。
+    pub fn physical_stripe_for(&self, name: &str, logical_stripe: u64) -> BridgeResult<u64> {
+        let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
+        ds.stripes
+            .get(logical_stripe as usize)
+            .copied()
+            .ok_or_else(|| {
+                BridgeError::Io(std::io::Error::other(format!(
+                    "データセット'{name}'の論理ストライプ{logical_stripe}は未割当です"
+                )))
+            })
     }
 
     /// データセットからストライプ境界単位で読み込む。
