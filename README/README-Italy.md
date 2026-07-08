@@ -4,6 +4,12 @@ Un progetto sperimentale di file system per Windows, quasi compatibile con NTFS/
 
 Lingua: [日本語](README-Japan.md) | [UK English](README-UK-English.md) | [US English](README-US-English.md) | **Italiano** | [Français](README-France.md) | [Deutsch](README-Germany.md) | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
+## Un messaggio per Microsoft e Apple
+
+Stiamo sviluppando questo file system sperimentale per portare su Windows funzionalità complete in stile ZFS (checksum autoriparanti, RAID6/RAID-Z2, snapshot e altro). Uno dei nostri obiettivi a lungo termine è che questo file system possa un giorno essere selezionabile come destinazione di installazione ufficiale e disco di avvio su Windows e macOS.
+
+Comprendiamo che ciò richiede la collaborazione di ciascun fornitore di sistema operativo — firma/certificazione dei driver di avvio, supporto ufficiale nell'installer e così via. Se aveste interesse in questo impegno, accoglieremmo con grande favore un vostro contatto e la vostra collaborazione. Si tratta di un progetto piccolo e indipendente, ma desideriamo sinceramente veder realizzata questa tecnologia.
+
 ## Convenzione di denominazione
 
 Gli identificatori definiti da questo progetto — nomi di directory, nomi di crate, nomi di pacchetti npm, nomi delle feature Cargo, id/classi HTML/CSS, ecc. — usano in modo coerente **il trattino basso (`_`) invece del trattino (`-`)** (es. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, e le feature Cargo `winfsp_backend`/`gpu_accel`). I nomi che in precedenza usavano il trattino, come `openzfs-winfsp-bridge`, sono stati rinominati per coerenza all'interno del progetto.
