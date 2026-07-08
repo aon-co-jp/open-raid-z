@@ -34,16 +34,24 @@ Sont exclus de cette règle les éléments suivants, car ils suivent des spécif
 - **Compatibilité exFAT** : conversion des attributs de fichiers et des horodatages, prise en charge des fichiers/volumes de plus de 4 Go
 - **Accélération matérielle GPU/NPU** : le calcul de parité RAID-Z1/Z2 est réellement envoyé via DirectX 12 Compute + DirectML (repli automatique sur le CPU en l'absence de matériel)
 - **Conseiller de configuration façon Copilot** : recommande un niveau RAID selon la disposition des disques, l'accélérateur et le nombre de cœurs CPU (première version heuristique ; une ébauche de détection de LLM local est également en place). La logique réside dans `open_runo_installer_core`, indépendant de Tauri, et peut aussi être vérifiée avec `cargo test` sous Linux/macOS
-- **Montage réel via WinFsp (prototype)** : peut réellement être monté en tant que lettre de lecteur Windows. Chaque jeu de données du pool apparaît comme son propre fichier, avec prise en charge d'offsets et de longueurs arbitraires en octets pour la lecture et l'écriture (la hiérarchie de répertoires et create/delete/rename ne sont pas encore prises en charge — l'espace de noms reste plat)
+- **Montage réel via WinFsp** : peut réellement être monté en tant que lettre de lecteur Windows. Chaque jeu de données du pool apparaît comme son propre fichier, avec prise en charge d'offsets arbitraires en octets pour la lecture/écriture ainsi que la création/suppression/renommage/ajout/troncature de fichiers (l'espace de noms reste plat à la racine — les sous-répertoires ne sont pas encore pris en charge). Vérifié sur du matériel réel : lecture, écriture, création, suppression, renommage, ajout et troncature de fichiers via un lecteur réellement monté.
 - **Prise en charge multilingue** : l'installateur utilise le japonais par défaut avec un sélecteur de langue dans l'interface, modifiable même après l'installation
+
+## Capacité et limites de taille de fichier
+
+- La taille logique d'un jeu de données (fichier) est suivie de façon cohérente en `u64`, il n'existe donc pas de limite artificielle comme la barrière des 4 Go de FAT32 (le plafond théorique est de 2^64 octets). Les fichiers volumineux comme la vidéo ou les images conviennent tant qu'ils respectent les contraintes réelles ci-dessous.
+- La limite réelle est la **capacité libre du pool** — la somme de la capacité utilisable des disques connectés, moins la surcharge de redondance de chaque niveau RAID. Par exemple, avec RAID-Z2 (double parité), la limite effective correspond à peu près à la capacité combinée des disques de données.
+- Un seul appel de lecture/écriture WinFsp est plafonné à environ 4 Gio (`u32`) par l'API Windows elle-même, mais c'est la même contrainte que pour tout système de fichiers réel — le système d'exploitation/l'application fractionne automatiquement les transferts plus importants en plusieurs appels, ce n'est donc pas une limite pratique.
+- En raison du copy-on-write, chaque écriture (création, ajout ou écrasement) nécessite toujours au moins une bande libre disponible dans le pool (la même idée que le `slop space` de ZFS). Remplir le pool à 100 % de sa capacité signifie que même l'écrasement de données existantes échouera. En pratique, toujours laisser quelques pourcents du pool libres.
 
 ## Limitations actuelles (stade prototype)
 
-- Le montage WinFsp ne prend en charge qu'un espace de noms plat (chaque jeu de données du pool apparaît comme un fichier à la racine). Pas encore de hiérarchie de répertoires ni de create/delete/rename par fichier.
-- Les lectures/écritures passent par `Pool::read_unaligned`/`Pool::write_unaligned` (une couche read-modify-write), ce qui permet des offsets et longueurs arbitraires en octets. Les requêtes dépassant la capacité allouée d'un jeu de données (définie via `grow_dataset`) échouent toujours (aucune extension automatique implicite).
+- Le montage WinFsp ne prend en charge qu'un espace de noms plat à la racine. Les sous-répertoires ne sont pas pris en charge (create/delete/rename par fichier le sont).
+- Les lectures/écritures passent par `Pool::read_unaligned`/`Pool::write_unaligned_growing` (une couche read-modify-write) et prennent en charge des offsets/longueurs arbitraires en octets ; une écriture qui dépasse la taille actuelle agrandit automatiquement le fichier (voir « Capacité et limites de taille de fichier » ci-dessus pour la capacité et les considérations liées au PATH).
 - `Pool` prend en charge à la fois `RaidZVdev` et `Raid10Vdev`, mais l'intégration de RAID10 avec l'API de jeu de données reste superficielle à certains endroits.
 - Le code du montage réel WinFsp (`mount.rs`) ne peut pas être compilé avec une chaîne d'outils Rust antérieure à la 1.85, car le crate `winfsp` requiert la fonctionnalité Cargo `edition2024` (voir Compilation et tests ci-dessous).
 - `mount.rs` et l'implémentation GPU de `zfs_accel_hlsl` (fonctionnalité `gpu`) dépendent du crate `windows`, dont le contenu est entièrement vide sauf si la cible de compilation est réellement Windows. Ce code ne peut donc être compilé et testé que sur une véritable machine Windows (ou en compilation croisée vers une cible Windows) ; sous Linux/macOS, il ne compile qu'une fois ces fonctionnalités désactivées via `--no-default-features`.
+- Renommer (`rename`) un fichier alors qu'un autre descripteur ouvert le pointe encore peut rendre cet autre descripteur défaillant pour les opérations suivantes (`FileHandle` conserve le nom directement par conception — voir la documentation de `Pool::rename_dataset` pour plus de détails).
 
 ## Compilation et tests
 
@@ -62,6 +70,15 @@ La compilation avec les fonctionnalités par défaut (`winfsp_backend` + `gpu_ac
 - **Rust 1.85 ou supérieur** (la version dans laquelle `edition2024`, requise par le crate `winfsp`, a été stabilisée ; avec des chaînes d'outils plus anciennes, l'analyse du manifeste `Cargo.toml` échoue déjà).
 
 Il est également possible de désactiver WinFsp ou dxc séparément (ex. `--no-default-features --features gpu_accel` pour le GPU seul, sans WinFsp).
+
+**Remarque pour exécuter réellement les tests `winfsp_backend` (montage réel)** : le crate `winfsp` charge dynamiquement la DLL WinFsp (`winfsp-x64.dll`) via `LoadLibraryW`, qui ne recherche que dans le chemin de recherche DLL standard (le dossier de l'exécutable, `System32` et `PATH`). Dans les environnements où l'installateur WinFsp ne s'est pas ajouté au `PATH`, la compilation réussit sans problème (aucun en-tête du SDK WinFsp n'est nécessaire), mais l'exécution **échoue toujours au runtime** (erreur `WIN32(1285)` = `ERROR_DELAY_LOAD_FAILED`). Ajoutez le répertoire `bin` de WinFsp au `PATH` uniquement pour l'exécution des tests :
+
+```powershell
+$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+cargo test --features winfsp_backend,gpu_accel
+```
+
+Sans cela, `mount_pool` renvoie une `Err`, et le test la traite comme un problème dépendant de l'environnement, affichant un message de saut via `eprintln` puis se terminant tôt. **Sans `--nocapture`, ce saut s'affiche quand même comme `ok`, indiscernable d'un montage+lecture/écriture réellement réussi.** Toujours passer `--nocapture` lors de la vérification des tests de montage réel, et vérifier visuellement qu'aucun message de saut n'apparaît.
 
 ### Installateur (`open_runo_installer` / `open_runo_installer_core`)
 
