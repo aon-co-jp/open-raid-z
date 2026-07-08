@@ -17,6 +17,7 @@ pub mod checksum;
 pub mod error;
 pub mod fs_ops;
 pub mod id_mapping;
+pub mod pool;
 pub mod vdev;
 
 pub use error::BridgeError;
