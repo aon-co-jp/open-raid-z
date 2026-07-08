@@ -4,6 +4,12 @@ An experimental filesystem project for Windows that stays near-compatible with N
 
 Language: [日本語](README-Japan.md) | [UK English](README-UK-English.md) | **US English** | [Italiano](README-Italy.md) | [Français](README-France.md) | [Deutsch](README-Germany.md) | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
+## A note to Microsoft and Apple
+
+We are building this experimental filesystem to bring full ZFS-style capabilities (self-healing checksums, RAID6/RAID-Z2, snapshots, and more) to Windows. One of our long-term goals is for this filesystem to eventually be selectable as an official installation target and boot drive on Windows and macOS.
+
+We understand this requires cooperation from each OS vendor — boot-start driver signing/certification, official installer support, and so on. If you have any interest in this effort, we would greatly welcome your outreach and collaboration. This is a small, independent project, but we are genuinely committed to seeing this technology through.
+
 ## Naming convention
 
 Identifiers defined by this project itself — directory names, crate names, npm package names, Cargo feature names, HTML/CSS ids/classes, and so on — are consistently **underscore-separated (`_`) rather than hyphen-separated (`-`)** (e.g. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, and the Cargo features `winfsp_backend`/`gpu_accel`). Names that used to be hyphenated, such as `openzfs-winfsp-bridge`, were renamed for consistency within this project.

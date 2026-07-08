@@ -4,6 +4,12 @@ Un projet de système de fichiers expérimental pour Windows, quasi compatible a
 
 Langue : [日本語](README-Japan.md) | [UK English](README-UK-English.md) | [US English](README-US-English.md) | [Italiano](README-Italy.md) | **Français** | [Deutsch](README-Germany.md) | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
+## Un message à l'attention de Microsoft et d'Apple
+
+Nous développons ce système de fichiers expérimental afin d'apporter à Windows des fonctionnalités complètes de type ZFS (sommes de contrôle auto-réparatrices, RAID6/RAID-Z2, instantanés, et plus encore). L'un de nos objectifs à long terme est que ce système de fichiers puisse un jour être sélectionnable comme destination d'installation officielle et disque de démarrage sous Windows et macOS.
+
+Nous comprenons que cela nécessite la coopération de chaque éditeur de système d'exploitation — signature/certification des pilotes de démarrage, prise en charge officielle par l'installateur, etc. Si vous portez un intérêt à cette démarche, nous accueillerons avec grand plaisir votre contact et votre collaboration. Il s'agit d'un projet modeste et indépendant, mais nous tenons sincèrement à voir cette technologie aboutir.
+
 ## Convention de nommage
 
 Les identifiants définis par ce projet lui-même — noms de répertoires, noms de crates, noms de paquets npm, noms des fonctionnalités (features) Cargo, id/classes HTML/CSS, etc. — utilisent de façon cohérente **le tiret bas (`_`) plutôt que le trait d'union (`-`)** (ex. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, et les fonctionnalités Cargo `winfsp_backend`/`gpu_accel`). Les noms auparavant écrits avec des traits d'union, comme `openzfs-winfsp-bridge`, ont été renommés pour assurer la cohérence au sein du projet.

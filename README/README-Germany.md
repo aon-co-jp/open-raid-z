@@ -4,6 +4,12 @@ Ein experimentelles Dateisystemprojekt für Windows, das weitgehend kompatibel m
 
 Sprache: [日本語](README-Japan.md) | [UK English](README-UK-English.md) | [US English](README-US-English.md) | [Italiano](README-Italy.md) | [Français](README-France.md) | **Deutsch** | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
+## Ein Hinweis an Microsoft und Apple
+
+Wir entwickeln dieses experimentelle Dateisystem, um vollständige ZFS-artige Funktionen (selbstheilende Prüfsummen, RAID6/RAID-Z2, Snapshots und mehr) auf Windows zu bringen. Eines unserer langfristigen Ziele ist es, dass dieses Dateisystem eines Tages als offizielles Installationsziel und Startlaufwerk unter Windows und macOS auswählbar wird.
+
+Uns ist bewusst, dass dies die Mitwirkung der jeweiligen Betriebssystemhersteller erfordert – Signierung/Zertifizierung von Boot-Start-Treibern, offizielle Unterstützung im Installationsprogramm und Ähnliches. Sollten Sie an diesem Vorhaben interessiert sein, würden wir uns über eine Kontaktaufnahme und Zusammenarbeit sehr freuen. Es handelt sich um ein kleines, unabhängiges Projekt, doch wir sind aufrichtig entschlossen, diese Technologie zu verwirklichen.
+
 ## Namenskonvention
 
 Von diesem Projekt selbst definierte Bezeichner – Verzeichnisnamen, Crate-Namen, npm-Paketnamen, Cargo-Feature-Namen, HTML/CSS-IDs/Klassen usw. – verwenden einheitlich **den Unterstrich (`_`) anstelle des Bindestrichs (`-`)** (z. B. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core` sowie die Cargo-Features `winfsp_backend`/`gpu_accel`). Zuvor mit Bindestrichen geschriebene Namen wie `openzfs-winfsp-bridge` wurden aus Gründen der Konsistenz innerhalb des Projekts umbenannt.
