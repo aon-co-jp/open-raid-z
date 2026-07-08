@@ -1,0 +1,24 @@
+[workspace]
+
+[package]
+name = "zfs-accel-hlsl"
+version = "0.0.1"
+edition = "2021"
+description = "OpenRuno: ZFS向けNPU/GPUハードウェアアクセラレータ(DirectX 12 Compute + DirectML)"
+license = "MPL-2.0"
+
+[dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_AI_MachineLearning_DirectML",
+    "Win32_Foundation",
+] }
+thiserror = "1.0"
+tracing = "0.1"
+
+[lib]
+name = "zfs_accel_hlsl"
+crate-type = ["rlib"]

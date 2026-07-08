@@ -1,0 +1,125 @@
+//! NPU / GPU の有無を検出し、利用可能なアクセラレータを自動選択する。
+//!
+//! 優先順位: NPU (存在すれば) > GPU (存在すれば) > CPUフォールバック
+//!
+//! DirectMLはD3D12デバイスの上に構築されるため、NPU/GPUのどちらであっても
+//! 同一のDirectML Deviceインターフェースからディスパッチできる点が
+//! このアーキテクチャの利点です(コード分岐が最小限で済む)。
+
+use thiserror::Error;
+use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
+use windows::Win32::Graphics::Direct3D12::{D3D12CreateDevice, ID3D12Device};
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+};
+
+#[derive(Debug, Error)]
+pub enum DeviceError {
+    #[error("DirectX 12対応デバイスが見つかりません")]
+    NoD3D12Device,
+    #[error("DirectMLデバイス作成に失敗しました: {0}")]
+    DmlCreationFailed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccelKind {
+    Npu,
+    Gpu,
+    CpuFallback,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccelDevice {
+    pub kind: AccelKind,
+    pub adapter_description: String,
+}
+
+/// アダプタ名(DXGI_ADAPTER_DESC1.Description)にNPU的な識別子が
+/// 含まれるかを判定する。ベンダー依存のため既知の文字列との
+/// 部分一致で近似判定する。
+///
+/// 参考: Intel AI Boost, AMD XDNA (Ryzen AI), Qualcomm Hexagon NPU
+fn looks_like_npu(description: &str) -> bool {
+    const NPU_MARKERS: &[&str] = &["AI Boost", "XDNA", "Hexagon", "NPU"];
+    let lower = description.to_lowercase();
+    NPU_MARKERS
+        .iter()
+        .any(|marker| lower.contains(&marker.to_lowercase()))
+}
+
+fn adapter_description(adapter: &IDXGIAdapter1) -> windows::core::Result<(String, u32)> {
+    let desc = unsafe { adapter.GetDesc1()? };
+    let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+    let description = String::from_utf16_lossy(&desc.Description[..len]);
+    Ok((description, desc.Flags))
+}
+
+/// 指定アダプタ上にD3D12デバイスを実際に作成できるか検証する。
+fn can_create_d3d12_device(adapter: &IDXGIAdapter1) -> bool {
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, &mut device) }.is_ok()
+}
+
+/// システム上のアダプタを列挙し、NPU/GPUの優先順位で選択する。
+///
+/// DXGIFactory経由でアダプタを列挙し、ソフトウェアアダプタ(WARP等)を除外した上で、
+/// 名称にNPU的な識別子が含まれるものを最優先、それ以外はD3D12デバイス作成に
+/// 成功した最初のアダプタをGPUとして採用する。どちらも見つからない場合は
+/// CPUフォールバックを返す(安全側のデフォルト)。
+///
+/// DirectMLデバイス自体の生成(DMLCreateDevice)はNPU/GPUどちらも同一の
+/// D3D12デバイス上で動作するため、本関数ではアダプタ選定のみを行い、
+/// 実際のDirectMLデバイス生成は利用側(ディスパッチ時)に委ねる。
+pub fn detect_best_accelerator() -> Result<AccelDevice, DeviceError> {
+    let factory: IDXGIFactory1 =
+        unsafe { CreateDXGIFactory1() }.map_err(|_| DeviceError::NoD3D12Device)?;
+
+    let mut best_gpu: Option<AccelDevice> = None;
+
+    let mut index = 0u32;
+    loop {
+        let adapter = match unsafe { factory.EnumAdapters1(index) } {
+            Ok(adapter) => adapter,
+            Err(_) => break, // DXGI_ERROR_NOT_FOUND: 列挙終了
+        };
+        index += 1;
+
+        let (description, flags) = match adapter_description(&adapter) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // ソフトウェアアダプタ(WARPなど)は物理NPU/GPUではないため除外
+        if flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            continue;
+        }
+
+        if !can_create_d3d12_device(&adapter) {
+            continue;
+        }
+
+        if looks_like_npu(&description) {
+            // NPUは最優先なので見つかり次第確定して返す
+            return Ok(AccelDevice {
+                kind: AccelKind::Npu,
+                adapter_description: description,
+            });
+        }
+
+        if best_gpu.is_none() {
+            best_gpu = Some(AccelDevice {
+                kind: AccelKind::Gpu,
+                adapter_description: description,
+            });
+        }
+    }
+
+    if let Some(gpu) = best_gpu {
+        return Ok(gpu);
+    }
+
+    Ok(AccelDevice {
+        kind: AccelKind::CpuFallback,
+        adapter_description: "CPU (NPU/GPU adapter not found or D3D12 unavailable)".to_string(),
+    })
+}
