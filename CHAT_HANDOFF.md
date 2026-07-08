@@ -349,3 +349,92 @@ ZFSの`zpool scrub`相当)は既に実装・テスト済みだったが、`Pool`
    (RAID-Z系とRAID10とでディスク指定の階層が異なるため、統一するなら
    「ディスクロケータ」のような共通の抽象化が必要になる)
 5. installer実装確認・PR作成・AD/SAM連携
+
+---
+
+## 追記4: partition.rsのSend/Syncバグ修正、エラー種別の整理、重要な発見
+
+前回に引き続き「実装されているのに繋がっていない」系のバグを重点的に
+洗い出した。今回は2件の実質的な修正と、今後の開発方針に関わる**重要な
+発見**が1件ある。
+
+### 1. `partition.rs`: パーティション分割 × WinFspマウントが原理的に両立不能だったバグ
+
+`PartitionedDevice`が内部で`Rc<RefCell<D>>`を使っていたが、`Rc`は
+`Send`/`Sync`のどちらも満たさない。一方`mount.rs::mount_pool`は
+`V: Vdev + Send + Sync`を要求する(WinFspが任意のワーカースレッドから
+呼び出すため)。つまり**README記載の2つの目玉機能「ディスクの
+パーティション分割・使い回し」と「実際のWinFspマウント」が、
+組み合わせた瞬間に成立しなくなる**という設計上の欠陥があった
+(`dual_role_disk.rs`はパーティション分割単体、`winfsp_mount.rs`は
+マウント単体しかテストしておらず、両方を組み合わせるテストが
+存在しなかったため見過ごされていた)。
+
+`Arc<Mutex<D>>`へ変更して解消。再発防止として、`mount_pool`と同じ境界
+条件(`V: Vdev + Send + Sync`)を独立に検証するコンパイル時regression
+テストを追加した(`src/partition.rs`の
+`partitioned_device_backed_vdev_satisfies_mount_pools_send_sync_bound`)。
+
+### 2. `error.rs`/`pool.rs`/`vdev.rs`/`raid10.rs`: エラー種別が実質使われていなかった
+
+`BridgeError`には`PoolNotFound`・`AclTranslationFailed`等の意味のある
+variantが定義されていたが、`pool.rs`/`vdev.rs`/`raid10.rs`の実装は
+**全てのエラーを`BridgeError::Io(std::io::Error::other(..))`という
+汎用I/Oエラーに潰していた**ため、呼び出し側は「データセットが無いのか」
+「容量不足なのか」「単なるI/Oエラーなのか」を一切区別できなかった。
+
+新規に`DatasetNotFound`・`SnapshotNotFound`・`AlreadyExists`・
+`CapacityExceeded`・`InvalidConfig`・`Unrecoverable`を追加し、各エラー
+発生箇所を意味の合うvariantへ置き換えた。`tests/error_semantics.rs`
+(新規、6テスト)で、呼び出し側が実際に`matches!`でエラー種別を
+判別できることを検証済み。
+
+### 3. 【重要な発見】`windows`クレートはWindows以外のターゲットでは中身が完全に空になる
+
+これまでのセッションで「`windows`クレートは`--no-default-features`でも
+コンパイルが通っていた」ことを、`mount.rs`のリスクが「WinFsp SDK/dxcが
+無いだけ」であるかのように誤って捉えていたが、実際には**もっと根本的な
+制約**があることが分かった:
+
+`windows`クレート(v0.58)自体のソース(`lib.rs`)は`#![cfg(windows)]`で
+丸ごとガードされており、**コンパイルターゲットが実際にWindowsでない限り、
+`windows::Win32::*`以下のあらゆる型・定数が一切存在しない**(クレート自体は
+「空の殻」としてコンパイルは通るが、中身は空)。実際に検証したところ、
+`windows::Win32::Foundation::STATUS_DATA_ERROR`等をLinux上で`use`しようと
+すると`error[E0433]: could not find Win32 in windows`になった。
+
+これまで`--no-default-features`のテストが通っていたのは、`windows::Win32::*`
+を実際に参照するコード(`mount.rs`全体、`device.rs`の`gpu` feature配下の
+`imp`モジュール、`compute.rs`)が全てfeatureゲートで無効化されていたため、
+たまたま一度も踏んでいなかっただけだった(`acl_emulation.rs`の
+`sid_placeholder`フィールドにあった「windows::Win32::Security::SIDに
+置換予定」はコメントのみで実コードではなかった)。
+
+**この意味するところ**: `mount.rs`・`device.rs`のGPU実装・`compute.rs`は、
+WinFsp SDKやdxcが仮に用意できたとしても、**Windows実機(またはWindows
+ターゲットへのクロスコンパイル環境)以外では原理的に一切コンパイル
+チェックできない**。今回追加した`mount.rs::status_from_bridge_error`の
+NTSTATUSマッピング拡張(`BridgeError`の新variantを`STATUS_OBJECT_NAME_
+COLLISION`・`STATUS_DISK_FULL`・`STATUS_INVALID_PARAMETER`・
+`STATUS_DATA_ERROR`・`STATUS_NOT_IMPLEMENTED`へ対応させた)も、
+定数名・値は一般に知られたNTSTATUSコードとして記載したが、
+**windows-rsが実際にこれらの識別子をこの通りに公開しているかは
+Windows実機でのビルドでしか確認できない**。
+
+### 検証状況
+
+`cargo test --no-default-features`で**全82テスト**
+(前回75+`partition.rs`のregression 1+`error_semantics.rs` 6)がパス。
+`mount.rs`関連の変更(status_from_bridge_errorのNTSTATUSマッピング拡張)は
+上記の理由により今後も実機でしか検証できない。
+
+### 残る実用性課題(更新版)
+
+1. ディレクトリ階層・create/delete/rename ― `mount.rs`必須、実機待ち
+2. Windows実機での`cargo test --features winfsp-backend,gpu-accel`
+   (これまでの`mount.rs`変更4件分をまとめて検証)
+3. CI(GitHub Actions)追加。**Linux runnerでは`--no-default-features`のみ
+   有効**であることに注意(`windows`クレートの制約上、`gpu-accel`/
+   `winfsp-backend`を含むテストはWindows runnerでしか実行できない)。
+4. `resilver`を`Vdev`トレイトへ統一するかどうかの設計判断
+5. installer実装確認・PR作成・AD/SAM連携

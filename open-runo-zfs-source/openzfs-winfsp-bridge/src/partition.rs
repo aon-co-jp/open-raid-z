@@ -9,18 +9,27 @@
 //! 同時所属させることは、両配列が同じバイト列を独立に上書きし合い
 //! データ破損するため、技術的に成立しない)。
 //!
-//! `PartitionedDevice`は内部で`Rc<RefCell<D>>`により実デバイスを共有し、
+//! `PartitionedDevice`は内部で`Arc<Mutex<D>>`により実デバイスを共有し、
 //! 各パーティションは自分の担当範囲(`start_offset`..`start_offset+size`)への
 //! アクセスだけに変換して委譲する。
+//!
+//! 【`Rc<RefCell<D>>`ではなく`Arc<Mutex<D>>`を使う理由】
+//! `mount.rs::mount_pool`は`V: Vdev + Send + Sync`を要求する(WinFspが
+//! ファイルシステム要求をワーカースレッドから呼び出すため)。以前は
+//! `Rc<RefCell<D>>`で実装しており、`Rc`は`Send`/`Sync`のどちらも満たさない
+//! ため、パーティション分割したディスクを含む`Pool`は**原理的にWinFsp経由で
+//! マウントできない**という、README記載の2つの目玉機能(ディスクの
+//! パーティション分割・使い回し / 実際のWinFspマウント)が組み合わせ不可能
+//! になっているバグがあった。`Arc<Mutex<D>>`(`D: Send`であれば
+//! `Arc<Mutex<D>>: Send + Sync`)へ変更することでこれを解消している。
 
 use crate::block_device::BlockDevice;
 use crate::error::{BridgeError, BridgeResult};
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// 1台の実デバイスを共有する、範囲制限付きの論理パーティション。
 pub struct PartitionedDevice<D: BlockDevice> {
-    inner: Rc<RefCell<D>>,
+    inner: Arc<Mutex<D>>,
     start_offset: u64,
     size: u64,
 }
@@ -40,6 +49,12 @@ impl<D: BlockDevice> PartitionedDevice<D> {
         }
         Ok(())
     }
+
+    fn lock_inner(&self) -> BridgeResult<std::sync::MutexGuard<'_, D>> {
+        self.inner
+            .lock()
+            .map_err(|_| out_of_bounds("パーティション共有元デバイスのロックが破損しています(他スレッドがパニックしました)"))
+    }
 }
 
 fn out_of_bounds(msg: &str) -> BridgeError {
@@ -49,12 +64,12 @@ fn out_of_bounds(msg: &str) -> BridgeError {
 impl<D: BlockDevice> BlockDevice for PartitionedDevice<D> {
     fn read_at(&mut self, offset: u64, len: usize) -> BridgeResult<Vec<u8>> {
         self.check_bounds(offset, len as u64)?;
-        self.inner.borrow_mut().read_at(self.start_offset + offset, len)
+        self.lock_inner()?.read_at(self.start_offset + offset, len)
     }
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> BridgeResult<()> {
         self.check_bounds(offset, data.len() as u64)?;
-        self.inner.borrow_mut().write_at(self.start_offset + offset, data)
+        self.lock_inner()?.write_at(self.start_offset + offset, data)
     }
 }
 
@@ -63,12 +78,12 @@ impl<D: BlockDevice> BlockDevice for PartitionedDevice<D> {
 /// 各パーティションは独立した`BlockDevice`として、別々のvdevへそれぞれ
 /// 渡すことができる。
 pub fn partition_device<D: BlockDevice>(device: D, sizes: &[u64]) -> Vec<PartitionedDevice<D>> {
-    let shared = Rc::new(RefCell::new(device));
+    let shared = Arc::new(Mutex::new(device));
     let mut partitions = Vec::with_capacity(sizes.len());
     let mut offset = 0u64;
     for &size in sizes {
         partitions.push(PartitionedDevice {
-            inner: Rc::clone(&shared),
+            inner: Arc::clone(&shared),
             start_offset: offset,
             size,
         });
@@ -128,5 +143,20 @@ mod tests {
         let parts = partition_device(disk, &[100, 200]);
         assert_eq!(parts[0].size(), 100);
         assert_eq!(parts[1].size(), 200);
+    }
+
+    /// `mount.rs::mount_pool`は`V: Vdev + Send + Sync`を要求する(WinFspが
+    /// ファイルシステム要求を任意のワーカースレッドから呼び出すため)。
+    /// 以前`PartitionedDevice`が`Rc<RefCell<D>>`を使っており`Send`/`Sync`の
+    /// どちらも満たせなかった(=パーティション分割したディスクを含む`Pool`は
+    /// 原理的にWinFsp経由でマウントできなかった)ことの再発防止テスト。
+    /// `mount.rs`自体は`winfsp-backend`feature配下(かつ実際のWinFsp SDKが
+    /// 必要)でこの環境ではコンパイルを確認できないため、同じ境界条件
+    /// (`V: Vdev + Send + Sync`)だけをここで独立に検証しておく。
+    #[test]
+    fn partitioned_device_backed_vdev_satisfies_mount_pools_send_sync_bound() {
+        fn assert_mount_pool_compatible<V: crate::vdev::Vdev + Send + Sync>() {}
+
+        assert_mount_pool_compatible::<crate::vdev::RaidZVdev<PartitionedDevice<FileBackedDevice>>>();
     }
 }

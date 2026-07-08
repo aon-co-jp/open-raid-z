@@ -29,7 +29,9 @@ use crate::vdev::Vdev;
 use std::sync::Mutex;
 use widestring::{u16cstr, U16CStr};
 use windows::Win32::Foundation::{
-    STATUS_END_OF_FILE, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_DATA_ERROR, STATUS_DISK_FULL, STATUS_END_OF_FILE, STATUS_INVALID_PARAMETER,
+    STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use winfsp::filesystem::{
     DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
@@ -77,10 +79,33 @@ impl<V: Vdev> PoolFileSystem<V> {
     }
 }
 
-fn status_from_bridge_error(_e: &crate::error::BridgeError) -> i32 {
-    // ブリッジ層のエラーはWinFsp向けの詳細なNTSTATUSへ細かく分類していないため、
-    // 現時点では一律「予期しないI/Oエラー」として扱う。
-    0xC00000E9u32 as i32 // STATUS_UNEXPECTED_IO_ERROR
+/// ブリッジ層のエラーを、対応するWinFsp向けNTSTATUSへ変換する。
+///
+/// 以前は`BridgeError`の全variantが実装側で`Io`(汎用I/Oエラー)に潰されて
+/// いたため、ここでも一律「予期しないI/Oエラー」しか返せなかった。
+/// エラー側の整理([`crate::error::BridgeError`]参照)により、
+/// 「見つからない」「既に存在する」「容量不足」「復旧不能」等を
+/// それぞれ対応するNTSTATUSへ個別に変換できるようになった。
+fn status_from_bridge_error(e: &crate::error::BridgeError) -> i32 {
+    use crate::error::BridgeError;
+    match e {
+        BridgeError::PoolNotFound(_) | BridgeError::DatasetNotFound(_) | BridgeError::SnapshotNotFound(_) => {
+            STATUS_OBJECT_NAME_NOT_FOUND.0
+        }
+        BridgeError::AlreadyExists(_) => STATUS_OBJECT_NAME_COLLISION.0,
+        BridgeError::CapacityExceeded(_) => STATUS_DISK_FULL.0,
+        BridgeError::InvalidConfig(_) => STATUS_INVALID_PARAMETER.0,
+        // 冗長性を超えた同時故障によるデータ消失。「デバイスエラー」ではなく
+        // 「データそのものの破損・消失」を意味するSTATUS_DATA_ERRORが実態に近い。
+        BridgeError::Unrecoverable(_) => STATUS_DATA_ERROR.0,
+        BridgeError::NotImplemented(_) => STATUS_NOT_IMPLEMENTED.0,
+        // ACL/exFAT変換やその他のI/Oエラーは、現時点ではまだ個別のNTSTATUSへ
+        // 分類していない(これらはWinFsp層の主経路であるread/write/open/
+        // read_directory等からは実質的に発生しないため優先度が低い)。
+        BridgeError::MountFailed(_) | BridgeError::AclTranslationFailed(_) | BridgeError::ExFatConversionFailed(_) | BridgeError::Io(_) => {
+            0xC00000E9u32 as i32 // STATUS_UNEXPECTED_IO_ERROR
+        }
+    }
 }
 
 impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {

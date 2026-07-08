@@ -126,7 +126,7 @@ impl<D: BlockDevice> Raid10Vdev<D> {
 }
 
 fn invalid_config(msg: &str) -> BridgeError {
-    BridgeError::Io(std::io::Error::other(msg.to_string()))
+    BridgeError::InvalidConfig(msg.to_string())
 }
 
 impl<D: BlockDevice> Vdev for Raid10Vdev<D> {
