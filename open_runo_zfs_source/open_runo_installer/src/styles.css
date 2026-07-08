@@ -1,0 +1,147 @@
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  color: #0f0f0f;
+  background-color: #f6f6f6;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+.container {
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.app_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.lang_switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9em;
+}
+
+.panel {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 1.25rem;
+  background-color: #ffffff;
+}
+
+.panel h2 {
+  margin-top: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9em;
+}
+
+input,
+select,
+button {
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 0.5em 0.8em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: #0f0f0f;
+  background-color: #ffffff;
+  transition: border-color 0.25s;
+}
+
+button {
+  cursor: pointer;
+  border-color: transparent;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.15);
+}
+
+button:hover {
+  border-color: #396cd8;
+}
+
+.warning {
+  color: #b45309;
+  font-weight: 600;
+}
+
+#advice_list li,
+#disk_list li {
+  margin-bottom: 0.4em;
+}
+
+.advice_warning {
+  color: #b91c1c;
+}
+
+.advice_suggestion {
+  color: #1d4ed8;
+}
+
+.advice_info {
+  color: #374151;
+}
+
+#raid_result {
+  margin-top: 1rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+/* RTL(アラビア語・ペルシャ語)対応: html[dir="rtl"]で全体の流れを反転する */
+html[dir="rtl"] .app_header,
+html[dir="rtl"] .lang_switcher,
+html[dir="rtl"] .row {
+  direction: rtl;
+}
+
+html[dir="rtl"] .container {
+  text-align: right;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f6f6f6;
+    background-color: #2f2f2f;
+  }
+
+  .panel {
+    background-color: #1f1f1f;
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  input,
+  select,
+  button {
+    color: #ffffff;
+    background-color: #0f0f0f98;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+}

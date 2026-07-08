@@ -4,41 +4,85 @@ Un progetto sperimentale di file system per Windows, quasi compatibile con NTFS/
 
 Lingua: [日本語](README-Japan.md) | [UK English](README-UK-English.md) | [US English](README-US-English.md) | **Italiano** | [Français](README-France.md) | [Deutsch](README-Germany.md) | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
+## Convenzione di denominazione
+
+Gli identificatori definiti da questo progetto — nomi di directory, nomi di crate, nomi di pacchetti npm, nomi delle feature Cargo, id/classi HTML/CSS, ecc. — usano in modo coerente **il trattino basso (`_`) invece del trattino (`-`)** (es. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, e le feature Cargo `winfsp_backend`/`gpu_accel`). I nomi che in precedenza usavano il trattino, come `openzfs-winfsp-bridge`, sono stati rinominati per coerenza all'interno del progetto.
+
+Sono esclusi i seguenti casi, poiché seguono specifiche esterne o convenzioni dell'ecosistema e non la denominazione scelta da questo progetto:
+
+- Il nome del repository stesso (`open-raid-z`; è il nome reale del repository su GitHub e non può essere cambiato)
+- Gli attributi personalizzati HTML5 `data-*` (`data-i18n`; il trattino è richiesto dalla specifica)
+- I nomi dei pacchetti npm esterni (es. `@tauri-apps/api`, i nomi reali dei pacchetti pubblicati)
+- I nomi delle proprietà CSS (es. `font-family`; è la sintassi stessa del linguaggio CSS)
+- I termini composti inglesi che contengono realmente un trattino, come Reed-Solomon o copy-on-write
+
 ## Componenti
 
 | Componente | Ruolo |
 |---|---|
-| `openzfs-winfsp-bridge` | vdev RAID-Z/RAID0-10, pool di archiviazione, livello di compatibilità ACL NTFS/attributi exFAT, montaggio reale via WinFsp |
-| `zfs-accel-hlsl` | Offload del calcolo della parità su acceleratori hardware GPU/NPU (DirectX 12 Compute + DirectML) |
-| `openruno-installer` | Installer Tauri: rilevamento hardware, wizard di inizializzazione zpool, consulente di configurazione in stile Copilot |
+| `open_zfs_winfsp_bridge` | vdev RAID-Z/RAID0-10, pool di archiviazione, livello di compatibilità ACL NTFS/attributi exFAT, montaggio reale via WinFsp |
+| `zfs_accel_hlsl` | Offload del calcolo della parità su acceleratori hardware GPU/NPU (DirectX 12 Compute + DirectML) |
+| `open_runo_installer_core` | Logica indipendente dal sistema operativo per il rilevamento dei dischi, il consulente di configurazione in stile Copilot e l'anteprima di inizializzazione zpool (nessuna dipendenza da Tauri; `cargo test` funziona anche su Linux/macOS) |
+| `open_runo_installer` | L'installer Tauri vero e proprio (un sottile livello UI che richiama `open_runo_installer_core`): rilevamento hardware, wizard di inizializzazione zpool, interfaccia del consulente di configurazione in stile Copilot |
 
 ## Funzionalità principali
 
 - **Intera serie RAID**: RAID0 / RAID1 (mirror) / RAID5 / RAID6 / RAID10 (mirror in striping) / RAID-Z2 / RAID-Z3
 - **Partizionamento e riutilizzo del disco**: dividere un disco fisico e usare metà come membro di un mirror mentre l'altra metà entra in un array RAID6/Z2 separato
-- **Checksum autoriparanti, copy-on-write, snapshot/cloni**: emulano l'approccio di ZFS
+- **Checksum autoriparanti, copy-on-write, snapshot/cloni**: emulano l'approccio di ZFS. `Pool::scrub` può rilevare e riparare in un'unica passata la corruzione silenziosa sull'intero pool, tramite la stessa API sia con backend RAID-Z che RAID10
 - **Compatibilità NTFS**: traduzione ACL (NFSv4 ⇔ NTFS), mappatura UID/GID ⇔ SID (mappatura deterministica basata su RID per domini SAM locali/AD)
 - **Compatibilità exFAT**: conversione di attributi file e timestamp, supporto per file/volumi superiori a 4GB
 - **Accelerazione hardware GPU/NPU**: il calcolo della parità RAID-Z1/Z2 viene effettivamente inviato tramite DirectX 12 Compute + DirectML (ripiego automatico su CPU se non è presente hardware)
-- **Consulente di configurazione in stile Copilot**: consiglia un livello RAID in base alla disposizione dei dischi, all'acceleratore e al numero di core CPU (prima versione euristica; è presente anche uno scheletro di rilevamento LLM locale)
-- **Montaggio reale via WinFsp (prototipo)**: può essere effettivamente montato come lettera di unità Windows (attualmente una build minima a file singolo)
+- **Consulente di configurazione in stile Copilot**: consiglia un livello RAID in base alla disposizione dei dischi, all'acceleratore e al numero di core CPU (prima versione euristica; è presente anche uno scheletro di rilevamento LLM locale). La logica risiede in `open_runo_installer_core`, indipendente da Tauri, e può essere verificata con `cargo test` anche su Linux/macOS
+- **Montaggio reale via WinFsp (prototipo)**: può essere effettivamente montato come lettera di unità Windows. Ogni dataset del pool appare come un proprio file, con supporto a offset/lunghezze arbitrarie in byte per lettura e scrittura (gerarchia di directory e create/delete/rename non ancora supportate — resta uno spazio dei nomi piatto)
 - **Supporto multilingua**: l'installer usa il giapponese come lingua predefinita con un selettore di lingua nell'interfaccia, modificabile anche dopo l'installazione
 
 ## Limitazioni attuali (fase prototipo)
 
-- Il montaggio WinFsp supporta solo uno spazio dei nomi piatto (un unico file fisso `\pool.dat` nella radice). Nessuna gerarchia di directory o file multipli per ora.
-- Le letture/scritture devono essere allineate al confine di chunk del dataset.
+- Il montaggio WinFsp supporta solo uno spazio dei nomi piatto (ogni dataset del pool appare come un file nella radice). Nessuna gerarchia di directory né create/delete/rename per singolo file per ora.
+- Le letture/scritture passano attraverso `Pool::read_unaligned`/`Pool::write_unaligned` (un livello read-modify-write), quindi sono supportati offset e lunghezze arbitrari in byte. Le richieste che superano la capacità allocata di un dataset (impostata con `grow_dataset`) falliscono comunque (non c'è espansione automatica implicita).
 - `Pool` supporta sia `RaidZVdev` che `Raid10Vdev`, ma l'integrazione di RAID10 con l'API dataset è ancora superficiale in alcuni punti.
+- Il codice del montaggio reale WinFsp (`mount.rs`) non può essere compilato con una toolchain Rust precedente alla 1.85, perché il crate `winfsp` richiede la feature Cargo `edition2024` (vedi Build e test più sotto).
+- `mount.rs` e l'implementazione GPU di `zfs_accel_hlsl` (feature `gpu`) dipendono dal crate `windows`, il cui contenuto è completamente vuoto a meno che il target di compilazione non sia effettivamente Windows. Di conseguenza questo codice può essere compilato e testato solo su una macchina Windows reale (o compilando in cross per un target Windows); su Linux/macOS si compila solo disabilitandoli con `--no-default-features`.
 
 ## Build e test
 
 ```powershell
-cd open-runo-zfs-source/openzfs-winfsp-bridge
-cargo test --no-default-features        # senza il montaggio WinFsp
-cargo test --features winfsp-backend    # con il montaggio reale WinFsp (richiede il runtime WinFsp)
+cd open_runo_zfs_source/open_zfs_winfsp_bridge
+cargo test --no-default-features   # senza montaggio WinFsp/accelerazione GPU (sola logica CPU; non servono né dxc né l'SDK WinFsp)
+cargo test                         # predefinito (include montaggio reale WinFsp e accelerazione GPU/NPU; richiede WinFsp + dxc)
 ```
 
-Il runtime WinFsp (https://winfsp.dev/) deve essere installato sul sistema (gli header SDK usati in fase di build sono forniti automaticamente in bundle, quindi non è necessaria l'installazione separata del componente per sviluppatori).
+`--no-default-features` disabilita entrambe le feature `winfsp_backend` e `gpu_accel`, permettendo di verificare la logica principale — RAID0/1/5/6/10/Z2/Z3, checksum autoriparanti, CoW, snapshot/cloni, resilver, ecc. — in modo indipendente dal sistema operativo (funziona anche su Linux/macOS). Non servono WinFsp, il DirectX Shader Compiler (dxc), né hardware GPU/NPU.
+
+Compilare con le feature predefinite (`winfsp_backend` + `gpu_accel`) richiede:
+
+- Il runtime WinFsp (https://winfsp.dev/) installato sul sistema (gli header SDK usati in fase di build sono forniti automaticamente in bundle, quindi non è necessaria l'installazione separata del componente per sviluppatori).
+- `dxc` (il DirectX Shader Compiler, incluso nel Windows SDK o nel Vulkan SDK) nel `PATH` (usato per compilare in fase di build gli shader HLSL di parità RAID-Z/Z2).
+- **Rust 1.85 o successivo** (la versione in cui `edition2024`, richiesta dal crate `winfsp`, è stata stabilizzata; con toolchain più vecchie fallisce già l'analisi del manifest `Cargo.toml`).
+
+È anche possibile disabilitare singolarmente WinFsp o dxc (es. `--no-default-features --features gpu_accel` per solo GPU, senza WinFsp).
+
+### Installer (`open_runo_installer` / `open_runo_installer_core`)
+
+```powershell
+# Livello logico (nessuna dipendenza da Tauri; funziona anche su Linux/macOS)
+cd open_runo_zfs_source/open_runo_installer_core
+cargo test                    # solo fallback CPU (predefinito)
+cargo test --features gpu     # include il dispatch reale GPU/NPU (richiede una macchina Windows reale + dxc)
+
+# Frontend (TypeScript, indipendente dal sistema operativo)
+cd open_runo_zfs_source/open_runo_installer
+npm install
+npx tsc --noEmit               # solo controllo dei tipi
+npx vite build                 # build effettiva
+
+# L'app Tauri vera e propria (richiede una macchina Windows reale, oppure un Rust sufficientemente recente più le dipendenze desktop di Linux)
+cd open_runo_zfs_source/open_runo_installer/src-tauri
+cargo tauri dev / cargo tauri build
+```
+
+`open_runo_installer_core` (rilevamento dischi, consulente di configurazione in stile Copilot, anteprima di inizializzazione zpool) è un crate indipendente senza dipendenza da Tauri, quindi la sua logica può essere verificata così com'è anche in ambienti privi di ciò che serve a Tauri stesso per compilare (una WebView, GTK, ecc., più una toolchain Rust sufficientemente recente). Solo l'effettiva enumerazione dei dischi (`\\.\PhysicalDriveN`) usa un'API esclusiva di Windows, ed è isolata dietro `#[cfg(windows)]`; tutto il resto (consulente di configurazione e calcoli dell'anteprima zpool) è indipendente dal sistema operativo, e tutti i suoi 26 test risultano superati.
 
 ## Licenza
 
