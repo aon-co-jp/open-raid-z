@@ -21,6 +21,7 @@ tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 bitflags = { version = "2.6", features = ["serde"] }
 zfs-accel-hlsl = { path = "../zfs-accel-hlsl" }
+sha2 = "0.10"
 
 [features]
 # CI環境などWinFspヘッダが無い場合でもビルドできるようダミー実装を切替可能に
