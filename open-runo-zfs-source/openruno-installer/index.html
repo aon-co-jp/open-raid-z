@@ -1,43 +1,68 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <title>OpenRuno Installer</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
   <body>
     <main class="container">
-      <h1>Welcome to Tauri</h1>
+      <header class="app-header">
+        <h1 data-i18n="app_title">OpenRuno インストーラー</h1>
+        <label class="lang-switcher">
+          <span data-i18n="language_label">言語</span>
+          <select id="lang-select"></select>
+        </label>
+      </header>
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+      <section class="panel">
+        <h2 data-i18n="section_hardware">ハードウェア構成</h2>
+        <p><strong data-i18n="accelerator_label">アクセラレータ</strong>: <span id="accelerator-info">-</span></p>
+        <p><strong data-i18n="disks_label">検出されたディスク</strong></p>
+        <ul id="disk-list"></ul>
+        <p id="no-disks-warning" class="warning" hidden data-i18n="no_disks_admin_warning"></p>
+        <button id="refresh-button" data-i18n="refresh_button">再スキャン</button>
+      </section>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
+      <section class="panel">
+        <h2 data-i18n="section_advice">おすすめの構成</h2>
+        <ul id="advice-list"></ul>
+      </section>
+
+      <section class="panel">
+        <h2 data-i18n="section_raid">RAIDプールの初期化(プレビュー)</h2>
+        <form id="raid-form" class="row">
+          <label>
+            <span data-i18n="raid_level_label">RAIDレベル</span>
+            <select id="raid-level">
+              <option value="Raid0">RAID0</option>
+              <option value="Raid1">RAID1</option>
+              <option value="Raid5">RAID5</option>
+              <option value="Raid6">RAID6</option>
+              <option value="Z2">RAID-Z2</option>
+              <option value="Z3">RAID-Z3</option>
+              <option value="Raid10">RAID10</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="disk_count_label">使用するディスク数</span>
+            <input id="disk-count" type="number" min="1" value="4" />
+          </label>
+          <label id="mirror-width-field">
+            <span data-i18n="mirror_width_label">ミラー幅(RAID10のみ)</span>
+            <input id="mirror-width" type="number" min="2" value="2" />
+          </label>
+          <label>
+            <span data-i18n="dataset_name_label">データセット名</span>
+            <input id="dataset-name" type="text" value="tank" />
+          </label>
+          <button type="submit" data-i18n="init_button">プレビュー実行</button>
+        </form>
+        <div id="raid-result"></div>
+      </section>
     </main>
   </body>
 </html>
