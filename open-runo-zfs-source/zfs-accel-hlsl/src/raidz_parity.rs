@@ -1,10 +1,11 @@
 //! RAID-Z1パリティ計算。
 //!
 //! `compute_parity_cpu` は正しさの基準となるCPU参照実装。
-//! `compute_parity_gpu` は同じ結果をGPU/NPU(DirectML経由のD3D12 Compute)で
-//! 出す想定のスタブで、現段階ではCPU実装に委譲しています
-//! (HLSLシェーダのコンパイル・ディスパッチ・リードバックのFFI配線が
-//! 実機Windows環境でのテストを要するため)。
+//! `compute_parity_accelerated` はNPU/GPUが検出できれば
+//! `shaders/raidz_parity.hlsl`(ビルド時にDXILへ事前コンパイル済み、
+//! [`crate::compute`]参照)を実際にD3D12 Compute経由でディスパッチし、
+//! ディスパッチに失敗した場合(ドライバ非対応・ハードウェア無し等)は
+//! CPU実装へフォールバックする。
 
 use crate::device::AccelDevice;
 
@@ -23,18 +24,36 @@ pub fn compute_parity_cpu(data_stripes: &[&[u32]]) -> Vec<u32> {
     parity
 }
 
-/// GPU/NPUディスパッチ(現状はCPUへフォールバック)
-///
-/// TODO: raidz_parity.hlsl をコンパイルし、`device` が指すD3D12/DirectML
-/// デバイス上でディスパッチする実装に置き換える。
+/// GPU/NPUディスパッチ。ディスパッチに失敗した場合はCPU実装へフォールバックする
+/// (`device`自体はハードウェア選定時点の情報であり、ディスパッチ用のデバイスは
+/// [`crate::compute::dispatch_parity_shader`]内部で選定し直す)。
 pub fn compute_parity_accelerated(device: &AccelDevice, data_stripes: &[&[u32]]) -> Vec<u32> {
     match device.kind {
         crate::device::AccelKind::Npu | crate::device::AccelKind::Gpu => {
-            tracing::warn!(
-                "GPU/NPUディスパッチは未実装のため、CPU実装にフォールバックします (device={})",
-                device.adapter_description
-            );
-            compute_parity_cpu(data_stripes)
+            let stripe_len = data_stripes.first().map(|s| s.len()).unwrap_or(0);
+            let num_disks = data_stripes.len();
+            let mut input = Vec::with_capacity(num_disks * stripe_len);
+            for stripe in data_stripes {
+                input.extend_from_slice(stripe);
+            }
+
+            let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz_parity.cso"));
+            match crate::compute::dispatch_parity_shader(
+                shader,
+                num_disks as u32,
+                stripe_len as u32,
+                &input,
+                1,
+            ) {
+                Ok(mut outputs) => outputs.pop().unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!(
+                        "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                        device.adapter_description
+                    );
+                    compute_parity_cpu(data_stripes)
+                }
+            }
         }
         crate::device::AccelKind::CpuFallback => compute_parity_cpu(data_stripes),
     }

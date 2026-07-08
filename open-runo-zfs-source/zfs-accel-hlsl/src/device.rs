@@ -54,10 +54,11 @@ fn adapter_description(adapter: &IDXGIAdapter1) -> windows::core::Result<(String
     Ok((description, desc.Flags))
 }
 
-/// 指定アダプタ上にD3D12デバイスを実際に作成できるか検証する。
-fn can_create_d3d12_device(adapter: &IDXGIAdapter1) -> bool {
+/// 指定アダプタ上にD3D12デバイスを実際に作成し、成功すれば返す。
+fn try_create_d3d12_device(adapter: &IDXGIAdapter1) -> Option<ID3D12Device> {
     let mut device: Option<ID3D12Device> = None;
-    unsafe { D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, &mut device) }.is_ok()
+    unsafe { D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, &mut device) }.ok()?;
+    device
 }
 
 /// システム上のアダプタを列挙し、NPU/GPUの優先順位で選択する。
@@ -71,10 +72,24 @@ fn can_create_d3d12_device(adapter: &IDXGIAdapter1) -> bool {
 /// D3D12デバイス上で動作するため、本関数ではアダプタ選定のみを行い、
 /// 実際のDirectMLデバイス生成は利用側(ディスパッチ時)に委ねる。
 pub fn detect_best_accelerator() -> Result<AccelDevice, DeviceError> {
+    match create_best_device() {
+        Ok((accel, _device)) => Ok(accel),
+        Err(DeviceError::NoD3D12Device) => Ok(AccelDevice {
+            kind: AccelKind::CpuFallback,
+            adapter_description: "CPU (NPU/GPU adapter not found or D3D12 unavailable)".to_string(),
+        }),
+        Err(e) => Err(e),
+    }
+}
+
+/// [`detect_best_accelerator`]と同じ選定ロジックだが、実際に作成した
+/// `ID3D12Device`もあわせて返す。GPU/NPUへディスパッチする側([`crate::compute`])が
+/// 選定と同じデバイスをそのまま使い回せるようにするためのもの。
+pub fn create_best_device() -> Result<(AccelDevice, ID3D12Device), DeviceError> {
     let factory: IDXGIFactory1 =
         unsafe { CreateDXGIFactory1() }.map_err(|_| DeviceError::NoD3D12Device)?;
 
-    let mut best_gpu: Option<AccelDevice> = None;
+    let mut best_gpu: Option<(AccelDevice, ID3D12Device)> = None;
 
     let mut index = 0u32;
     loop {
@@ -94,23 +109,29 @@ pub fn detect_best_accelerator() -> Result<AccelDevice, DeviceError> {
             continue;
         }
 
-        if !can_create_d3d12_device(&adapter) {
+        let Some(device) = try_create_d3d12_device(&adapter) else {
             continue;
-        }
+        };
 
         if looks_like_npu(&description) {
             // NPUは最優先なので見つかり次第確定して返す
-            return Ok(AccelDevice {
-                kind: AccelKind::Npu,
-                adapter_description: description,
-            });
+            return Ok((
+                AccelDevice {
+                    kind: AccelKind::Npu,
+                    adapter_description: description,
+                },
+                device,
+            ));
         }
 
         if best_gpu.is_none() {
-            best_gpu = Some(AccelDevice {
-                kind: AccelKind::Gpu,
-                adapter_description: description,
-            });
+            best_gpu = Some((
+                AccelDevice {
+                    kind: AccelKind::Gpu,
+                    adapter_description: description,
+                },
+                device,
+            ));
         }
     }
 
@@ -118,8 +139,5 @@ pub fn detect_best_accelerator() -> Result<AccelDevice, DeviceError> {
         return Ok(gpu);
     }
 
-    Ok(AccelDevice {
-        kind: AccelKind::CpuFallback,
-        adapter_description: "CPU (NPU/GPU adapter not found or D3D12 unavailable)".to_string(),
-    })
+    Err(DeviceError::NoD3D12Device)
 }

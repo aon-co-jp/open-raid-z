@@ -15,6 +15,7 @@ use crate::block_device::BlockDevice;
 use crate::checksum::{compute_checksum, Checksum};
 use crate::error::{BridgeError, BridgeResult};
 use std::collections::HashMap;
+use zfs_accel_hlsl::device::AccelDevice;
 use zfs_accel_hlsl::galois::GaloisTables;
 use zfs_accel_hlsl::raidz23_parity;
 
@@ -49,6 +50,11 @@ pub struct RaidZVdev<D: BlockDevice> {
     /// 本物のZFSはこれをブロックポインタ木としてディスク上に永続化するが、
     /// 本層はメモリ上のテーブルとして保持する簡易実装。
     checksums: HashMap<(usize, u64), Checksum>,
+    /// 設定されていれば、Z2のP/QパリティをGPU/NPU(D3D12 Compute)へオフロードする
+    /// (`zfs_accel_hlsl::raidz23_parity::compute_pq_accelerated`)。
+    /// 未設定、またはZ3の場合は常にCPU実装(`compute_pq`/`compute_pqr`)を使う
+    /// (RAID-Z3のR用シェーダは未実装のため)。
+    accel: Option<AccelDevice>,
 }
 
 impl<D: BlockDevice> RaidZVdev<D> {
@@ -64,7 +70,14 @@ impl<D: BlockDevice> RaidZVdev<D> {
             chunk_size,
             gf: GaloisTables::new(),
             checksums: HashMap::new(),
+            accel: None,
         }
+    }
+
+    /// GPU/NPUアクセラレータを設定する(RAID-Z2のP/Q計算のみ対象)。
+    pub fn with_accelerator(mut self, accel: AccelDevice) -> Self {
+        self.accel = Some(accel);
+        self
     }
 
     pub fn num_data_disks(&self) -> usize {
@@ -85,7 +98,10 @@ impl<D: BlockDevice> RaidZVdev<D> {
 
     fn compute_parity(&self, chunks: &[&[u8]]) -> Vec<Vec<u8>> {
         if self.parity_count == 2 {
-            let (p, q) = raidz23_parity::compute_pq(chunks, &self.gf);
+            let (p, q) = match &self.accel {
+                Some(accel) => raidz23_parity::compute_pq_accelerated(accel, chunks, &self.gf),
+                None => raidz23_parity::compute_pq(chunks, &self.gf),
+            };
             vec![p, q]
         } else {
             let (p, q, r) = raidz23_parity::compute_pqr(chunks, &self.gf);
@@ -323,5 +339,46 @@ impl<D: BlockDevice> RaidZVdev<D> {
             report.corruptions_healed += healed.len();
         }
         Ok(report)
+    }
+}
+
+#[cfg(test)]
+mod accel_tests {
+    use super::*;
+    use crate::block_device::FileBackedDevice;
+
+    fn scratch_disk(name: &str) -> FileBackedDevice {
+        let path = std::env::temp_dir().join(format!("openruno_vdev_accel_test_{name}"));
+        FileBackedDevice::create_fixed_size(&path, 4096).unwrap()
+    }
+
+    /// GPU/NPUが実際に検出できる環境でのみ実行する。RaidZVdevへ
+    /// `with_accelerator`でアクセラレータを設定した場合でも、書き込んだ
+    /// データがCPU実装と同じように正しく読み出せる(=実際にディスパッチされ、
+    /// かつ計算結果がCPU参照実装と一致する)ことを、pool.rs/vdev.rsの
+    /// 実際の書き込み・読み出しパス経由で検証する。
+    #[test]
+    fn raidz2_write_read_round_trips_with_gpu_accelerator_when_available() {
+        let accel = match zfs_accel_hlsl::device::detect_best_accelerator() {
+            Ok(a) if a.kind != zfs_accel_hlsl::device::AccelKind::CpuFallback => a,
+            _ => {
+                eprintln!("GPU/NPUが見つからないためテストをスキップします");
+                return;
+            }
+        };
+
+        let devices = vec![
+            scratch_disk("d0"),
+            scratch_disk("d1"),
+            scratch_disk("d2"),
+            scratch_disk("p"),
+            scratch_disk("q"),
+        ];
+        let mut vdev = RaidZVdev::new(devices, RaidLevel::Z2, 4).with_accelerator(accel);
+
+        let data = vec![0xAAu8, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        vdev.write_stripe(0, &data).unwrap();
+        let read_back = vdev.read_stripe(0).unwrap();
+        assert_eq!(read_back, data);
     }
 }
