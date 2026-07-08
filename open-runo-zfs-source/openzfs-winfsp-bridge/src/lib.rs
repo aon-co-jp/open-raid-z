@@ -18,6 +18,8 @@ pub mod error;
 pub mod exfat_emulation;
 pub mod fs_ops;
 pub mod id_mapping;
+#[cfg(feature = "winfsp-backend")]
+pub mod mount;
 pub mod partition;
 pub mod pool;
 pub mod raid10;
