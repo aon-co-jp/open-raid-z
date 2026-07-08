@@ -263,11 +263,11 @@ impl<D: BlockDevice> RaidZVdev<D> {
         }
 
         if missing.len() > self.parity_count {
-            return Err(BridgeError::Io(std::io::Error::other(format!(
+            return Err(BridgeError::Unrecoverable(format!(
                 "{}台のディスクが同時に失われ、パリティ{}台では復旧できません",
                 missing.len(),
                 self.parity_count
-            ))));
+            )));
         }
 
         let missing_data: Vec<usize> = missing.iter().copied().filter(|&i| i < num_data).collect();
@@ -289,9 +289,9 @@ impl<D: BlockDevice> RaidZVdev<D> {
             .collect();
 
         if available_parity.len() < missing_data.len() {
-            return Err(BridgeError::Io(std::io::Error::other(
-                "生存しているパリティの数が復旧に必要な数を下回っています",
-            )));
+            return Err(BridgeError::Unrecoverable(
+                "生存しているパリティの数が復旧に必要な数を下回っています".to_string(),
+            ));
         }
 
         let recovered = raidz23_parity::reconstruct_missing_data_generic(

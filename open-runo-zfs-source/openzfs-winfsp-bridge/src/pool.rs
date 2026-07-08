@@ -96,9 +96,11 @@ pub struct PoolUsage {
 }
 
 fn not_found(name: &str) -> BridgeError {
-    BridgeError::Io(std::io::Error::other(format!(
-        "データセット'{name}'が見つかりません"
-    )))
+    BridgeError::DatasetNotFound(name.to_string())
+}
+
+fn snapshot_not_found(key: &str) -> BridgeError {
+    BridgeError::SnapshotNotFound(key.to_string())
 }
 
 impl<V: Vdev> Pool<V> {
@@ -129,9 +131,10 @@ impl<V: Vdev> Pool<V> {
 
     /// 空きストライプを1つ払い出し、参照カウント1で確保済みにする。
     fn claim_stripe(&mut self) -> BridgeResult<u64> {
-        let stripe = self.free_stripes.pop().ok_or_else(|| {
-            BridgeError::Io(std::io::Error::other("プールに空きストライプがありません"))
-        })?;
+        let stripe = self
+            .free_stripes
+            .pop()
+            .ok_or_else(|| BridgeError::CapacityExceeded("プールに空きストライプがありません".to_string()))?;
         self.ref_counts.insert(stripe, 1);
         Ok(stripe)
     }
@@ -156,9 +159,7 @@ impl<V: Vdev> Pool<V> {
 
     pub fn create_dataset(&mut self, name: &str) -> BridgeResult<()> {
         if self.datasets.contains_key(name) {
-            return Err(BridgeError::Io(std::io::Error::other(format!(
-                "データセット'{name}'は既に存在します"
-            ))));
+            return Err(BridgeError::AlreadyExists(format!("データセット'{name}'")));
         }
         self.datasets.insert(name.to_string(), Dataset::default());
         Ok(())
@@ -197,10 +198,10 @@ impl<V: Vdev> Pool<V> {
         let additional_stripes = additional_bytes.div_ceil(chunk_bytes);
 
         if additional_stripes > self.free_stripes.len() as u64 {
-            return Err(BridgeError::Io(std::io::Error::other(format!(
+            return Err(BridgeError::CapacityExceeded(format!(
                 "プールの空き容量が不足しています(必要{additional_stripes}ストライプ、空き{}ストライプ)",
                 self.free_stripes.len()
-            ))));
+            )));
         }
 
         let mut newly_allocated = Vec::with_capacity(additional_stripes as usize);
@@ -237,9 +238,9 @@ impl<V: Vdev> Pool<V> {
         {
             let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
             if start + count > ds.stripes.len() {
-                return Err(BridgeError::Io(std::io::Error::other(format!(
+                return Err(BridgeError::CapacityExceeded(format!(
                     "データセット'{name}'の割当容量を超える書き込みです(grow_datasetが必要)"
-                ))));
+                )));
             }
         }
 
@@ -285,9 +286,7 @@ impl<V: Vdev> Pool<V> {
     pub fn create_snapshot(&mut self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<()> {
         let key = Self::snapshot_key(dataset_name, snapshot_name);
         if self.snapshots.contains_key(&key) {
-            return Err(BridgeError::Io(std::io::Error::other(format!(
-                "スナップショット'{key}'は既に存在します"
-            ))));
+            return Err(BridgeError::AlreadyExists(format!("スナップショット'{key}'")));
         }
         let stripes = self
             .datasets
@@ -307,9 +306,7 @@ impl<V: Vdev> Pool<V> {
     /// プールへ返却する。
     pub fn destroy_snapshot(&mut self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<()> {
         let key = Self::snapshot_key(dataset_name, snapshot_name);
-        let snapshot = self.snapshots.remove(&key).ok_or_else(|| {
-            BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
-        })?;
+        let snapshot = self.snapshots.remove(&key).ok_or_else(|| snapshot_not_found(&key))?;
         for stripe in snapshot.stripes {
             self.release_stripe(stripe);
         }
@@ -330,9 +327,7 @@ impl<V: Vdev> Pool<V> {
 
     pub fn snapshot_size(&self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<u64> {
         let key = Self::snapshot_key(dataset_name, snapshot_name);
-        let snapshot = self.snapshots.get(&key).ok_or_else(|| {
-            BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
-        })?;
+        let snapshot = self.snapshots.get(&key).ok_or_else(|| snapshot_not_found(&key))?;
         Ok(snapshot.stripes.len() as u64 * self.chunk_bytes())
     }
 
@@ -355,13 +350,11 @@ impl<V: Vdev> Pool<V> {
         let count = (len / chunk_bytes) as usize;
 
         let physical_stripes: Vec<u64> = {
-            let snapshot = self.snapshots.get(&key).ok_or_else(|| {
-                BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
-            })?;
+            let snapshot = self.snapshots.get(&key).ok_or_else(|| snapshot_not_found(&key))?;
             if start + count > snapshot.stripes.len() {
-                return Err(BridgeError::Io(std::io::Error::other(
-                    "スナップショットの容量を超える読み込みです",
-                )));
+                return Err(BridgeError::CapacityExceeded(
+                    "スナップショットの容量を超える読み込みです".to_string(),
+                ));
             }
             snapshot.stripes[start..start + count].to_vec()
         };
@@ -386,17 +379,13 @@ impl<V: Vdev> Pool<V> {
         new_dataset_name: &str,
     ) -> BridgeResult<()> {
         if self.datasets.contains_key(new_dataset_name) {
-            return Err(BridgeError::Io(std::io::Error::other(format!(
-                "データセット'{new_dataset_name}'は既に存在します"
-            ))));
+            return Err(BridgeError::AlreadyExists(format!("データセット'{new_dataset_name}'")));
         }
         let key = Self::snapshot_key(dataset_name, snapshot_name);
         let stripes = self
             .snapshots
             .get(&key)
-            .ok_or_else(|| {
-                BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
-            })?
+            .ok_or_else(|| snapshot_not_found(&key))?
             .stripes
             .clone();
 
@@ -421,9 +410,9 @@ impl<V: Vdev> Pool<V> {
             .get(logical_stripe as usize)
             .copied()
             .ok_or_else(|| {
-                BridgeError::Io(std::io::Error::other(format!(
+                BridgeError::CapacityExceeded(format!(
                     "データセット'{name}'の論理ストライプ{logical_stripe}は未割当です"
-                )))
+                ))
             })
     }
 
@@ -447,9 +436,9 @@ impl<V: Vdev> Pool<V> {
         let physical_stripes: Vec<u64> = {
             let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
             if start + count > ds.stripes.len() {
-                return Err(BridgeError::Io(std::io::Error::other(format!(
+                return Err(BridgeError::CapacityExceeded(format!(
                     "データセット'{name}'の割当容量を超える読み込みです"
-                ))));
+                )));
             }
             ds.stripes[start..start + count].to_vec()
         };
