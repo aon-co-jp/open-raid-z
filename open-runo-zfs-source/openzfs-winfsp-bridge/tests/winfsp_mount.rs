@@ -4,6 +4,10 @@
 //! 標準の`std::fs`経由でファイルの読み書きができる(=本物のファイル
 //! システムとして機能している)ことを検証する。
 //!
+//! `mount_pool`はプール内の全データセットをそれぞれ`\<データセット名>`
+//! というファイルとしてルート直下に公開する(`mount.rs`参照)。このテストは
+//! その中の1データセット(`tank`)についてのみ読み書きを検証する。
+//!
 //! チャンク境界に一致する範囲でのみ読み書きできるという、ひな型段階の
 //! 制約(`mount.rs`のモジュールドキュメント参照)に合わせて、
 //! データセット全体をちょうど1回で書き切るサイズのペイロードを使う。
@@ -43,7 +47,7 @@ fn mounted_pool_survives_a_real_file_write_and_read_round_trip() {
     let dataset_bytes = NUM_STRIPES * (4 * CHUNK_SIZE as u64);
     pool.grow_dataset("tank", dataset_bytes).unwrap();
 
-    let mut host = match mount_pool(pool, "tank", MOUNT_POINT) {
+    let mut host = match mount_pool(pool, MOUNT_POINT) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("WinFspマウントに失敗したためテストをスキップします: {e:?}");
@@ -52,7 +56,7 @@ fn mounted_pool_survives_a_real_file_write_and_read_round_trip() {
         }
     };
 
-    let file_path = format!("{MOUNT_POINT}\\pool.dat");
+    let file_path = format!("{MOUNT_POINT}\\tank");
     let payload: Vec<u8> = (0..dataset_bytes).map(|i| (i % 256) as u8).collect();
 
     std::fs::write(&file_path, &payload).expect("マウント先ファイルへの書き込みに失敗");

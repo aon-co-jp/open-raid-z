@@ -9,6 +9,7 @@
 //! - openzfs-winfsp-bridge からは「バイト列を渡すとパリティ/チェックサムが
 //!   返ってくる」という単純な関数として利用できること
 
+#[cfg(feature = "gpu")]
 pub mod compute;
 pub mod device;
 pub mod galois;
