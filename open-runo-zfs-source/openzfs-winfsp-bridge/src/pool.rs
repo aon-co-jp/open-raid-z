@@ -514,4 +514,30 @@ impl<V: Vdev> Pool<V> {
         let aligned_end = end.div_ceil(chunk_bytes) * chunk_bytes;
         (aligned_offset, aligned_end - aligned_offset)
     }
+
+    /// プール全体(全物理ストライプ)をスキャンし、チェックサム不一致
+    /// (サイレント破損)を検知・自己修復する(ZFSの`zpool scrub`に相当)。
+    ///
+    /// `scrub`自体は[`crate::vdev::RaidZVdev`]/[`crate::raid10::Raid10Vdev`]の
+    /// どちらにも実装済みだったが、`Pool`が`vdev`フィールドを非公開で保持する
+    /// ため、`Pool`しか持たない呼び出し側(`mount.rs`等)からは一切呼び出せない
+    /// という抜けがあった。`Vdev`トレイトに`scrub`を追加したことで、`Pool`は
+    /// 内部のvdev実装(RAID-Z系かRAID10か)を意識せずにこのメソッド1つで
+    /// 委譲できる。
+    pub fn scrub(&mut self) -> BridgeResult<crate::vdev::ScrubReport> {
+        self.vdev.scrub(self.total_stripes)
+    }
+
+    /// 内部の`Vdev`実装への可変参照を返す。
+    ///
+    /// `resilver`(故障ディスクの交換・再構築)は[`crate::vdev::RaidZVdev`]と
+    /// [`crate::raid10::Raid10Vdev`]とでシグネチャが異なる
+    /// (前者は対象ディスク1個のインデックス、後者はミラーグループと
+    /// グループ内インデックスの2階層)ため、`scrub`のように`Vdev`トレイトへ
+    /// 単純には統一できていない。ディスク交換のような低頻度・vdev固有の
+    /// 操作を行う呼び出し側は、このメソッドで内部の具体的な型
+    /// (`V::resilver`等)へ直接アクセスすること。
+    pub fn vdev_mut(&mut self) -> &mut V {
+        &mut self.vdev
+    }
 }
