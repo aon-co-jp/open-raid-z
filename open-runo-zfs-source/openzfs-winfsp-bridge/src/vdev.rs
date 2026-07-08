@@ -98,6 +98,22 @@ impl<D: BlockDevice> RaidZVdev<D> {
     /// 1ストライプ分のデータを読み出す。読めないディスクが`parity_count`台以内
     /// なら、パリティから自動的に復旧して返す。
     pub fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
+        self.read_stripe_forcing_missing(stripe_index, &[])
+    }
+
+    /// `read_stripe`と同様だが、`force_missing`に含まれるディスクは実際に
+    /// 読めたかどうかに関わらず「欠損」として扱う。
+    ///
+    /// これは`resilver`が交換直後(まだ正しいデータが書かれていない)ディスクを、
+    /// たまたま読めてしまう(壊れていない・オンラインである)という理由だけで
+    /// 誤って信頼しないようにするために必要。実運用でも「交換した新品ディスクは
+    /// 読めるが中身は空(信用できない)」という状況は同じであり、この関数は
+    /// それを正しくモデル化する。
+    fn read_stripe_forcing_missing(
+        &mut self,
+        stripe_index: u64,
+        force_missing: &[usize],
+    ) -> BridgeResult<Vec<u8>> {
         let num_data = self.num_data_disks();
         let offset = stripe_index * self.chunk_size as u64;
         let chunk_size = self.chunk_size;
@@ -105,7 +121,14 @@ impl<D: BlockDevice> RaidZVdev<D> {
         let reads: Vec<Option<Vec<u8>>> = self
             .devices
             .iter_mut()
-            .map(|dev| dev.read_at(offset, chunk_size).ok())
+            .enumerate()
+            .map(|(i, dev)| {
+                if force_missing.contains(&i) {
+                    None
+                } else {
+                    dev.read_at(offset, chunk_size).ok()
+                }
+            })
             .collect();
 
         let missing: Vec<usize> = reads
@@ -140,52 +163,27 @@ impl<D: BlockDevice> RaidZVdev<D> {
             .map(|(i, r)| (i, r.as_ref().unwrap().as_slice()))
             .collect();
 
-        let get_parity = |idx: usize, name: &str| -> BridgeResult<&[u8]> {
-            reads[num_data + idx]
-                .as_deref()
-                .ok_or_else(|| BridgeError::Io(std::io::Error::other(format!("{name}パリティも失われており復旧できません"))))
-        };
+        // 生き残っているパリティを(種別: 0=P,1=Q,2=R, データ)のペアとして集める。
+        // Pが故障していてもQ・Rが生きていれば復旧できるよう、固定でPを要求せず
+        // 「生きている分」だけを渡す(`reconstruct_missing_data_generic`参照)。
+        let available_parity: Vec<(u8, &[u8])> = reads[num_data..]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.as_deref().map(|d| (i as u8, d)))
+            .collect();
 
-        let recovered: Vec<(usize, Vec<u8>)> = match missing_data.len() {
-            0 => vec![],
-            1 => {
-                let p = get_parity(0, "P")?;
-                let known_slices: Vec<&[u8]> = known.iter().map(|(_, d)| *d).collect();
-                let rec = raidz23_parity::reconstruct_single_missing(&known_slices, p);
-                vec![(missing_data[0], rec)]
-            }
-            2 => {
-                let p = get_parity(0, "P")?;
-                let q = get_parity(1, "Q")?;
-                let (dx, dy) = raidz23_parity::reconstruct_double_missing(
-                    &known,
-                    (missing_data[0], missing_data[1]),
-                    p,
-                    q,
-                    &self.gf,
-                );
-                vec![(missing_data[0], dx), (missing_data[1], dy)]
-            }
-            3 => {
-                let p = get_parity(0, "P")?;
-                let q = get_parity(1, "Q")?;
-                let r = get_parity(2, "R")?;
-                let (dx, dy, dz) = raidz23_parity::reconstruct_triple_missing(
-                    &known,
-                    (missing_data[0], missing_data[1], missing_data[2]),
-                    p,
-                    q,
-                    r,
-                    &self.gf,
-                );
-                vec![
-                    (missing_data[0], dx),
-                    (missing_data[1], dy),
-                    (missing_data[2], dz),
-                ]
-            }
-            _ => unreachable!("missing_data.len()はparity_count(最大3)以下"),
-        };
+        if available_parity.len() < missing_data.len() {
+            return Err(BridgeError::Io(std::io::Error::other(
+                "生存しているパリティの数が復旧に必要な数を下回っています",
+            )));
+        }
+
+        let recovered = raidz23_parity::reconstruct_missing_data_generic(
+            &known,
+            &missing_data,
+            &available_parity,
+            &self.gf,
+        );
 
         let mut full: Vec<Vec<u8>> = vec![Vec::new(); num_data];
         for (i, d) in known {
@@ -210,7 +208,9 @@ impl<D: BlockDevice> RaidZVdev<D> {
         let chunk_size = self.chunk_size;
 
         for stripe in 0..num_stripes {
-            let data = self.read_stripe(stripe)?;
+            // target_indexは(たとえ現在読めても)常に「欠損」として扱い、
+            // 交換直後ディスクの古い/空の中身を誤って信頼しないようにする。
+            let data = self.read_stripe_forcing_missing(stripe, &[target_index])?;
             let offset = stripe * chunk_size as u64;
 
             if target_index < num_data {
