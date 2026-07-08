@@ -34,16 +34,24 @@ Sono esclusi i seguenti casi, poiché seguono specifiche esterne o convenzioni d
 - **Compatibilità exFAT**: conversione di attributi file e timestamp, supporto per file/volumi superiori a 4GB
 - **Accelerazione hardware GPU/NPU**: il calcolo della parità RAID-Z1/Z2 viene effettivamente inviato tramite DirectX 12 Compute + DirectML (ripiego automatico su CPU se non è presente hardware)
 - **Consulente di configurazione in stile Copilot**: consiglia un livello RAID in base alla disposizione dei dischi, all'acceleratore e al numero di core CPU (prima versione euristica; è presente anche uno scheletro di rilevamento LLM locale). La logica risiede in `open_runo_installer_core`, indipendente da Tauri, e può essere verificata con `cargo test` anche su Linux/macOS
-- **Montaggio reale via WinFsp (prototipo)**: può essere effettivamente montato come lettera di unità Windows. Ogni dataset del pool appare come un proprio file, con supporto a offset/lunghezze arbitrarie in byte per lettura e scrittura (gerarchia di directory e create/delete/rename non ancora supportate — resta uno spazio dei nomi piatto)
+- **Montaggio reale via WinFsp**: può essere effettivamente montato come lettera di unità Windows. Ogni dataset del pool appare come un proprio file, con supporto a offset arbitrari in byte per lettura/scrittura e a creazione/eliminazione/rinomina/append/troncamento dei file (resta uno spazio dei nomi piatto nella radice — le sottodirectory non sono ancora supportate). Verificato su hardware reale: lettura, scrittura, creazione, eliminazione, rinomina, append e troncamento di file tramite un'unità effettivamente montata.
 - **Supporto multilingua**: l'installer usa il giapponese come lingua predefinita con un selettore di lingua nell'interfaccia, modificabile anche dopo l'installazione
+
+## Capacità e limiti di dimensione dei file
+
+- La dimensione logica di un dataset (file) è tracciata in modo coerente come `u64`, quindi non esiste un limite artificiale come il confine dei 4GB di FAT32 (il limite teorico è 2^64 byte). File di grandi dimensioni come video o immagini vanno bene, purché rientrino nei vincoli reali descritti sotto.
+- Il limite reale è la **capacità libera del pool** — la somma della capacità utilizzabile dei dischi collegati, meno l'overhead di ridondanza di ciascun livello RAID. Ad esempio, con RAID-Z2 (doppia parità), il limite effettivo è all'incirca la capacità combinata dei dischi dati.
+- Una singola chiamata di lettura/scrittura WinFsp è limitata a circa 4GiB (`u32`) dall'API Windows stessa, ma è lo stesso vincolo che ha qualsiasi file system reale — il sistema operativo/l'applicazione suddivide automaticamente i trasferimenti più grandi in più chiamate, quindi non è un limite pratico.
+- A causa del copy-on-write, ogni scrittura (creazione, append o sovrascrittura) richiede sempre almeno una stripe libera disponibile nel pool (la stessa idea dello `slop space` di ZFS). Riempire il pool al 100% della capacità significa che anche sovrascrivere dati esistenti fallirà. In pratica, lasciare sempre libera qualche percentuale del pool.
 
 ## Limitazioni attuali (fase prototipo)
 
-- Il montaggio WinFsp supporta solo uno spazio dei nomi piatto (ogni dataset del pool appare come un file nella radice). Nessuna gerarchia di directory né create/delete/rename per singolo file per ora.
-- Le letture/scritture passano attraverso `Pool::read_unaligned`/`Pool::write_unaligned` (un livello read-modify-write), quindi sono supportati offset e lunghezze arbitrari in byte. Le richieste che superano la capacità allocata di un dataset (impostata con `grow_dataset`) falliscono comunque (non c'è espansione automatica implicita).
+- Il montaggio WinFsp supporta solo uno spazio dei nomi piatto nella radice. Le sottodirectory non sono supportate (create/delete/rename per singolo file sono invece supportate).
+- Le letture/scritture passano attraverso `Pool::read_unaligned`/`Pool::write_unaligned_growing` (un livello read-modify-write) e supportano offset/lunghezze arbitrarie in byte; una scrittura che supera la dimensione attuale fa crescere automaticamente il file (vedi "Capacità e limiti di dimensione dei file" sopra per capacità e considerazioni sul PATH).
 - `Pool` supporta sia `RaidZVdev` che `Raid10Vdev`, ma l'integrazione di RAID10 con l'API dataset è ancora superficiale in alcuni punti.
 - Il codice del montaggio reale WinFsp (`mount.rs`) non può essere compilato con una toolchain Rust precedente alla 1.85, perché il crate `winfsp` richiede la feature Cargo `edition2024` (vedi Build e test più sotto).
 - `mount.rs` e l'implementazione GPU di `zfs_accel_hlsl` (feature `gpu`) dipendono dal crate `windows`, il cui contenuto è completamente vuoto a meno che il target di compilazione non sia effettivamente Windows. Di conseguenza questo codice può essere compilato e testato solo su una macchina Windows reale (o compilando in cross per un target Windows); su Linux/macOS si compila solo disabilitandoli con `--no-default-features`.
+- Rinominare (`rename`) un file mentre un altro handle aperto lo punta ancora può lasciare quell'altro handle non funzionante per le operazioni successive (`FileHandle` mantiene il nome direttamente per design — vedi la documentazione di `Pool::rename_dataset` per i dettagli).
 
 ## Build e test
 
@@ -62,6 +70,15 @@ Compilare con le feature predefinite (`winfsp_backend` + `gpu_accel`) richiede:
 - **Rust 1.85 o successivo** (la versione in cui `edition2024`, richiesta dal crate `winfsp`, è stata stabilizzata; con toolchain più vecchie fallisce già l'analisi del manifest `Cargo.toml`).
 
 È anche possibile disabilitare singolarmente WinFsp o dxc (es. `--no-default-features --features gpu_accel` per solo GPU, senza WinFsp).
+
+**Nota per eseguire realmente i test `winfsp_backend` (montaggio reale)**: il crate `winfsp` carica dinamicamente la DLL di WinFsp (`winfsp-x64.dll`) tramite `LoadLibraryW`, che cerca solo nel percorso di ricerca DLL standard (la cartella dell'eseguibile, `System32` e `PATH`). Negli ambienti in cui l'installer di WinFsp non si è aggiunto al `PATH`, la build va a buon fine (non servono gli header dell'SDK WinFsp) ma l'esecuzione **fallisce sempre a runtime** (errore `WIN32(1285)` = `ERROR_DELAY_LOAD_FAILED`). Aggiungere la cartella `bin` di WinFsp al `PATH` solo per l'esecuzione dei test:
+
+```powershell
+$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+cargo test --features winfsp_backend,gpu_accel
+```
+
+Senza questo, `mount_pool` restituisce un `Err`, e il test lo tratta come un problema dipendente dall'ambiente, stampando un messaggio di skip via `eprintln` e uscendo subito. **Senza `--nocapture`, questo skip appare comunque come `ok`, indistinguibile da un montaggio+lettura/scrittura effettivamente riuscito.** Usare sempre `--nocapture` quando si verificano i test di montaggio reale, e controllare visivamente che non compaia alcun messaggio di skip.
 
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 

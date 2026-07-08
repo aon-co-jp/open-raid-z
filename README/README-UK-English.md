@@ -34,16 +34,24 @@ The following are exempt, because they follow external specifications or ecosyst
 - **exFAT compatibility**: file attribute and timestamp conversion, support for files/volumes beyond 4GB
 - **GPU/NPU hardware acceleration**: RAID-Z1/Z2 parity computation is actually dispatched via DirectX 12 Compute + DirectML (falls back to CPU automatically when no hardware is present)
 - **Copilot-style configuration advisor**: recommends a RAID level from disk layout, accelerator, and CPU core count (heuristic first pass; a local-LLM detection skeleton is also in place). The logic lives in `open_runo_installer_core`, independent of Tauri, and can be verified with `cargo test` on Linux/macOS too
-- **Real WinFsp mount (prototype)**: can actually be mounted as a Windows drive letter. Every dataset in the pool shows up as its own file, and arbitrary byte offsets/lengths are supported for reads and writes (directory hierarchies and create/delete/rename are not supported yet — still a flat namespace)
+- **Real WinFsp mount**: can actually be mounted as a Windows drive letter. Every dataset in the pool shows up as its own file, with arbitrary byte-offset reads/writes and file create/delete/rename/append/truncate all supported (still a flat namespace at the root — subdirectories are not supported yet). Verified on real hardware: reading, writing, creating, deleting, renaming, appending, and truncating files through an actual mounted drive.
 - **Multilingual support**: the installer defaults to Japanese with a UI language switcher, changeable after installation too
+
+## Capacity & file-size limits
+
+- A dataset (file)'s logical size is tracked consistently as a `u64`, so there is no artificial limit like FAT32's 4GB boundary (the theoretical ceiling is 2^64 bytes). Large files such as video or images are fine as long as they fit within the actual constraints below.
+- The real limit is the **pool's free capacity** — the sum of the connected disks' usable capacity, minus each RAID level's redundancy overhead. For example, with RAID-Z2 (double parity), the effective limit is roughly the combined capacity of the data disks.
+- A single WinFsp read/write call is capped at about 4GiB (`u32`) by the Windows API itself, but this is the same constraint any real filesystem has — the OS/application automatically splits larger transfers into multiple calls, so it is not a practical limit.
+- Because of copy-on-write, every write (create, append, or overwrite alike) always needs at least one free stripe available in the pool (the same idea as ZFS's `slop space`). Filling the pool to 100% capacity means even overwriting existing data will fail. In practice, always leave a few percent of the pool free.
 
 ## Current limitations (prototype stage)
 
-- The WinFsp mount only supports a flat namespace (every dataset in the pool appears as one file at the root). No directory hierarchy or per-file create/delete/rename yet.
-- Reads/writes go through `Pool::read_unaligned`/`Pool::write_unaligned` (a read-modify-write layer), so arbitrary byte offsets and lengths are supported. Requests that exceed a dataset's allocated capacity (as set by `grow_dataset`) still fail (there is no implicit auto-growth).
+- The WinFsp mount only supports a flat namespace at the root. Subdirectories are not supported (per-file create/delete/rename are supported).
+- Reads/writes go through `Pool::read_unaligned`/`Pool::write_unaligned_growing` (a read-modify-write layer) and support arbitrary byte offsets/lengths; a write that exceeds the current size automatically grows the file (see "Capacity & file-size limits" above for capacity and PATH considerations).
 - `Pool` supports both `RaidZVdev` and `Raid10Vdev`, but RAID10's integration with the dataset API is still shallow in places.
 - The real WinFsp mount code (`mount.rs`) cannot be built on a Rust toolchain older than 1.85, because the `winfsp` crate requires the `edition2024` Cargo feature (see Build & test below).
 - `mount.rs` and `zfs_accel_hlsl`'s GPU implementation (the `gpu` feature) depend on the `windows` crate, whose contents are entirely empty unless the compilation target is actually Windows. Consequently this code can only be built and tested on a real Windows machine (or when cross-compiling to a Windows target); on Linux/macOS it only builds once these are disabled via `--no-default-features`.
+- Renaming (`rename`) a file while another open handle still points at it can leave that other handle broken for subsequent operations (`FileHandle` holds the name directly by design — see the `Pool::rename_dataset` documentation for details).
 
 ## Build & test
 
@@ -62,6 +70,15 @@ Building with the default features (`winfsp_backend` + `gpu_accel`) requires:
 - **Rust 1.85 or later** (the version in which `edition2024`, required by the `winfsp` crate, was stabilised; older toolchains fail even to parse the `Cargo.toml` manifest).
 
 Either WinFsp or dxc can also be disabled individually (e.g. `--no-default-features --features gpu_accel` for GPU only, without WinFsp).
+
+**Note when actually running the `winfsp_backend` tests (real mount)**: the `winfsp` crate dynamically loads the WinFsp DLL (`winfsp-x64.dll`) via `LoadLibraryW`, which only looks at the standard DLL search path (the executable's own folder, `System32`, and `PATH`). In environments where the WinFsp installer hasn't added itself to `PATH`, the build succeeds fine (no WinFsp SDK headers are needed) but running it **always fails at runtime** (error `WIN32(1285)` = `ERROR_DELAY_LOAD_FAILED`). Add WinFsp's `bin` directory to `PATH` just for the test run:
+
+```powershell
+$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"
+cargo test --features winfsp_backend,gpu_accel
+```
+
+Without this, `mount_pool` returns an `Err`, and the test treats it as an environment-dependent issue, printing a skip message via `eprintln` and returning early. **Without `--nocapture`, this skip still just shows as `ok`, indistinguishable from an actual successful mount+read/write.** Always pass `--nocapture` when checking real-mount tests, and confirm visually that no skip message appears.
 
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 
