@@ -535,3 +535,112 @@ npm/node(v22.22.2)が利用可能だったため、`open_runo_installer`の
    はWindows runner(かつ十分に新しいRustツールチェイン)が必要。
 4. `resilver`を`Vdev`トレイトへ統一するかどうかの設計判断
 5. installer実装確認(UI/UXの拡充)・PR作成・AD/SAM連携
+
+---
+
+## 追記6: 実機(Windows, Rust 1.96)での初検証。create/delete/rename/append/truncateの追加。重要な訂正
+
+このセッションはWindows実機(前回までのLinuxセッションとは別の作業環境。
+Rust 1.96、dxc(Vulkan SDK同梱)、WinFsp実行時コンポーネントが揃っている)
+で行われた。「上記4件はWindows実機待ち」としていた項目のうち、1・2が
+実際に検証可能であることが判明し、進めた。
+
+### 【重要な訂正】これまでの「WinFspマウント実機検証済み」という記述について
+
+このセッションの調査で、`cargo test --features winfsp_backend,gpu_accel`が
+`--nocapture`無しだと、**実際にはWinFspのDLLロードに失敗してテストが
+早期スキップされているだけの場合でも`ok`としか表示されない**ことが判明した
+(スキップ時の`eprintln`はcaptureされ、`--nocapture`無しでは見えない)。
+このセッションの冒頭でこの問題を踏んでおり、`--nocapture`を付けて初めて
+実際にはマウントに失敗しスキップしていたことが分かった
+(`WIN32(1285)`=`ERROR_DELAY_LOAD_FAILED`。原因はWinFspの`bin`ディレクトリが
+`PATH`に無く、`winfsp`クレートの`LoadLibraryW("winfsp-x64.dll")`が
+見つけられないこと。詳細はREADMEの「ビルド・テスト」節に追記した)。
+
+このため、**過去のセッション記録にある「WinFspマウントを実機で検証し、
+実際に読み書きできることを確認した」という趣旨の記述(このファイルの
+冒頭付近、コミット`fab0999`に関する記述)は、同様に`--nocapture`無しで
+確認されていた可能性があり、実際には検証されていなかった疑いがある**。
+今後このプロジェクトを引き継ぐ際は、`mount.rs`関連のテストが本当に
+マウントできているかどうかは、`--nocapture`を付けて`スキップします`
+という文字列が出ていないことを都度目視で確認すること。
+
+一方、GPU実ディスパッチのテスト
+(`zfs_accel_hlsl`の`xor_dispatch_matches_cpu_reference_when_hardware_available`)
+はこのセッションで`--nocapture`付きで確認しており、スキップメッセージが
+出ずに実際のGPU(NVIDIA GeForce GT 730)でディスパッチが成功し、CPU参照
+実装と結果が一致することを確認済み。こちらは訂正の必要はない。
+
+### 今回追加した機能: WinFspマウント経由でのcreate/delete/rename/append/truncate
+
+前回までの`mount.rs`はルート直下のデータセット一覧の読み書きのみで、
+ファイルの新規作成・削除・名前変更はマウント外から`Pool`のAPIを直接
+呼ぶ運用を想定していた。今回、WinFspの`create`/`cleanup`+`set_delete`/
+`rename`/`set_file_size`コールバックを実装し、Explorerや通常のアプリ
+から「新規ファイル作成」「削除」「リネーム」「追記」「切り詰め」が
+そのまま使えるようにした。
+
+- `pool.rs`: `Dataset`に`logical_size`(バイト単位の論理サイズ)を追加。
+  従来`dataset_size()`は`stripes.len() * chunk_bytes`(常にストライプ境界に
+  切り上げられた値)を返していたが、これを実際に書き込んだバイト数どおりの
+  値に変更(4KB未満の小さいファイルでも正確なサイズが報告できるように
+  なった、既存の`grow_dataset`系テストとの後方互換は維持)。
+  `write_unaligned_growing`(書き込みが現在のサイズを超えたら自動的に
+  容量を拡張してから書く)、`set_dataset_size`(拡張/切り詰め、切り詰め時は
+  不要になったストライプをプールへ返却)、`rename_dataset`を新規追加。
+- `mount.rs`: `create`(サブディレクトリ作成は拒否)・`cleanup`+`set_delete`
+  (WinFspの規約どおり、削除は`cleanup`の`FspCleanupDelete`フラグで実施)・
+  `rename`・`set_file_size`を実装。`write`は`write_to_eof`
+  (FILE_APPEND_DATA)・`constrained_io`(メモリマップ書き込み、ファイルを
+  伸ばしてはいけない)も正しく扱うよう書き直した。
+  `get_volume_info`の**バグも発見・修正**: `total_size`/`free_size`に
+  ストライプ「数」をそのまま渡していたため、Windowsからは「容量数バイト
+  しかない極小ボリューム」に見えていた(バイト単位の値に修正)。
+
+### 【重要な発見】CoWは常に「あと1ストライプ」の空きを要求する(ZFSのslop spaceと同じ)
+
+`Pool::write`のCoW実装は「新しいストライプへ書いてから古いストライプを
+解放する」順序で動くため、プールを100%使い切った状態からの書き込みは
+(たとえ同じデータで上書きするだけでも)失敗する。これは今回の変更で
+新たに生まれた制約ではなく`Pool::write`が最初から持っていた性質だが、
+今回`create`のCREATE_ALWAYS経由でのtruncate→再書き込みという新しい経路が
+できたことで初めて顕在化した。`ensure_min_capacity`に「追加確保ぶん+1」の
+空きを要求するチェックを追加して安全に失敗するようにし、`tests/winfsp_mount.rs`
+のプールにも1ストライプぶんの余裕を持たせるよう修正した。
+
+### 検証状況(実機、`--nocapture`で確認済み)
+
+`PATH`にWinFspの`bin`を追加した状態で`cargo test --features
+winfsp_backend,gpu_accel`を実行し、**スキップメッセージ無しで94テスト
+全パス**(内訳: 既存82 + `tests/dynamic_file_size.rs`新規7 +
+`tests/winfsp_mount_file_ops.rs`新規4 + α)。実マウント経由での
+新規作成・削除・リネーム・追記・切り詰めをそれぞれ`std::fs`の標準API
+(`write`/`remove_file`/`rename`/`OpenOptions::append`/`File::set_len`)から
+実際に検証した。`cargo test --no-default-features`(Linux CI相当)も
+引き続き全パス。
+
+### 容量・ファイルサイズの上限(ユーザーからの質問への回答、README追記済み)
+
+ファイル(データセット)の論理サイズは`u64`で一貫管理しており、FAT32の
+ような人為的な4GB上限は無い。実際の上限は**プールの空き容量**
+(接続ディスクの実容量合計からRAID冗長化ぶんを引いたもの)で決まる。
+動画・画像などサイズの大きいファイルも、残容量の範囲内であれば
+問題なく保存できる。ただし上記のCoW slop space制約により、プールは
+常に少なくとも1ストライプぶんの空きを残しておく必要がある。
+
+### 残る実用性課題(更新版)
+
+1. ディレクトリ階層(サブディレクトリ)― 引き続き未対応
+2. リネーム中の別ハンドルの整合性(`FileHandle`が名前ベースのため、
+   リネーム対象を指す他のオープンハンドルは以後失敗しうる。既知の制約として
+   `Pool::rename_dataset`のドキュメントに明記済み)
+3. `cargo tauri build`(installer本体)の実機検証 ― 今回`cargo check`は
+   実機で成功したが、GUIとして実際に動かす検証はまだ
+4. CI(GitHub Actions)追加。実マウント系テストをCIで回す場合は
+   `PATH`にWinFsp `bin`を追加するステップが必須(上記参照)
+5. `resilver`を`Vdev`トレイトへ統一するかどうかの設計判断
+6. installer実装確認(UI/UXの拡充)・PR作成・AD/SAM連携
+7. 実ハードウェア(HDD/SSD/USBメモリ複数台)を使ったRAID6実験、
+   実GPU(GT730)でのDirectXハードウェアアクセラレーション実験 ―
+   ユーザーから提案あり、実施する場合は対象ディスクのデータ消失
+   リスクについて事前確認が必要

@@ -4,34 +4,34 @@
 //! マウントできる`winfsp`クレート連携へ置き換えたもの。
 //!
 //! 【現状のスコープ】
-//! - ルート直下に、[`Pool`]へ`create_dataset`済みの全データセットが、それぞれ
-//!   1つのファイル(`\<データセット名>`)として並ぶフラットな名前空間
-//!   (ディレクトリ階層・ファイル単位でのcreate/delete/rename は未対応。
-//!   データセットの追加/削除自体は[`Pool::create_dataset`]/
-//!   [`Pool::destroy_dataset`]をマウント外から呼ぶ運用を想定)。
-//! - 読み書きは[`Pool::read_unaligned`]/[`Pool::write_unaligned`]
+//! - ルート直下に、[`Pool`]の全データセットが、それぞれ1つのファイル
+//!   (`\<データセット名>`)として並ぶフラットな名前空間(サブディレクトリは
+//!   引き続き未対応)。ファイルの作成(`create`)・削除(`set_delete`+
+//!   `cleanup`)・名前変更(`rename`)はマウント経由でサポートする
+//!   (詳細は各メソッドのドキュメント参照)。
+//! - 読み書きは[`Pool::read_unaligned`]/[`Pool::write_unaligned_growing`]
 //!   (read-modify-write層)経由で行うため、バイト単位の任意オフセット・
-//!   任意長のリクエストを受け付ける(以前の版はストライプ境界に一致する
-//!   リクエストしか受け付けなかった。詳細は`pool.rs`参照)。
-//!   データセットの割当容量([`Pool::grow_dataset`]で確保済みの範囲)を
-//!   超えるリクエストは引き続きエラーになる(暗黙の自動拡張は行わない)。
+//!   任意長のリクエストを受け付ける。書き込みが現在の論理サイズを超える
+//!   場合は、通常のファイルシステムと同様に自動的にファイルが伸びる
+//!   (プール自体の空き容量が尽きた場合のみエラーになる。詳細は`pool.rs`
+//!   の[`Pool::write_unaligned_growing`]参照)。
 //! - データセット名はそのままファイル名として使うため、Windowsのファイル名
 //!   として不正な文字(`\ / : * ? " < > |`)を含む名前は使えない
 //!   (ZFSの`pool/child`のような階層名はこの制約に抵触するため、この段階では
 //!   フラットな名前のデータセットのみを想定する)。
 //!
 //! これはあくまで「実際にマウントできる」ことを証明する最小のひな型であり、
-//! 本格的なファイルシステムとしての完成度(ディレクトリ階層・ACL・
-//! 任意オフセット書き込み等)は今後の拡張で高めていく。
+//! 本格的なファイルシステムとしての完成度(ディレクトリ階層・ACL等)は
+//! 今後の拡張で高めていく。
 
 use crate::pool::Pool;
 use crate::vdev::Vdev;
 use std::sync::Mutex;
 use widestring::{u16cstr, U16CStr};
 use windows::Win32::Foundation::{
-    STATUS_DATA_ERROR, STATUS_DISK_FULL, STATUS_END_OF_FILE, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_CANNOT_DELETE, STATUS_DATA_ERROR, STATUS_DISK_FULL,
+    STATUS_END_OF_FILE, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use winfsp::filesystem::{
     DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
@@ -42,6 +42,13 @@ use winfsp::{winfsp_init, FspError, FspInit, Result as FspResult};
 
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+/// `NtCreateFile`の`CreateOptions`のうち、このファイルシステムが実際に
+/// 見るのは「ディレクトリとして作成せよ」を意味するこのフラグのみ
+/// (ルート以外のディレクトリ作成はサポートしないため拒否に使う)。
+const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+/// `cleanup`の`flags`引数のうち、「(事前の`set_delete`により)このハンドルの
+/// クローズをもって実際に削除する」ことを意味するビット。
+const FSP_CLEANUP_DELETE: u32 = 1;
 /// Windowsのファイル名として使えない文字。データセット名がこれらを
 /// 含む場合はマウント上に公開しない(`list_exposable_datasets`参照)。
 const INVALID_NAME_CHARS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
@@ -179,18 +186,136 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         context: &Self::FileContext,
         buffer: &[u8],
         offset: u64,
-        _write_to_eof: bool,
-        _constrained_io: bool,
+        write_to_eof: bool,
+        constrained_io: bool,
         file_info: &mut FileInfo,
     ) -> FspResult<u32> {
         let FileHandle::DataFile(name) = context else {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        pool.write_unaligned(name, offset, buffer)
+        let current_size = pool
+            .dataset_size(name)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        // write_to_eof: FILE_APPEND_DATAで開かれたハンドルからの書き込み。
+        // 渡された`offset`は無視し、現在の末尾へ書き込む。
+        let effective_offset = if write_to_eof { current_size } else { offset };
+
+        let written = if constrained_io {
+            // メモリマップされたファイル等からの書き込みでは、ファイルを
+            // 伸ばしてはいけない。現在のサイズをはみ出す分は切り詰める。
+            if effective_offset >= current_size {
+                0
+            } else {
+                let clamped_len = buffer.len().min((current_size - effective_offset) as usize);
+                pool.write_unaligned(name, effective_offset, &buffer[..clamped_len])
+                    .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+                clamped_len
+            }
+        } else {
+            pool.write_unaligned_growing(name, effective_offset, buffer)
+                .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+            buffer.len()
+        };
+
         self.fill_file_info(&pool, context, file_info)?;
-        Ok(buffer.len() as u32)
+        Ok(written as u32)
+    }
+
+    fn create(
+        &self,
+        file_name: &U16CStr,
+        create_options: u32,
+        _granted_access: u32,
+        _file_attributes: u32,
+        _security_descriptor: Option<&[std::ffi::c_void]>,
+        _allocation_size: u64,
+        _extra_buffer: Option<&[u8]>,
+        _extra_buffer_is_reparse_point: bool,
+        file_info: &mut OpenFileInfo,
+    ) -> FspResult<Self::FileContext> {
+        if create_options & FILE_DIRECTORY_FILE != 0 {
+            // サブディレクトリの作成は未対応(モジュールドキュメント参照)。
+            return Err(FspError::NTSTATUS(STATUS_NOT_IMPLEMENTED.0));
+        }
+        let name = Self::parse_new_top_level_name(file_name)
+            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+
+        let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+        pool.create_dataset(&name)
+            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        let handle = FileHandle::DataFile(name);
+        self.fill_file_info(&pool, &handle, file_info.as_mut())?;
+        Ok(handle)
+    }
+
+    fn cleanup(&self, context: &Self::FileContext, _file_name: Option<&U16CStr>, flags: u32) {
+        if flags & FSP_CLEANUP_DELETE == 0 {
+            return;
+        }
+        if let FileHandle::DataFile(name) = context {
+            let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+            // cleanupはエラーを返せない仕様(WinFspの制約)。set_deleteで
+            // 既に削除可能と判定済みのはずなので、失敗しても無視する。
+            let _ = pool.destroy_dataset(name);
+        }
+    }
+
+    fn set_delete(&self, context: &Self::FileContext, _file_name: &U16CStr, delete_file: bool) -> FspResult<()> {
+        match context {
+            // ルートは削除不可。データセットファイルは常に削除を許可し、
+            // 実際の削除は(WinFspの規約どおり)cleanupで行う。
+            FileHandle::Root if delete_file => Err(FspError::NTSTATUS(STATUS_CANNOT_DELETE.0)),
+            _ => Ok(()),
+        }
+    }
+
+    fn set_file_size(
+        &self,
+        context: &Self::FileContext,
+        new_size: u64,
+        _set_allocation_size: bool,
+        file_info: &mut FileInfo,
+    ) -> FspResult<()> {
+        let FileHandle::DataFile(name) = context else {
+            return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
+        };
+        let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+        pool.set_dataset_size(name, new_size)
+            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        self.fill_file_info(&pool, context, file_info)
+    }
+
+    /// 【既知の制約】リネーム対象を指す他の(この呼び出しとは別の)オープン
+    /// ハンドルが残っている場合、そのハンドルは古い名前のまま(`FileHandle`が
+    /// 名前を直接保持する設計のため)以後の操作に失敗しうる。詳細は
+    /// [`Pool::rename_dataset`]のドキュメント参照。
+    fn rename(
+        &self,
+        context: &Self::FileContext,
+        _file_name: &U16CStr,
+        new_file_name: &U16CStr,
+        replace_if_exists: bool,
+    ) -> FspResult<()> {
+        let FileHandle::DataFile(old_name) = context else {
+            return Err(FspError::NTSTATUS(STATUS_ACCESS_DENIED.0));
+        };
+        let new_name = Self::parse_new_top_level_name(new_file_name)
+            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+
+        let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
+        let target_exists = pool.dataset_names().iter().any(|d| d == &new_name);
+        if target_exists {
+            if !replace_if_exists {
+                return Err(FspError::NTSTATUS(STATUS_OBJECT_NAME_COLLISION.0));
+            }
+            if new_name != *old_name {
+                pool.destroy_dataset(&new_name)
+                    .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+            }
+        }
+        pool.rename_dataset(old_name, &new_name)
+            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))
     }
 
     fn read_directory(
@@ -208,7 +333,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
 
         let lock = self
             .dir_buffer
-            .acquire(marker.is_none(), Some(names.len()))
+            .acquire(marker.is_none(), Some(names.len() as u32))
             .map_err(|_| FspError::NTSTATUS(0xC00000E9u32 as i32))?;
 
         if marker.is_none() {
@@ -227,8 +352,14 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
     fn get_volume_info(&self, out_volume_info: &mut VolumeInfo) -> FspResult<()> {
         let pool = self.pool.lock().expect("プールのロックに失敗しました");
         let usage = pool.usage();
-        out_volume_info.total_size = usage.total_stripes;
-        out_volume_info.free_size = usage.free_stripes;
+        let stripe_bytes = pool.stripe_bytes();
+        // total_size/free_sizeはバイト単位で報告する必要がある。以前は
+        // ストライプ数をそのまま渡していたため、Windowsからは「容量数バイト
+        // しかない極小ボリューム」に見え、実際のデータサイズを書き込もうと
+        // すると即座にSTATUS_DISK_FULLになっていた(実マウントでの書き込みを
+        // 一度も検証できていなかったため、これまで発覚していなかった)。
+        out_volume_info.total_size = usage.total_stripes * stripe_bytes;
+        out_volume_info.free_size = usage.free_stripes * stripe_bytes;
         out_volume_info.set_volume_label("OpenRuno");
         Ok(())
     }
@@ -275,6 +406,18 @@ impl<V: Vdev> PoolFileSystem<V> {
         } else {
             None
         }
+    }
+
+    /// `create`/`rename`の対象となる「ルート直下の新しい名前」を検証・抽出する。
+    /// [`Self::classify`]と異なり、既存かどうかは問わない(存在確認は呼び出し側の
+    /// 責務)が、`\`直下の単一階層であること・不正文字を含まないことは同様に要求する。
+    fn parse_new_top_level_name(file_name: &U16CStr) -> Option<String> {
+        let name = file_name.to_string().ok()?;
+        let name = name.strip_prefix('\\')?;
+        if name.is_empty() || name.contains(INVALID_NAME_CHARS) {
+            return None;
+        }
+        Some(name.to_string())
     }
 }
 
