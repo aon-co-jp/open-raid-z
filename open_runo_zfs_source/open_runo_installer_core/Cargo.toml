@@ -1,0 +1,48 @@
+[workspace]
+
+[package]
+name = "open_runo_installer_core"
+version = "0.1.0"
+edition = "2021"
+description = "OpenRuno installer: ディスク検出・構成助言・zpoolプレビューのOS非依存ロジック(Tauri非依存)"
+license = "MPL-2.0"
+
+# NOTE: このクレートは意図的にtauri/tauri-plugin-openerへ依存しない。
+# Tauriのビルドには(現時点のRust/Cargo環境によっては)edition2024を要求する
+# 依存関係が含まれることがあり、そうした環境ではTauriアプリ本体
+# (`../open_runo_installer/src-tauri`)全体をビルドチェックできなくなる。
+# ディスク検出・構成助言・zpoolプレビューといったビジネスロジックは本来
+# OS非依存(Windows以外でも`cargo test`できる)であり、Tauri固有の制約に
+# 巻き込まれるべきではないため、独立したライブラリクレートとして切り出した。
+# Tauriアプリ側(`open_runo_installer/src-tauri`)はこのクレートを利用する
+# 薄いラッパーとしてのみ存在する。
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# NOTE: default-features = false が必須。open_zfs_winfsp_bridge/Cargo.toml
+# 参照(既定featureの`gpu`統合によりdxcが無い環境でビルド不能になる問題)。
+zfs_accel_hlsl = { path = "../zfs_accel_hlsl", default-features = false }
+open_zfs_winfsp_bridge = { path = "../open_zfs_winfsp_bridge", default-features = false }
+
+# `windows`クレートはWindows以外のターゲットでは中身が空になる
+# (`#![cfg(windows)]`)。`hardware.rs`はWindows専用のディスク列挙APIを
+# 使うため、依存自体をWindowsターゲット限定にする(`hardware.rs`側は
+# `#[cfg(windows)]`で実装を、`#[cfg(not(windows))]`でポータブルな
+# フォールバックを提供する)。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Foundation",
+] }
+
+[features]
+# 実際のD3D12/DirectMLディスパッチ(dxc・Windows SDKが必要)。無効時は
+# zfs_accel_hlslのCPUフォールバックのみを使う。詳細は
+# zfs_accel_hlsl/Cargo.tomlのコメント参照。
+default = []
+gpu = ["zfs_accel_hlsl/gpu"]
+
+[lib]
+name = "open_runo_installer_core"

@@ -1,0 +1,37 @@
+[workspace]
+
+[package]
+name = "open_runo_installer"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "open_runo_installer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# ディスク検出・構成助言・zpoolプレビューのロジックは、Tauriに依存しない
+# `open_runo_installer_core`クレートへ切り出してある(理由は同クレートの
+# Cargo.tomlコメント参照: Tauriの依存グラフに巻き込まれず、Windows以外の
+# 環境でも`cargo test`できるようにするため)。既定ではCPUフォールバックのみ
+# (`gpu` feature無効)。実機でGPU/NPUアクセラレーションを使う場合は
+# `--features gpu`を指定してビルドすること。
+open_runo_installer_core = { path = "../../open_runo_installer_core" }
+
+[features]
+default = []
+gpu = ["open_runo_installer_core/gpu"]
