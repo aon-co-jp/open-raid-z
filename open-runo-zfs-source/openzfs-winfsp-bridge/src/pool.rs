@@ -27,6 +27,22 @@
 //! という順序で行う。書き込み中に電源断等でクラッシュしても、ステップ2の
 //! 参照切り替えが完了するまでは古いデータが指されたままなので、
 //! データが破壊されることはない(ZFSのCoWと同じ考え方)。
+//!
+//! ## スナップショット・クローン
+//!
+//! CoWの間接参照テーブルのおかげで、スナップショットは「ある時点の
+//! `stripes`配列を複製して保持する」だけで作成できる(実データはコピーせず、
+//! 物理ストライプ番号の一覧、たかだか数バイト〜数十バイトのコピーで済む)。
+//! 各物理ストライプには参照カウント(`ref_counts`)を持たせ、
+//! データセット・スナップショット・クローンのいずれかから参照されている間は
+//! 空き領域へ返却しない。これにより、スナップショット作成後に元データセット
+//! 側でCoW書き込みが起きても、スナップショットが指す古いストライプは
+//! (元データセットからの参照が外れても)生き残り続ける。
+//!
+//! クローンはスナップショットの`stripes`配列をコピーして新しい書き込み可能な
+//! データセットとして登録するだけで作成できる(この時点ではブロックを一切
+//! 複製しない)。クローンへの書き込みはCoW経由で新しいストライプへ分岐する
+//! ため、スナップショット・クローンいずれのデータも壊れない。
 
 use crate::block_device::BlockDevice;
 use crate::error::{BridgeError, BridgeResult};
@@ -38,12 +54,24 @@ pub struct Pool<D: BlockDevice> {
     total_stripes: u64,
     /// 空きストライプのインデックス集合(スタックとして扱う: popで払い出す)
     free_stripes: Vec<u64>,
+    /// 割当済み(=free_stripesに無い)物理ストライプの参照カウント。
+    /// データセット・スナップショット・クローンから参照されるたびに+1、
+    /// 参照が外れるたびに-1し、0になったら空き領域へ返却する。
+    ref_counts: HashMap<u64, u32>,
     datasets: HashMap<String, Dataset>,
+    /// キーは`"データセット名@スナップショット名"`。
+    snapshots: HashMap<String, Snapshot>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct Dataset {
     /// このデータセットが保持する物理ストライプのインデックス列(論理順)
+    stripes: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Snapshot {
+    /// スナップショット作成時点の物理ストライプのインデックス列(論理順・不変)
     stripes: Vec<u64>,
 }
 
@@ -68,7 +96,9 @@ impl<D: BlockDevice> Pool<D> {
             vdev,
             total_stripes,
             free_stripes,
+            ref_counts: HashMap::new(),
             datasets: HashMap::new(),
+            snapshots: HashMap::new(),
         }
     }
 
@@ -84,6 +114,33 @@ impl<D: BlockDevice> Pool<D> {
         (self.vdev.num_data_disks() * self.vdev.chunk_size()) as u64
     }
 
+    /// 空きストライプを1つ払い出し、参照カウント1で確保済みにする。
+    fn claim_stripe(&mut self) -> BridgeResult<u64> {
+        let stripe = self.free_stripes.pop().ok_or_else(|| {
+            BridgeError::Io(std::io::Error::other("プールに空きストライプがありません"))
+        })?;
+        self.ref_counts.insert(stripe, 1);
+        Ok(stripe)
+    }
+
+    /// 既に確保済みのストライプへ新たな参照を追加する(参照カウント+1)。
+    /// スナップショット・クローン作成時に使う。
+    fn retain_stripe(&mut self, stripe: u64) {
+        *self.ref_counts.entry(stripe).or_insert(0) += 1;
+    }
+
+    /// ストライプへの参照を1つ手放す(参照カウント-1)。0になったら
+    /// 空き領域へ返却する。
+    fn release_stripe(&mut self, stripe: u64) {
+        if let Some(count) = self.ref_counts.get_mut(&stripe) {
+            *count -= 1;
+            if *count == 0 {
+                self.ref_counts.remove(&stripe);
+                self.free_stripes.push(stripe);
+            }
+        }
+    }
+
     pub fn create_dataset(&mut self, name: &str) -> BridgeResult<()> {
         if self.datasets.contains_key(name) {
             return Err(BridgeError::Io(std::io::Error::other(format!(
@@ -94,10 +151,14 @@ impl<D: BlockDevice> Pool<D> {
         Ok(())
     }
 
-    /// データセットを破棄し、割り当てていたストライプをプールへ返却する。
+    /// データセットを破棄し、他から参照されていないストライプをプールへ
+    /// 返却する(スナップショット・クローンから参照中のストライプは
+    /// 参照カウントが残るため、誤って解放されることはない)。
     pub fn destroy_dataset(&mut self, name: &str) -> BridgeResult<()> {
         let dataset = self.datasets.remove(name).ok_or_else(|| not_found(name))?;
-        self.free_stripes.extend(dataset.stripes);
+        for stripe in dataset.stripes {
+            self.release_stripe(stripe);
+        }
         Ok(())
     }
 
@@ -131,7 +192,7 @@ impl<D: BlockDevice> Pool<D> {
 
         let mut newly_allocated = Vec::with_capacity(additional_stripes as usize);
         for _ in 0..additional_stripes {
-            newly_allocated.push(self.free_stripes.pop().unwrap());
+            newly_allocated.push(self.claim_stripe()?);
         }
 
         self.datasets.get_mut(name).unwrap().stripes.extend(newly_allocated);
@@ -175,15 +236,11 @@ impl<D: BlockDevice> Pool<D> {
             let chunk = &data[chunk_start..chunk_start + chunk_bytes as usize];
 
             // 1. まず空き物理ストライプへ新データを書く(既存データには一切触れない)
-            let new_phys = self.free_stripes.pop().ok_or_else(|| {
-                BridgeError::Io(std::io::Error::other(
-                    "CoW書き込み用の空きストライプがプールにありません",
-                ))
-            })?;
+            let new_phys = self.claim_stripe()?;
             if let Err(e) = self.vdev.write_stripe(new_phys, chunk) {
-                // 書き込みに失敗した場合は確保したストライプを空きに戻し、
+                // 書き込みに失敗した場合は確保したストライプを解放し、
                 // 参照テーブルには一切触れない(=古いデータは無傷のまま)
-                self.free_stripes.push(new_phys);
+                self.release_stripe(new_phys);
                 return Err(e);
             }
 
@@ -195,11 +252,145 @@ impl<D: BlockDevice> Pool<D> {
                 old
             };
 
-            // 3. 古い物理ストライプは(他に参照者が無いため)空き領域へ返却する。
-            //    スナップショットを実装する際は、ここで「他に参照しているか」を
-            //    確認してから返却するかどうかを判断する形へ拡張する。
-            self.free_stripes.push(old_phys);
+            // 3. 旧物理ストライプへの、このデータセットからの参照を手放す。
+            //    スナップショット・クローンからまだ参照されていれば
+            //    参照カウントが残るため、実際には解放されず生き残る。
+            self.release_stripe(old_phys);
         }
+        Ok(())
+    }
+
+    fn snapshot_key(dataset_name: &str, snapshot_name: &str) -> String {
+        format!("{dataset_name}@{snapshot_name}")
+    }
+
+    /// データセットの現在の状態を指すスナップショットを作成する。
+    ///
+    /// 実データを一切コピーしない(物理ストライプ番号の一覧を複製して
+    /// 参照カウントを増やすだけ)ため、データセットのサイズに関わらず
+    /// 一瞬で完了し、消費容量もほぼ0(ZFSのスナップショットと同じ特性)。
+    pub fn create_snapshot(&mut self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<()> {
+        let key = Self::snapshot_key(dataset_name, snapshot_name);
+        if self.snapshots.contains_key(&key) {
+            return Err(BridgeError::Io(std::io::Error::other(format!(
+                "スナップショット'{key}'は既に存在します"
+            ))));
+        }
+        let stripes = self
+            .datasets
+            .get(dataset_name)
+            .ok_or_else(|| not_found(dataset_name))?
+            .stripes
+            .clone();
+
+        for &stripe in &stripes {
+            self.retain_stripe(stripe);
+        }
+        self.snapshots.insert(key, Snapshot { stripes });
+        Ok(())
+    }
+
+    /// スナップショットを破棄し、他から参照されていないストライプを
+    /// プールへ返却する。
+    pub fn destroy_snapshot(&mut self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<()> {
+        let key = Self::snapshot_key(dataset_name, snapshot_name);
+        let snapshot = self.snapshots.remove(&key).ok_or_else(|| {
+            BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
+        })?;
+        for stripe in snapshot.stripes {
+            self.release_stripe(stripe);
+        }
+        Ok(())
+    }
+
+    pub fn snapshot_names(&self, dataset_name: &str) -> Vec<String> {
+        let prefix = format!("{dataset_name}@");
+        let mut names: Vec<String> = self
+            .snapshots
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .map(|k| k[prefix.len()..].to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    pub fn snapshot_size(&self, dataset_name: &str, snapshot_name: &str) -> BridgeResult<u64> {
+        let key = Self::snapshot_key(dataset_name, snapshot_name);
+        let snapshot = self.snapshots.get(&key).ok_or_else(|| {
+            BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
+        })?;
+        Ok(snapshot.stripes.len() as u64 * self.chunk_bytes())
+    }
+
+    /// スナップショットからストライプ境界単位で読み込む(スナップショットは
+    /// 不変なので書き込みは提供しない。書き込みが必要な場合は
+    /// [`Self::create_clone`]でクローンを作ること)。
+    pub fn read_snapshot(
+        &mut self,
+        dataset_name: &str,
+        snapshot_name: &str,
+        logical_offset: u64,
+        len: u64,
+    ) -> BridgeResult<Vec<u8>> {
+        let chunk_bytes = self.chunk_bytes();
+        assert_eq!(logical_offset % chunk_bytes, 0, "ストライプ境界のみサポート");
+        assert_eq!(len % chunk_bytes, 0, "ストライプ境界の倍数のみサポート");
+
+        let key = Self::snapshot_key(dataset_name, snapshot_name);
+        let start = (logical_offset / chunk_bytes) as usize;
+        let count = (len / chunk_bytes) as usize;
+
+        let physical_stripes: Vec<u64> = {
+            let snapshot = self.snapshots.get(&key).ok_or_else(|| {
+                BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
+            })?;
+            if start + count > snapshot.stripes.len() {
+                return Err(BridgeError::Io(std::io::Error::other(
+                    "スナップショットの容量を超える読み込みです",
+                )));
+            }
+            snapshot.stripes[start..start + count].to_vec()
+        };
+
+        let mut out = Vec::with_capacity(len as usize);
+        for phys_stripe in physical_stripes {
+            out.extend_from_slice(&self.vdev.read_stripe(phys_stripe)?);
+        }
+        Ok(out)
+    }
+
+    /// スナップショットから書き込み可能なクローン(新しいデータセット)を作成する。
+    ///
+    /// スナップショットと同様、実データは一切コピーしない。作成直後は
+    /// クローンとスナップショットは全く同じ物理ストライプを共有しており、
+    /// クローンへの書き込みはCoW経由で新しいストライプへ分岐するため、
+    /// 元のスナップショット・データセットには一切影響しない。
+    pub fn create_clone(
+        &mut self,
+        dataset_name: &str,
+        snapshot_name: &str,
+        new_dataset_name: &str,
+    ) -> BridgeResult<()> {
+        if self.datasets.contains_key(new_dataset_name) {
+            return Err(BridgeError::Io(std::io::Error::other(format!(
+                "データセット'{new_dataset_name}'は既に存在します"
+            ))));
+        }
+        let key = Self::snapshot_key(dataset_name, snapshot_name);
+        let stripes = self
+            .snapshots
+            .get(&key)
+            .ok_or_else(|| {
+                BridgeError::Io(std::io::Error::other(format!("スナップショット'{key}'が見つかりません")))
+            })?
+            .stripes
+            .clone();
+
+        for &stripe in &stripes {
+            self.retain_stripe(stripe);
+        }
+        self.datasets.insert(new_dataset_name.to_string(), Dataset { stripes });
         Ok(())
     }
 
