@@ -11,6 +11,9 @@ pub enum BridgeError {
     #[error("ACL変換に失敗しました (POSIX ACE -> NTFS ACE): {0}")]
     AclTranslationFailed(String),
 
+    #[error("exFAT属性/タイムスタンプの変換に失敗しました: {0}")]
+    ExFatConversionFailed(String),
+
     #[error("未実装の機能です: {0}")]
     NotImplemented(&'static str),
 
