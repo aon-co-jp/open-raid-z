@@ -286,3 +286,66 @@ Windows実機での`cargo test --features winfsp-backend,gpu-accel`実行時に
    --no-default-features`、既に実現可能)。
 4. `openruno-installer`の実装確認、`feature/raid-z2-z3-scaffolding` →
    `main`へのPR作成、NTFS ACL⇔ZFS ACLのAD/SAM連携の実運用設計。
+
+---
+
+## 追記3: `Pool::scrub`を実際に呼べるようにした(scrubの「到達不能」バグを解消)
+
+前回セッションで洗い出した3課題のうち残っていた「GPU加速部分・Windows
+マウント部分は未検証」は今回も据え置き(実機無しでは検証しない方針の通り)。
+代わりに、コードを読み直す中で見つけた**「`scrub`がPool経由では一切
+呼び出せない」という抜け**を解消した。これも`pool.rs`/`vdev.rs`/`raid10.rs`
+という純粋なRust/CPUロジック層への変更なので、実機無しで完全にテスト可能。
+
+### 見つかった問題
+
+`RaidZVdev::scrub`(チェックサム不一致=サイレント破損の一括検知・修復、
+ZFSの`zpool scrub`相当)は既に実装・テスト済みだったが、`Pool`が`vdev`
+フィールドを非公開で保持しているため、**`Pool`しか持たない呼び出し側
+(`mount.rs`など、実際の利用シーンそのもの)からは`scrub`を一切呼び出せない**
+という抜けがあった。また`Raid10Vdev`側には`scrub`自体が存在しなかった
+(ミラーグループ横断のスキャンができない)。
+
+### 対応
+
+- `raid10.rs`: `Raid10Vdev::scrub(total_stripes)`を新規実装。グローバル
+  ストライプ数を各ミラーグループの担当数(ラウンドロビン配置により、
+  割り切れない場合は若い番号のグループが1つ多く担当)へ正しく変換して
+  各グループの`RaidZVdev::scrub`へ委譲する。
+- `vdev.rs`: `Vdev`トレイトに`scrub`を追加し、`RaidZVdev`・`Raid10Vdev`
+  両方の`impl Vdev`で委譲するよう配線(シグネチャが完全に一致していたため
+  トレイトへの統一は容易だった)。
+- `pool.rs`: `Pool::scrub()`(`self.vdev.scrub(self.total_stripes)`に委譲)
+  と`Pool::vdev_mut()`(内部vdevへの可変参照を返すエスケープハッチ)を追加。
+  `resilver`は`RaidZVdev`(対象ディスク1個のインデックス)と`Raid10Vdev`
+  (ミラーグループ+グループ内インデックスの2階層)とでシグネチャが
+  異なるため`Vdev`トレイトへは統一していない。ディスク交換のような
+  vdev固有の低頻度操作は`Pool::vdev_mut()`経由で呼ぶ設計とした。
+
+### 追加テスト(全てパス確認済み)
+
+- `src/raid10.rs`(単体テスト2件): 単純なscrub、およびグループ数で割り切れない
+  グローバルストライプ数での余り分配ロジックの正しさ(意図的に「余り分」の
+  ストライプを破損させ、スキャン漏れが無いことを検証)。
+- `tests/pool_scrub.rs`(新規、3件): `Pool::scrub`がRAID-Z(Z2)バックエンドと
+  RAID10バックエンドの両方で機能すること、`Pool::vdev_mut`経由でRAID10固有の
+  `resilver`を呼び出せること。
+
+### 検証状況
+
+`cargo test --no-default-features`で**全75テストがパス**
+(`openzfs-winfsp-bridge`側。内訳は前回70+今回追加5)。`zfs-accel-hlsl`は
+変更無し(20テスト引き続きパス)。今回の変更は`winfsp-backend`/`gpu-accel`
+どちらのfeatureにも依存しない純粋なコアロジックのみなので、
+前回・前々回のような「実機でしか確認できない」リスクは無い。
+
+### 残る実用性課題(更新版)
+
+1. ディレクトリ階層・create/delete/rename ― `mount.rs`必須、実機待ち
+2. Windows実機での`cargo test --features winfsp-backend,gpu-accel`
+   (これまでの`mount.rs`変更3件分をまとめて検証)
+3. CI(GitHub Actions、ubuntu-latestで`--no-default-features`)追加
+4. `resilver`を`Vdev`トレイトへ統一するかどうかの設計判断
+   (RAID-Z系とRAID10とでディスク指定の階層が異なるため、統一するなら
+   「ディスクロケータ」のような共通の抽象化が必要になる)
+5. installer実装確認・PR作成・AD/SAM連携

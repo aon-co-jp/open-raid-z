@@ -399,6 +399,17 @@ pub trait Vdev {
     fn chunk_size(&self) -> usize;
     fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()>;
     fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>>;
+
+    /// 全`num_stripes`ストライプを読み込み、チェックサム不一致(サイレント破損)を
+    /// 検知・修復する(ZFSの`zpool scrub`に相当)。[`RaidZVdev::scrub`]/
+    /// [`crate::raid10::Raid10Vdev::scrub`]参照。
+    ///
+    /// `Vdev`トレイトに含めることで、[`crate::pool::Pool::scrub`]から
+    /// vdevの実装(RAID-Z系かRAID10か)を意識せずに呼び出せるようにしている
+    /// (以前はscrubが各vdev型の固有メソッドとしてしか存在せず、`Pool`が
+    /// `vdev`フィールドを非公開で保持するため、`Pool`経由では一切呼び出せない
+    /// という抜けがあった)。
+    fn scrub(&mut self, num_stripes: u64) -> BridgeResult<ScrubReport>;
 }
 
 impl<D: BlockDevice> Vdev for RaidZVdev<D> {
@@ -416,6 +427,10 @@ impl<D: BlockDevice> Vdev for RaidZVdev<D> {
 
     fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
         RaidZVdev::read_stripe(self, stripe_index)
+    }
+
+    fn scrub(&mut self, num_stripes: u64) -> BridgeResult<ScrubReport> {
+        RaidZVdev::scrub(self, num_stripes)
     }
 }
 

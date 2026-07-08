@@ -93,6 +93,36 @@ impl<D: BlockDevice> Raid10Vdev<D> {
     pub fn group_devices_mut(&mut self, group_index: usize) -> &mut [D] {
         self.groups[group_index].devices_mut()
     }
+
+    /// `RaidZVdev::scrub`のRAID10版。全ミラーグループを横断して
+    /// チェックサム不一致(サイレント破損)を検知・自己修復する
+    /// (ZFSの`zpool scrub`に相当)。
+    ///
+    /// `total_stripes`は[`Self::route`]が扱うのと同じ**グローバルな**
+    /// ストライプ数(`Pool::usage().total_stripes`相当)。内部で
+    /// ラウンドロビン配置に基づき各グループが担当する実際のストライプ数
+    /// (`total_stripes`がグループ数で割り切れない場合、余りの分だけ
+    /// 若い番号のグループが1つ多く担当する)へ変換してから、各グループの
+    /// `RaidZVdev::scrub`へ委譲する。
+    pub fn scrub(&mut self, total_stripes: u64) -> BridgeResult<crate::vdev::ScrubReport> {
+        let num_groups = self.groups.len() as u64;
+        let mut report = crate::vdev::ScrubReport::default();
+        for (group_index, group) in self.groups.iter_mut().enumerate() {
+            let group_index = group_index as u64;
+            // group_indexが担当するグローバルストライプは
+            // group_index, group_index+num_groups, group_index+2*num_groups, ...
+            // なので、その個数はtotal_stripesをnum_groupsで割った商に、
+            // 余りがgroup_indexより大きければ+1したもの。
+            let base = total_stripes / num_groups;
+            let remainder = total_stripes % num_groups;
+            let stripes_in_group = base + if group_index < remainder { 1 } else { 0 };
+
+            let group_report = group.scrub(stripes_in_group)?;
+            report.stripes_scanned += group_report.stripes_scanned;
+            report.corruptions_healed += group_report.corruptions_healed;
+        }
+        Ok(report)
+    }
 }
 
 fn invalid_config(msg: &str) -> BridgeError {
@@ -116,12 +146,16 @@ impl<D: BlockDevice> Vdev for Raid10Vdev<D> {
     fn read_stripe(&mut self, stripe_index: u64) -> BridgeResult<Vec<u8>> {
         Raid10Vdev::read_stripe(self, stripe_index)
     }
+
+    fn scrub(&mut self, num_stripes: u64) -> BridgeResult<crate::vdev::ScrubReport> {
+        Raid10Vdev::scrub(self, num_stripes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block_device::{FaultInjectableDevice, FileBackedDevice};
+    use crate::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
 
     const CHUNK_SIZE: usize = 32;
 
@@ -203,6 +237,81 @@ mod tests {
         for stripe in 0..4u64 {
             let expected = vec![(stripe * 31 % 256) as u8; CHUNK_SIZE];
             assert_eq!(vdev.read_stripe(stripe).unwrap(), expected);
+        }
+    }
+
+    /// 直接ディスクの中身だけを壊す(`failed`フラグは立てない、ビットロットの
+    /// シミュレーション。`tests/checksum_self_healing.rs`と同じ手法)。
+    fn corrupt_group_disk_directly<D: BlockDevice>(
+        vdev: &mut Raid10Vdev<D>,
+        group_index: usize,
+        disk_index_in_group: usize,
+        inner_stripe: u64,
+    ) {
+        let offset = inner_stripe * CHUNK_SIZE as u64;
+        let disk = &mut vdev.group_devices_mut(group_index)[disk_index_in_group];
+        let mut garbage = disk.read_at(offset, CHUNK_SIZE).unwrap();
+        for b in garbage.iter_mut() {
+            *b ^= 0xFF;
+        }
+        disk.write_at(offset, &garbage).unwrap();
+    }
+
+    #[test]
+    fn scrub_detects_and_heals_silent_corruption_within_a_group() {
+        let devices: Vec<_> = (0..4).map(|i| scratch_disk(&format!("scrub{i}"))).collect();
+        let mut vdev = Raid10Vdev::new(devices, 2, CHUNK_SIZE).unwrap();
+        let total_stripes = 6u64;
+
+        for stripe in 0..total_stripes {
+            let data = vec![(stripe * 13 % 256) as u8; CHUNK_SIZE];
+            vdev.write_stripe(stripe, &data).unwrap();
+        }
+
+        // グローバルストライプ0(グループ0の内部ストライプ0)を、グループ0の
+        // 2台目のミラーメンバーだけビットロットさせる。
+        corrupt_group_disk_directly(&mut vdev, 0, 1, 0);
+
+        let report = vdev.scrub(total_stripes).expect("scrubに失敗");
+        assert_eq!(report.stripes_scanned, total_stripes);
+        assert_eq!(report.corruptions_healed, 1);
+
+        for stripe in 0..total_stripes {
+            let expected = vec![(stripe * 13 % 256) as u8; CHUNK_SIZE];
+            assert_eq!(vdev.read_stripe(stripe).unwrap(), expected, "stripe {stripe}");
+        }
+    }
+
+    #[test]
+    fn scrub_correctly_splits_uneven_stripe_counts_across_groups() {
+        // 3グループ(6台, mirror_width=2)・グローバルストライプ7つ(3の倍数
+        // ではない)という構成で、余りの分配とscrub範囲が正しいことを検証する。
+        let devices: Vec<_> = (0..6).map(|i| scratch_disk(&format!("uneven{i}"))).collect();
+        let mut vdev = Raid10Vdev::new(devices, 2, CHUNK_SIZE).unwrap();
+        assert_eq!(vdev.num_groups(), 3);
+
+        let total_stripes = 7u64;
+        for stripe in 0..total_stripes {
+            let data = vec![(stripe * 19 % 256) as u8; CHUNK_SIZE];
+            vdev.write_stripe(stripe, &data).unwrap();
+        }
+
+        // route(6) = (6 % 3, 6 / 3) = (グループ0, 内部ストライプ2)。
+        // これはグループ0が担当する「余り分」の3番目のストライプであり、
+        // 余りの分配ロジック(`Raid10Vdev::scrub`のremainder計算)が誤っていると
+        // スキャン範囲から漏れて検知されない。
+        corrupt_group_disk_directly(&mut vdev, 0, 0, 2);
+
+        let report = vdev.scrub(total_stripes).expect("scrubに失敗");
+        assert_eq!(
+            report.stripes_scanned, total_stripes,
+            "グローバルストライプ全体がちょうど1回ずつスキャンされるはず"
+        );
+        assert_eq!(report.corruptions_healed, 1);
+
+        for stripe in 0..total_stripes {
+            let expected = vec![(stripe * 19 % 256) as u8; CHUNK_SIZE];
+            assert_eq!(vdev.read_stripe(stripe).unwrap(), expected, "stripe {stripe}");
         }
     }
 }
