@@ -36,9 +36,15 @@ pub struct ZpoolInitResult {
 
 fn parse_level(level: &str) -> Result<RaidLevel, String> {
     match level {
+        "Raid0" => Ok(RaidLevel::Raid0),
+        "Raid1" => Ok(RaidLevel::Raid1),
+        "Raid5" => Ok(RaidLevel::Raid5),
+        "Raid6" => Ok(RaidLevel::Raid6),
         "Z2" => Ok(RaidLevel::Z2),
         "Z3" => Ok(RaidLevel::Z3),
-        other => Err(format!("未対応のRAIDレベルです: {other}(Z2またはZ3を指定してください)")),
+        other => Err(format!(
+            "未対応のRAIDレベルです: {other}(Raid0/Raid1/Raid5/Raid6/Z2/Z3のいずれかを指定してください)"
+        )),
     }
 }
 
@@ -47,10 +53,7 @@ fn parse_level(level: &str) -> Result<RaidLevel, String> {
 /// (実ディスクを一切変更しないプレビュー実行)。
 pub fn init_zpool_preview(req: ZpoolInitRequest) -> Result<ZpoolInitResult, String> {
     let level = parse_level(&req.level)?;
-    let parity_count = match level {
-        RaidLevel::Z2 => 2,
-        RaidLevel::Z3 => 3,
-    };
+    let parity_count = level.parity_count(req.disk_count as usize);
     if req.disk_count as usize <= parity_count {
         return Err(format!(
             "{:?}にはデータディスクが最低1台必要です(合計{}台以上を選択してください)",
@@ -139,6 +142,51 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("最低1台必要"));
+    }
+
+    #[test]
+    fn raid0_preview_allows_all_disks_as_data() {
+        let result = init_zpool_preview(ZpoolInitRequest {
+            disk_count: 4,
+            level: "Raid0".to_string(),
+            dataset_name: "tank".to_string(),
+        })
+        .unwrap();
+        assert!(result.dataset_size_bytes > 0);
+    }
+
+    #[test]
+    fn raid1_preview_mirrors_across_all_disks() {
+        let result = init_zpool_preview(ZpoolInitRequest {
+            disk_count: 4,
+            level: "Raid1".to_string(),
+            dataset_name: "tank".to_string(),
+        })
+        .unwrap();
+        // ミラーはデータディスク1台ぶんの容量しかない(残り3台は複製)。
+        assert_eq!(result.dataset_size_bytes, (STRIPES_PER_DISK * CHUNK_SIZE as u64));
+    }
+
+    #[test]
+    fn raid5_preview_succeeds_with_enough_disks() {
+        let result = init_zpool_preview(ZpoolInitRequest {
+            disk_count: 4,
+            level: "Raid5".to_string(),
+            dataset_name: "tank".to_string(),
+        })
+        .unwrap();
+        assert!(result.dataset_size_bytes > 0);
+    }
+
+    #[test]
+    fn raid6_preview_succeeds_with_enough_disks() {
+        let result = init_zpool_preview(ZpoolInitRequest {
+            disk_count: 4,
+            level: "Raid6".to_string(),
+            dataset_name: "tank".to_string(),
+        })
+        .unwrap();
+        assert!(result.dataset_size_bytes > 0);
     }
 
     #[test]
