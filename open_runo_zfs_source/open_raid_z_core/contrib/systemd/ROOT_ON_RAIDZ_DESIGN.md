@@ -50,20 +50,46 @@ initramfsは通常glibc動的リンクバイナリを含められる(`copy_exec`
 共有ライブラリも一緒にコピーされる)ため、`orzctl`バイナリ自体を
 含めることは技術的には可能と考えられるが、**未検証**。
 
-### 壁2: switch_root後もFUSEデーモンが生き続ける必要がある
+### 壁2: switch_root後もFUSEデーモンが生き続ける必要がある(調査済み・認識を修正)
 
-`switch_root`は通常、initramfs内の全プロセスを`killall5`等で終了させて
-から新しいルートへ切り替える。ルートがFUSE経由だと、**orzctlの
-FUSEデーモンプロセス自体がkillされてはならない**(killされた瞬間、
-ルートファイルシステムへのアクセスが全て失敗しカーネルパニックする)。
+当初「`switch_root`自体がinitramfs内の全プロセスをkillする」と想定して
+いたが、調査した結果**この理解は不正確**だった。
 
-対処の方向性(要調査):
-- `switch_root`の実装(busybox版/util-linux版)によっては、
-  `/proc/self/fd`越しに現在のマウント下のプロセスを保護する仕組みがある
-- 実際に「FUSEをrootにする」運用例(一部のコンテナ・クラウド環境)が
-  存在するため、先行事例の調査が必要
-- 最悪の場合、initramfs側でorzctlを`setsid`+`nohup`相当で確実に
-  デタッチし、initramfsのクリーンアップ対象から除外する必要がある
+- `switch_root`(busybox版/util-linux版どちらも)は、新ルートへの
+  `mount --move`(/dev,/proc,/sys,/run)→ 古いinitramfs(tmpfs)の
+  再帰的な削除 → `chroot`→新initへの`exec`、を行うだけで、**無関係な
+  他プロセスを能動的にkillする処理は含まれていない**([Marcus Folkessonの
+  解説記事](https://www.marcusfolkesson.se/blog/changing-the-root-of-your-linux-filesystem/)、
+  [Gentoo Forumsのswitch_root議論](https://forums.gentoo.org/viewtopic-t-1159541-view-previous.html?sid=2dc74c0db69a5e4d047d95a8ac833726)参照)。
+  したがって、**switch_root前にorzctlのFUSEデーモンを起動しておけば、
+  起動そのものはおそらく問題なく生き残る**(実機での検証はまだ)。
+- 本当にリスクがあるのは**次回のシャットダウン/再起動時**。システム
+  停止シーケンスの`sendsigs`(`killall5`相当)が全プロセスへ終了信号を
+  送る際、FUSEデーモンも巻き込まれる。ntfs-3gを実際にrootにする際にも
+  同じ問題が報告されており、対処として`killall5 -o omitpid`(指定PIDを
+  除外するオプション)が使われているが、**この`omitpid`実装自体が
+  バグでハングする不具合報告がある**
+  ([Ubuntu sysvinitパッケージのバグ#87763](https://bugs.launchpad.net/ubuntu/+source/sysvinit/+bug/87763))。
+- 実際に「FUSE経由のファイルシステムをrootにする」実例として、
+  [nikp123/ntfs-rootfs](https://github.com/nikp123/ntfs-rootfs)、
+  [CyanoHao/NTFS-as-rootfs](https://github.com/CyanoHao/NTFS-as-rootfs)
+  (NTFS-3G、つまりFUSE経由でNTFSをrootにするArch Linux/Manjaro向け
+  プロジェクト)が実在する。両者とも「initramfsにFUSEドライバを
+  含める」「initramfs-tools/mkinitcpioの標準フックがNTFS等の
+  非標準rootを正しく扱えないため個別対応が必要」「シャットダウン時に
+  正常にpoweroff/resetできず`halt`止まりになる」という制約を報告して
+  おり、**起動は動くが終了処理に既知の問題がある**という状況は
+  open-raid-zでも同様に想定しておくべき。
+
+次回調査すべき点(未検証):
+- 実際にorzctlのFUSEデーモンPIDをswitch_root前に確保し、switch_root後も
+  生存しているかを実機で確認する
+- シャットダウン/再起動時にFUSEデーモンへ`ExecStop`(既存の
+  `contrib/systemd/open-raid-z-pool.service.example`と同様、明示的な
+  `fusermount3 -u`)を発行できるsystemdユニット構成にすることで、
+  `killall5 -o omitpid`のバグに依存しない安全な終了処理を設計する
+  (systemdが起動している最終ルート環境なら、initramfsのkillall5問題を
+  回避できる可能性が高い)
 
 ### 壁3: Windows側はさらに困難(カーネルモードドライバが必須)
 
