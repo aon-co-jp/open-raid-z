@@ -54,9 +54,11 @@ fn errno_from_bridge_error(e: &BridgeError) -> Errno {
         BridgeError::InvalidConfig(_) => Errno::EINVAL,
         BridgeError::Unrecoverable(_) => Errno::EIO,
         BridgeError::NotImplemented(_) => Errno::ENOSYS,
-        BridgeError::MountFailed(_) | BridgeError::AclTranslationFailed(_) | BridgeError::ExFatConversionFailed(_) | BridgeError::Io(_) => {
-            Errno::EIO
-        }
+        BridgeError::MountFailed(_)
+        | BridgeError::AclTranslationFailed(_)
+        | BridgeError::ExFatConversionFailed(_)
+        | BridgeError::ForeignFsFailed(_)
+        | BridgeError::Io(_) => Errno::EIO,
     }
 }
 

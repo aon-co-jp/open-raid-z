@@ -41,6 +41,10 @@ pub enum BridgeError {
     #[error("exFAT属性/タイムスタンプの変換に失敗しました: {0}")]
     ExFatConversionFailed(String),
 
+    /// 既存フォーマット(FAT32等)のブリッジ機能([`crate::foreign_fs`])での失敗。
+    #[error("既存フォーマットの読み書きに失敗しました: {0}")]
+    ForeignFsFailed(String),
+
     #[error("未実装の機能です: {0}")]
     NotImplemented(&'static str),
 

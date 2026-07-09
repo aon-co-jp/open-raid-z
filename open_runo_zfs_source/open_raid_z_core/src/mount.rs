@@ -109,7 +109,11 @@ fn status_from_bridge_error(e: &crate::error::BridgeError) -> i32 {
         // ACL/exFAT変換やその他のI/Oエラーは、現時点ではまだ個別のNTSTATUSへ
         // 分類していない(これらはWinFsp層の主経路であるread/write/open/
         // read_directory等からは実質的に発生しないため優先度が低い)。
-        BridgeError::MountFailed(_) | BridgeError::AclTranslationFailed(_) | BridgeError::ExFatConversionFailed(_) | BridgeError::Io(_) => {
+        BridgeError::MountFailed(_)
+        | BridgeError::AclTranslationFailed(_)
+        | BridgeError::ExFatConversionFailed(_)
+        | BridgeError::ForeignFsFailed(_)
+        | BridgeError::Io(_) => {
             0xC00000E9u32 as i32 // STATUS_UNEXPECTED_IO_ERROR
         }
     }
