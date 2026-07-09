@@ -32,6 +32,9 @@ bincode = "1.3"
 # ため、`foreign_fs`feature有効時は全OSでビルドできる。
 fatfs = { version = "0.3", optional = true }
 fscommon = { version = "0.1", optional = true }
+# exFAT(読み取り専用。書き込みは上流クレートが現時点で未対応)。
+# 純Rust実装で追加のネイティブライブラリを要さない(foreign_fs.rs参照)。
+exfat-fs = { version = "0.1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
@@ -62,7 +65,7 @@ gpu_accel = ["zfs_accel_hlsl/gpu"]
 fuse_backend = ["dep:fuser"]
 # 既存OSの既存フォーマット(FAT32等)を読み書きするブリッジ機能。
 # ネイティブライブラリを要さないため全OSで有効化できる。
-foreign_fs = ["dep:fatfs", "dep:fscommon"]
+foreign_fs = ["dep:fatfs", "dep:fscommon", "dep:exfat-fs"]
 
 [lib]
 name = "open_raid_z_core"
@@ -77,4 +80,12 @@ required-features = ["foreign_fs"]
 
 [[example]]
 name = "format_fat32_image"
+required-features = ["foreign_fs"]
+
+[[example]]
+name = "exfat_smoke_test"
+required-features = ["foreign_fs"]
+
+[[example]]
+name = "format_exfat_image"
 required-features = ["foreign_fs"]

@@ -1537,3 +1537,64 @@ GPU/NPUアクセラレーション経路(Vulkan Compute)に着手した。
 5. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張。
 6. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
    Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携。
+
+---
+
+## 追記17: `foreign_fs`をexFAT読み取り対応へ拡張(実機検証済み)、次はinitramfs調査再開
+
+前回の続き(ユーザー指定の優先順位2番目)として、`foreign_fs`にexFAT
+読み取り対応を追加した。
+
+### 実装内容
+
+- 上流クレート調査: 純Rustのexfat実装(`exfat`, `exfat-fs`, `exfat-slim`等)
+  を比較し、`exfat-fs`(0.1.3、フォーマット機能あり)を採用。
+  **重要な制約**: このクレートは現時点でファイルの**書き込みには
+  未対応**(公式ドキュメントに明記。フォーマットのみ対応)。このため
+  `foreign_fs.rs`の`ForeignExfatVolume`は`ForeignFatVolume`(FAT32、
+  読み書き両対応)とは異なり**読み取り専用**として実装した。
+- `open_raid_z_core/src/foreign_fs.rs`: `ForeignExfatVolume::open`/
+  `list_dir`/`read_file`を追加。上流クレートの`Root::items()`が`&mut`
+  借用を返す一方、`Directory::open()`は所有権を持つ`Vec`を返す非対称な
+  API設計だったため、ルート直下1階層分を処理する`resolve_exfat_root`と、
+  それより深い階層を所有権ベースの再帰で処理する`resolve_exfat_owned`に
+  分離し、借用チェッカーの制約を素直に回避する設計にした。
+- `orzctl foreign`サブコマンドに`--format <fat32|exfat>`オプションを追加
+  (既定`fat32`、後方互換)。`exfat`指定時は`put`(書き込み)を明示的に
+  拒否するエラーメッセージを返す。
+
+### 実機検証(このマシン上)
+
+上流クレートが書き込み未対応のため、FAT32版(`foreign_fs_smoke_test.rs`)
+と同じ「書き込み→読み戻し」の往復検証はできない。代わりに、**実際に
+exFAT仕様準拠の空ボリューム(ブートセクタ・FAT・アロケーションビットマップ・
+アップケーステーブルを含む正規の構造)を`exfat-fs`自身のフォーマット機能で
+作成**し、`ForeignExfatVolume`がそれを正しく開けること・ルート直下が
+空であることを確認した(構造的な読み取りパスの正しさの検証):
+
+1. `examples/exfat_smoke_test.rs`(新規): フォーマット→`open`成功→
+   `list_dir("/")`が空であることを確認、の3項目全て成功。
+2. `examples/format_exfat_image.rs`(新規、開発用): CLI検証用にexFAT
+   イメージをファイルへ保存するツール。
+3. `orzctl foreign --format exfat ls/cat/put`をCLI経由で実行し、
+   `ls`が空一覧を返すこと、存在しないファイルの`cat`が(パニックせず)
+   適切なエラーになること、`put`がexFATでは明示的に拒否されることを
+   全て確認済み。
+4. リグレッション無し確認: `--no-default-features --features
+   fuse_backend`(exfat-fs無し)・`--features fuse_backend,foreign_fs`
+   (exfat-fsあり)・デフォルトfeatureの3パターン全て既存テスト成功。
+
+### 残る課題(更新版)
+
+1. **initramfs/switch_root実験(root-on-RAIDZ化)の再開**(ユーザー指定の
+   優先順位3番目、次回はここから): 中断したハング調査の続き
+   (CPU/画面差分の確認は途中まで済み、VBox.logのAHCI/disk I/O確認は
+   未実施)。スナップショット`before-initramfs-experiment`から再開可能。
+2. exFAT書き込み対応(上流クレートがWIPのため、対応されるまで待つか、
+   自前実装に切り替えるかの判断が必要)。
+3. `foreign_fs`のNTFS/ext4読み取り対応。
+4. Vulkan経路のRAID-Z2/Z3(GEMM/Reed-Solomon)対応(現状XORのみ)。
+5. Android対応、Mac対応の設計・コード先行実装(実機検証待ち)。
+6. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張。
+7. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
+   Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携。
