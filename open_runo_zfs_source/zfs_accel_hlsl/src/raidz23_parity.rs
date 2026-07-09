@@ -729,6 +729,7 @@ mod tests {
     // 「raidnpu_*.hlslのアルゴリズムがCPU参照実装と一致する」ことまでは
     // 検証できる(`compute_pq_accelerated`/`compute_pqr_accelerated`が
     // 実際にNPU検出時にこのバイトコードへ切り替えることの検証は別)。
+    #[cfg(feature = "gpu")]
     #[test]
     fn raidnpu_z2_shader_matches_cpu_when_any_d3d12_device_available() {
         match crate::device::detect_best_accelerator() {
@@ -753,6 +754,7 @@ mod tests {
         assert_eq!(npu_q, expected_q);
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn raidnpu_z3_shader_matches_cpu_when_any_d3d12_device_available() {
         match crate::device::detect_best_accelerator() {

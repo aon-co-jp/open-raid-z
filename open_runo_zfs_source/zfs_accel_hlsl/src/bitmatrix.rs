@@ -63,6 +63,13 @@ impl GfBitMatrix {
         }
         out
     }
+
+    /// 行`row`・列`col`(いずれも0..8)の要素(0または1)を取得する。
+    /// `dml_gemm.rs`が複数ディスクぶんの行列をGEMM用の1つの重み行列へ
+    /// ブロック結合する際に使う。
+    pub fn bit(&self, row: usize, col: usize) -> u8 {
+        (self.rows[row] >> col) & 1
+    }
 }
 
 /// 「ビット行列 + popcount mod 2」経路によるP/Q/R計算のCPU参照実装。
