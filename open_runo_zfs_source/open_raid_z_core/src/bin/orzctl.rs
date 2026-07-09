@@ -195,14 +195,18 @@ fn run_mount(_args: Args) -> Result<(), String> {
     )
 }
 
-const HELP_FOREIGN: &str = r#"orzctl foreign - open-raid-z以外の既存フォーマット(FAT32/FAT16)を読み書きする
+const HELP_FOREIGN: &str = r#"orzctl foreign - open-raid-z以外の既存フォーマットを読み書きする
 
 使い方:
-  orzctl foreign ls  <VOLUME> [DIR]         DIR(省略時はルート"/")の一覧を表示
-  orzctl foreign cat <VOLUME> <FILE> [OUT]  FILEの内容を標準出力(またはOUTファイル)へ書き出す
-  orzctl foreign put <VOLUME> <FILE> <IN>   ローカルファイルINの内容をFILEとして書き込む(新規作成/上書き)
+  orzctl foreign [--format <FMT>] ls  <VOLUME> [DIR]         DIR(省略時はルート"/")の一覧を表示
+  orzctl foreign [--format <FMT>] cat <VOLUME> <FILE> [OUT]  FILEの内容を標準出力(またはOUTファイル)へ書き出す
+  orzctl foreign [--format <FMT>] put <VOLUME> <FILE> <IN>   ローカルファイルINの内容をFILEとして書き込む(新規作成/上書き)
 
-<VOLUME>には、既存のFAT32/FAT16パーティション(実デバイスパス。例:
+<FMT>には fat32(既定) または exfat を指定する。
+  - fat32: 読み書き両対応。
+  - exfat: **読み取り専用**(上流クレートが現時点で書き込みに未対応のため、putは使えない)。
+
+<VOLUME>には、既存のFAT32/FAT16/exFATパーティション(実デバイスパス。例:
 Linuxの"/dev/sdb1"、Windowsの"\\.\PhysicalDrive1"相当のボリューム)、
 またはループバックイメージファイルのパスを指定する。
 
@@ -210,21 +214,65 @@ Linuxの"/dev/sdb1"、Windowsの"\\.\PhysicalDrive1"相当のボリューム)、
   orzctl foreign ls  /dev/sdb1
   orzctl foreign cat /dev/sdb1 /DCIM/100ANDRO/IMG_0001.JPG ./IMG_0001.JPG
   orzctl foreign put /dev/sdb1 /note.txt ./note.txt
+  orzctl foreign --format exfat ls  /dev/sdc1
+  orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
 "#;
 
 #[cfg(feature = "foreign_fs")]
 fn run_foreign(args: &[String]) -> Result<(), String> {
-    use open_raid_z_core::foreign_fs::ForeignFatVolume;
+    use open_raid_z_core::foreign_fs::{ForeignDirEntry, ForeignExfatVolume, ForeignFatVolume};
 
-    let Some(op) = args.first() else {
+    // `--format <FMT>`はどこに現れても解釈し、残りを位置引数として使う。
+    let mut format = "fat32".to_string();
+    let mut rest: Vec<&str> = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--format" {
+            format = args.get(i + 1).ok_or("--formatには値が必要です(fat32 | exfat)")?.to_lowercase();
+            i += 2;
+        } else {
+            rest.push(&args[i]);
+            i += 1;
+        }
+    }
+
+    let Some(op) = rest.first().copied() else {
         return Err(format!("foreignにはサブコマンドが必要です\n\n{HELP_FOREIGN}"));
     };
-    let volume_path = args.get(1).ok_or_else(|| format!("<VOLUME>が必要です\n\n{HELP_FOREIGN}"))?;
-    let volume = ForeignFatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?;
+    let volume_path = rest.get(1).copied().ok_or_else(|| format!("<VOLUME>が必要です\n\n{HELP_FOREIGN}"))?;
 
-    match op.as_str() {
+    enum Volume {
+        Fat(ForeignFatVolume),
+        Exfat(ForeignExfatVolume),
+    }
+    impl Volume {
+        fn list_dir(&self, dir: &str) -> Result<Vec<ForeignDirEntry>, open_raid_z_core::BridgeError> {
+            match self {
+                Volume::Fat(v) => v.list_dir(dir),
+                Volume::Exfat(v) => v.list_dir(dir),
+            }
+        }
+        fn read_file(&self, path: &str) -> Result<Vec<u8>, open_raid_z_core::BridgeError> {
+            match self {
+                Volume::Fat(v) => v.read_file(path),
+                Volume::Exfat(v) => v.read_file(path),
+            }
+        }
+    }
+
+    let volume = match format.as_str() {
+        "fat32" | "fat16" | "fat" => Volume::Fat(
+            ForeignFatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
+        ),
+        "exfat" => Volume::Exfat(
+            ForeignExfatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
+        ),
+        other => return Err(format!("未知の--format値です: '{other}'(fat32 | exfat)")),
+    };
+
+    match op {
         "ls" => {
-            let dir = args.get(2).map(String::as_str).unwrap_or("/");
+            let dir = rest.get(2).copied().unwrap_or("/");
             let entries = volume.list_dir(dir).map_err(|e| format!("一覧取得に失敗: {e}"))?;
             for entry in entries {
                 let kind = if entry.is_dir { "d" } else { "-" };
@@ -233,9 +281,9 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         "cat" => {
-            let file_path = args.get(2).ok_or_else(|| format!("<FILE>が必要です\n\n{HELP_FOREIGN}"))?;
+            let file_path = rest.get(2).copied().ok_or_else(|| format!("<FILE>が必要です\n\n{HELP_FOREIGN}"))?;
             let data = volume.read_file(file_path).map_err(|e| format!("読み取りに失敗: {e}"))?;
-            match args.get(3) {
+            match rest.get(3) {
                 Some(out_path) => {
                     std::fs::write(out_path, &data).map_err(|e| format!("'{out_path}'への書き出しに失敗: {e}"))?;
                 }
@@ -247,10 +295,13 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         "put" => {
-            let file_path = args.get(2).ok_or_else(|| format!("<FILE>が必要です\n\n{HELP_FOREIGN}"))?;
-            let in_path = args.get(3).ok_or_else(|| format!("<IN>が必要です\n\n{HELP_FOREIGN}"))?;
+            let Volume::Fat(fat_volume) = &volume else {
+                return Err("putはexFATボリュームには使えません(上流クレートが書き込みに未対応のため)".to_string());
+            };
+            let file_path = rest.get(2).copied().ok_or_else(|| format!("<FILE>が必要です\n\n{HELP_FOREIGN}"))?;
+            let in_path = rest.get(3).copied().ok_or_else(|| format!("<IN>が必要です\n\n{HELP_FOREIGN}"))?;
             let data = std::fs::read(in_path).map_err(|e| format!("'{in_path}'の読み込みに失敗: {e}"))?;
-            volume.write_file(file_path, &data).map_err(|e| format!("書き込みに失敗: {e}"))?;
+            fat_volume.write_file(file_path, &data).map_err(|e| format!("書き込みに失敗: {e}"))?;
             println!("'{in_path}'を'{volume_path}'内の'{file_path}'として書き込みました。");
             Ok(())
         }
