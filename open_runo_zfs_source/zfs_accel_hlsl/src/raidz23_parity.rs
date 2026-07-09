@@ -86,14 +86,15 @@ pub fn compute_pq_accelerated(
     gf: &GaloisTables,
 ) -> (Vec<u8>, Vec<u8>) {
     match device.kind {
-        crate::device::AccelKind::Npu | crate::device::AccelKind::Gpu => {
+        crate::device::AccelKind::Gpu => {
             #[cfg(feature = "gpu")]
             {
-                match compute_pq_gpu(data_disks) {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz2_parity.cso"));
+                match compute_pq_gpu(data_disks, shader) {
                     Ok(result) => result,
                     Err(e) => {
                         tracing::warn!(
-                            "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            "GPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
                             device.adapter_description
                         );
                         compute_pq(data_disks, gf)
@@ -102,8 +103,30 @@ pub fn compute_pq_accelerated(
             }
             #[cfg(not(feature = "gpu"))]
             {
-                // `gpu` feature無効ビルドではNpu/Gpuが検出されることは無いが
-                // 型として到達しうるためCPU実装へ委譲しておく。
+                compute_pq(data_disks, gf)
+            }
+        }
+        // NPU側は現状GPU版と同一アルゴリズムだが、シェーダバイトコードは
+        // `raidnpu_z2_parity.hlsl`由来の別バイナリを使う(経緯は同ファイルの
+        // 先頭コメント参照)。将来NPU専用の実装(DirectML等)へ切り替える際、
+        // GPU側の検証済みディスパッチには影響しない。
+        crate::device::AccelKind::Npu => {
+            #[cfg(feature = "gpu")]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_z2_parity.cso"));
+                match compute_pq_gpu(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pq(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
                 compute_pq(data_disks, gf)
             }
         }
@@ -112,7 +135,10 @@ pub fn compute_pq_accelerated(
 }
 
 #[cfg(feature = "gpu")]
-fn compute_pq_gpu(data_disks: &[&[u8]]) -> crate::compute::ComputeResult<(Vec<u8>, Vec<u8>)> {
+fn compute_pq_gpu(
+    data_disks: &[&[u8]],
+    shader: &[u8],
+) -> crate::compute::ComputeResult<(Vec<u8>, Vec<u8>)> {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");
 
@@ -123,7 +149,6 @@ fn compute_pq_gpu(data_disks: &[&[u8]]) -> crate::compute::ComputeResult<(Vec<u8
         input.extend_from_slice(&crate::compute::bytes_to_words(disk));
     }
 
-    let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz2_parity.cso"));
     let outputs = crate::compute::dispatch_parity_shader(
         shader,
         num_disks as u32,
@@ -148,14 +173,38 @@ pub fn compute_pqr_accelerated(
     gf: &GaloisTables,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     match device.kind {
-        crate::device::AccelKind::Npu | crate::device::AccelKind::Gpu => {
+        crate::device::AccelKind::Gpu => {
             #[cfg(feature = "gpu")]
             {
-                match compute_pqr_gpu(data_disks) {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz3_parity.cso"));
+                match compute_pqr_gpu(data_disks, shader) {
                     Ok(result) => result,
                     Err(e) => {
                         tracing::warn!(
-                            "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            "GPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pqr(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                compute_pqr(data_disks, gf)
+            }
+        }
+        // NPU側は現状GPU版と同一アルゴリズムだが、シェーダバイトコードは
+        // `raidnpu_z3_parity.hlsl`由来の別バイナリを使う(経緯は
+        // raidnpu_parity.hlslの先頭コメント参照)。
+        crate::device::AccelKind::Npu => {
+            #[cfg(feature = "gpu")]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_z3_parity.cso"));
+                match compute_pqr_gpu(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
                             device.adapter_description
                         );
                         compute_pqr(data_disks, gf)
@@ -174,6 +223,7 @@ pub fn compute_pqr_accelerated(
 #[cfg(feature = "gpu")]
 fn compute_pqr_gpu(
     data_disks: &[&[u8]],
+    shader: &[u8],
 ) -> crate::compute::ComputeResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");
@@ -185,7 +235,6 @@ fn compute_pqr_gpu(
         input.extend_from_slice(&crate::compute::bytes_to_words(disk));
     }
 
-    let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz3_parity.cso"));
     let outputs = crate::compute::dispatch_parity_shader(
         shader,
         num_disks as u32,
@@ -671,6 +720,64 @@ mod tests {
         assert_eq!(gpu_p, expected_p);
         assert_eq!(gpu_q, expected_q);
         assert_eq!(gpu_r, expected_r);
+    }
+
+    // 以下2件は`raidnpu_{z2,z3}_parity.hlsl`(NPU専用ディスパッチ経路用の
+    // シェーダバイトコード)自体の正しさを検証する。NPU実機がなくても、
+    // D3D12コンピュートディスパッチ機構はデバイスがNPUかGPUかを区別しない
+    // ため、このマシンで検出できるD3D12デバイス(GPU等)を使って
+    // 「raidnpu_*.hlslのアルゴリズムがCPU参照実装と一致する」ことまでは
+    // 検証できる(`compute_pq_accelerated`/`compute_pqr_accelerated`が
+    // 実際にNPU検出時にこのバイトコードへ切り替えることの検証は別)。
+    #[test]
+    fn raidnpu_z2_shader_matches_cpu_when_any_d3d12_device_available() {
+        match crate::device::detect_best_accelerator() {
+            Ok(d) if d.kind != crate::device::AccelKind::CpuFallback => {}
+            _ => {
+                eprintln!("D3D12対応デバイスが見つからないためテストをスキップします");
+                return;
+            }
+        }
+
+        let gf = GaloisTables::new();
+        let d0: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04];
+        let d1: Vec<u8> = vec![0x11, 0x22, 0x33, 0x44];
+        let d2: Vec<u8> = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let refs: Vec<&[u8]> = vec![&d0, &d1, &d2];
+
+        let (expected_p, expected_q) = compute_pq(&refs, &gf);
+        let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_z2_parity.cso"));
+        let (npu_p, npu_q) = compute_pq_gpu(&refs, shader).expect("raidnpu_z2_parity dispatch failed");
+
+        assert_eq!(npu_p, expected_p);
+        assert_eq!(npu_q, expected_q);
+    }
+
+    #[test]
+    fn raidnpu_z3_shader_matches_cpu_when_any_d3d12_device_available() {
+        match crate::device::detect_best_accelerator() {
+            Ok(d) if d.kind != crate::device::AccelKind::CpuFallback => {}
+            _ => {
+                eprintln!("D3D12対応デバイスが見つからないためテストをスキップします");
+                return;
+            }
+        }
+
+        let gf = GaloisTables::new();
+        let d0: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04];
+        let d1: Vec<u8> = vec![0x11, 0x22, 0x33, 0x44];
+        let d2: Vec<u8> = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let d3: Vec<u8> = vec![0x55, 0x66, 0x77, 0x88];
+        let refs: Vec<&[u8]> = vec![&d0, &d1, &d2, &d3];
+
+        let (expected_p, expected_q, expected_r) = compute_pqr(&refs, &gf);
+        let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_z3_parity.cso"));
+        let (npu_p, npu_q, npu_r) =
+            compute_pqr_gpu(&refs, shader).expect("raidnpu_z3_parity dispatch failed");
+
+        assert_eq!(npu_p, expected_p);
+        assert_eq!(npu_q, expected_q);
+        assert_eq!(npu_r, expected_r);
     }
 
     #[test]

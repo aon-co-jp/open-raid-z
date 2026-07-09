@@ -46,4 +46,11 @@ fn main() {
     compile_shader(&dxc, "shaders/raidz_parity.hlsl", &out_dir, "raidz_parity.cso");
     compile_shader(&dxc, "shaders/raidz2_parity.hlsl", &out_dir, "raidz2_parity.cso");
     compile_shader(&dxc, "shaders/raidz3_parity.hlsl", &out_dir, "raidz3_parity.cso");
+
+    // NPU専用ディスパッチ経路(現状はGPU版と同一アルゴリズムだが、
+    // `AccelKind::Npu`用に別のシェーダバイトコードとして分離しておく。
+    // 理由は各shaders/raidnpu_*.hlslの先頭コメント参照)。
+    compile_shader(&dxc, "shaders/raidnpu_parity.hlsl", &out_dir, "raidnpu_parity.cso");
+    compile_shader(&dxc, "shaders/raidnpu_z2_parity.hlsl", &out_dir, "raidnpu_z2_parity.cso");
+    compile_shader(&dxc, "shaders/raidnpu_z3_parity.hlsl", &out_dir, "raidnpu_z3_parity.cso");
 }
