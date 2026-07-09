@@ -50,6 +50,10 @@ const ja = {
   result_label: "結果",
   error_label: "エラー",
   loading: "読み込み中...",
+  section_apply: "実ディスクへの適用",
+  apply_warning: "警告: 選択したディスクの既存データは全て消去されます。この操作は元に戻せません。",
+  confirm_data_loss_label: "選択したディスクの既存データが完全に消去されることを理解しました",
+  apply_button: "実ディスクへ適用",
 };
 
 // 日本語辞書のキー集合を「唯一の正」とし、他言語の辞書型をこれに厳密化する。
@@ -80,6 +84,10 @@ const enGB: Dict = {
   result_label: "Result",
   error_label: "Error",
   loading: "Loading...",
+  section_apply: "Apply to Real Disks",
+  apply_warning: "Warning: all existing data on the selected disks will be permanently erased. This cannot be undone.",
+  confirm_data_loss_label: "I understand the existing data on the selected disks will be permanently erased",
+  apply_button: "Apply to Real Disks",
 };
 
 const enUS: Dict = {
@@ -105,6 +113,10 @@ const it: Dict = {
   result_label: "Risultato",
   error_label: "Errore",
   loading: "Caricamento...",
+  section_apply: "Applica ai dischi reali",
+  apply_warning: "Attenzione: tutti i dati esistenti sui dischi selezionati verranno cancellati definitivamente. Questa operazione non può essere annullata.",
+  confirm_data_loss_label: "Ho compreso che i dati esistenti sui dischi selezionati verranno cancellati definitivamente",
+  apply_button: "Applica ai dischi reali",
 };
 
 const fr: Dict = {
@@ -125,6 +137,10 @@ const fr: Dict = {
   result_label: "Résultat",
   error_label: "Erreur",
   loading: "Chargement...",
+  section_apply: "Appliquer aux disques réels",
+  apply_warning: "Avertissement : toutes les données existantes sur les disques sélectionnés seront définitivement effacées. Cette opération est irréversible.",
+  confirm_data_loss_label: "Je comprends que les données existantes sur les disques sélectionnés seront définitivement effacées",
+  apply_button: "Appliquer aux disques réels",
 };
 
 const de: Dict = {
@@ -145,6 +161,10 @@ const de: Dict = {
   result_label: "Ergebnis",
   error_label: "Fehler",
   loading: "Wird geladen...",
+  section_apply: "Auf echte Datenträger anwenden",
+  apply_warning: "Warnung: Alle vorhandenen Daten auf den ausgewählten Datenträgern werden endgültig gelöscht. Dieser Vorgang kann nicht rückgängig gemacht werden.",
+  confirm_data_loss_label: "Ich verstehe, dass die vorhandenen Daten auf den ausgewählten Datenträgern endgültig gelöscht werden",
+  apply_button: "Auf echte Datenträger anwenden",
 };
 
 const ru: Dict = {
@@ -165,6 +185,10 @@ const ru: Dict = {
   result_label: "Результат",
   error_label: "Ошибка",
   loading: "Загрузка...",
+  section_apply: "Применить к реальным дискам",
+  apply_warning: "Внимание: все существующие данные на выбранных дисках будут безвозвратно удалены. Это действие невозможно отменить.",
+  confirm_data_loss_label: "Я понимаю, что существующие данные на выбранных дисках будут безвозвратно удалены",
+  apply_button: "Применить к реальным дискам",
 };
 
 const uk: Dict = {
@@ -185,6 +209,10 @@ const uk: Dict = {
   result_label: "Результат",
   error_label: "Помилка",
   loading: "Завантаження...",
+  section_apply: "Застосувати до реальних дисків",
+  apply_warning: "Попередження: усі наявні дані на вибраних дисках будуть остаточно видалені. Цю дію неможливо скасувати.",
+  confirm_data_loss_label: "Я розумію, що наявні дані на вибраних дисках будуть остаточно видалені",
+  apply_button: "Застосувати до реальних дисків",
 };
 
 const ar: Dict = {
@@ -205,6 +233,10 @@ const ar: Dict = {
   result_label: "النتيجة",
   error_label: "خطأ",
   loading: "جارٍ التحميل...",
+  section_apply: "التطبيق على الأقراص الحقيقية",
+  apply_warning: "تحذير: سيتم مسح جميع البيانات الموجودة على الأقراص المحددة بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.",
+  confirm_data_loss_label: "أفهم أن البيانات الموجودة على الأقراص المحددة ستُمسح بشكل نهائي",
+  apply_button: "التطبيق على الأقراص الحقيقية",
 };
 
 const fa: Dict = {
@@ -225,6 +257,10 @@ const fa: Dict = {
   result_label: "نتیجه",
   error_label: "خطا",
   loading: "در حال بارگذاری...",
+  section_apply: "اعمال روی دیسک‌های واقعی",
+  apply_warning: "هشدار: تمام داده‌های موجود روی دیسک‌های انتخاب‌شده برای همیشه پاک خواهد شد. این عملیات قابل بازگشت نیست.",
+  confirm_data_loss_label: "متوجه‌ام که داده‌های موجود روی دیسک‌های انتخاب‌شده برای همیشه پاک خواهد شد",
+  apply_button: "اعمال روی دیسک‌های واقعی",
 };
 
 const DICTS: Record<LangCode, Dict> = {

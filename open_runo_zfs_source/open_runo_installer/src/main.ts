@@ -52,13 +52,15 @@ function renderLangSelect(): void {
 }
 
 async function loadHardware(): Promise<void> {
+  const accelEl = document.getElementById("accelerator_info")!;
+  accelEl.textContent = t("loading");
+
   const [accelerator, disks, advice] = await Promise.all([
     invoke<AcceleratorInfo>("detect_accelerator"),
     invoke<DiskInfo[]>("list_physical_disks"),
     invoke<Advice[]>("get_disk_advice"),
   ]);
 
-  const accelEl = document.getElementById("accelerator_info")!;
   accelEl.textContent = `${accelerator.kind}: ${accelerator.description}`;
 
   const diskListEl = document.getElementById("disk_list")!;
@@ -66,7 +68,16 @@ async function loadHardware(): Promise<void> {
   for (const disk of disks) {
     const li = document.createElement("li");
     const gib = (disk.size_bytes / (1024 * 1024 * 1024)).toFixed(1);
-    li.textContent = `${disk.path} — ${gib} GiB`;
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "disk_select_checkbox";
+    checkbox.dataset.path = disk.path;
+    checkbox.dataset.sizeBytes = String(disk.size_bytes);
+    checkbox.addEventListener("change", updateApplyButtonState);
+    label.appendChild(checkbox);
+    label.append(` ${disk.path} — ${gib} GiB`);
+    li.appendChild(label);
     diskListEl.appendChild(li);
   }
   const warningEl = document.getElementById("no_disks_warning")!;
@@ -80,6 +91,22 @@ async function loadHardware(): Promise<void> {
     li.innerHTML = `<strong>${item.title}</strong>: ${item.detail}`;
     adviceListEl.appendChild(li);
   }
+
+  updateApplyButtonState();
+}
+
+function getSelectedDisks(): { path: string; size_bytes: number }[] {
+  const checkboxes = document.querySelectorAll<HTMLInputElement>(".disk_select_checkbox:checked");
+  return Array.from(checkboxes).map((cb) => ({
+    path: cb.dataset.path!,
+    size_bytes: Number(cb.dataset.sizeBytes),
+  }));
+}
+
+function updateApplyButtonState(): void {
+  const confirmed = (document.getElementById("confirm_data_loss") as HTMLInputElement).checked;
+  const hasSelection = getSelectedDisks().length > 0;
+  (document.getElementById("apply_button") as HTMLButtonElement).disabled = !(confirmed && hasSelection);
 }
 
 function toggleMirrorWidthVisibility(): void {
@@ -114,6 +141,25 @@ async function submitRaidForm(e: SubmitEvent): Promise<void> {
   }
 }
 
+async function submitApplyForm(e: SubmitEvent): Promise<void> {
+  e.preventDefault();
+  const level = (document.getElementById("apply_raid_level") as HTMLSelectElement).value;
+  const datasetName = (document.getElementById("apply_dataset_name") as HTMLInputElement).value;
+  const confirmDataLoss = (document.getElementById("confirm_data_loss") as HTMLInputElement).checked;
+  const disks = getSelectedDisks();
+  const resultEl = document.getElementById("apply_result")!;
+  resultEl.textContent = t("loading");
+
+  try {
+    const result = await invoke("init_zpool_apply", {
+      req: { disks, level, dataset_name: datasetName, confirm_data_loss: confirmDataLoss },
+    });
+    resultEl.textContent = `${t("result_label")}: ${JSON.stringify(result)}`;
+  } catch (err) {
+    resultEl.textContent = `${t("error_label")}: ${err}`;
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   applyDocumentDirection(getLanguage());
   renderLangSelect();
@@ -123,6 +169,8 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("refresh_button")?.addEventListener("click", () => void loadHardware());
   document.getElementById("raid_level")?.addEventListener("change", toggleMirrorWidthVisibility);
   document.getElementById("raid_form")?.addEventListener("submit", (e) => void submitRaidForm(e));
+  document.getElementById("confirm_data_loss")?.addEventListener("change", updateApplyButtonState);
+  document.getElementById("apply_form")?.addEventListener("submit", (e) => void submitApplyForm(e));
 
   void loadHardware();
 });
