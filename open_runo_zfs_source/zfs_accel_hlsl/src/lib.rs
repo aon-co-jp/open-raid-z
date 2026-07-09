@@ -19,5 +19,9 @@ pub mod galois;
 pub mod gf_matrix;
 pub mod raidz23_parity;
 pub mod raidz_parity;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_compute;
+#[cfg(feature = "vulkan")]
+pub mod vulkan_device;
 
 pub use device::{detect_best_accelerator, AccelDevice, AccelKind, DeviceError};

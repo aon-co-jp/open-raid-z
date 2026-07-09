@@ -37,15 +37,32 @@ pub struct AccelDevice {
 
 /// システム上のアダプタを列挙し、NPU/GPUの優先順位で選択する。
 /// どちらも見つからない場合はCPUフォールバックを返す(安全側のデフォルト)。
+///
+/// 【優先順位】`gpu`(D3D12/DirectML、Windows専用)が有効かつ実際にデバイスが
+/// 見つかればそれを使う。見つからない場合(またはそもそも`gpu`が無効な
+/// 非Windowsビルド)は`vulkan`(Vulkan Compute、Windows以外向け)を試す。
+/// どちらも見つからなければCPUフォールバック。
 pub fn detect_best_accelerator() -> Result<AccelDevice, DeviceError> {
-    match imp::create_best_device() {
-        Ok((accel, _device)) => Ok(accel),
-        Err(DeviceError::NoD3D12Device) => Ok(AccelDevice {
-            kind: AccelKind::CpuFallback,
-            adapter_description: "CPU (NPU/GPU adapter not found or D3D12 unavailable)".to_string(),
-        }),
-        Err(e) => Err(e),
+    #[cfg(feature = "gpu")]
+    {
+        match imp::create_best_device() {
+            Ok((accel, _device)) => return Ok(accel),
+            Err(DeviceError::NoD3D12Device) => {} // vulkan/CPUへフォールスルー
+            Err(e) => return Err(e),
+        }
     }
+
+    #[cfg(feature = "vulkan")]
+    {
+        if let Ok(accel) = crate::vulkan_device::detect_best_vulkan_device() {
+            return Ok(accel);
+        }
+    }
+
+    Ok(AccelDevice {
+        kind: AccelKind::CpuFallback,
+        adapter_description: "CPU (NPU/GPU adapter not found or unavailable)".to_string(),
+    })
 }
 
 #[cfg(feature = "gpu")]

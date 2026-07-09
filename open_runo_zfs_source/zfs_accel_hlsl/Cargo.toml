@@ -20,6 +20,14 @@ windows = { version = "0.58", optional = true, features = [
 ] }
 thiserror = "1.0"
 tracing = "0.1"
+# Windows以外(Linux/Mac/Android等)向けのGPU/NPUアクセラレーション経路
+# (`vulkan`feature、vulkan_device.rs/vulkan_compute.rs参照)。DirectX/
+# DirectMLはWindows専用APIのため使えず、代わりにクロスプラットフォームな
+# Vulkan Computeを使う。ash自体は薄いバインディングで、実行時に
+# libvulkan.so/vulkan-1.dllを動的ロードする(`loaded`feature)ため、
+# ビルド時にVulkanドライバは不要(実行時にドライバが無ければ
+# CPUフォールバックする、既存の`gpu`と同じ設計方針)。
+ash = { version = "0.38", optional = true, default-features = false, features = ["loaded", "debug"] }
 
 [features]
 # `gpu`: 実際のD3D12/DirectMLディスパッチとHLSLシェーダの事前コンパイル
@@ -32,6 +40,11 @@ tracing = "0.1"
 # `gpu` featureを有効にすること。
 default = ["gpu"]
 gpu = ["dep:windows"]
+# `vulkan`: Linux/Mac/Android等向けのGPU/NPUアクセラレーション
+# (Vulkan Compute経由)。`gpu`(D3D12/DirectML)とは独立に有効化できる
+# (両方同時に有効にしても構わない。`device.rs`がWindows上では`gpu`を
+# 優先し、`gpu`が無い/失敗した場合に`vulkan`を試す設計)。
+vulkan = ["dep:ash"]
 
 [lib]
 name = "zfs_accel_hlsl"

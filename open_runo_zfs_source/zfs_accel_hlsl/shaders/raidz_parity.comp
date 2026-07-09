@@ -1,0 +1,34 @@
+// RAID-Z1 (単一パリティ) 用XOR計算 Compute Shader (GLSL/Vulkan版)
+// shaders/raidz_parity.hlsl(D3D12/DirectML版)と全く同じアルゴリズム。
+// Windows以外(Linux/Mac/Android等)のGPU/NPUをVulkan Compute経由で
+// 使うための実装(crate::vulkan_compute参照)。
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer DataStripes {
+    uint data[];
+};
+layout(std430, binding = 1) writeonly buffer ParityOut {
+    uint parity[];
+};
+
+layout(push_constant) uniform Params {
+    uint num_disks;
+    uint stripe_len_words;
+};
+
+void main() {
+    uint word_idx = gl_GlobalInvocationID.x;
+    if (word_idx >= stripe_len_words) {
+        return;
+    }
+
+    uint acc = 0u;
+    for (uint disk = 0u; disk < num_disks; ++disk) {
+        acc ^= data[disk * stripe_len_words + word_idx];
+    }
+
+    parity[word_idx] = acc;
+}

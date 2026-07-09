@@ -29,31 +29,28 @@ pub fn compute_parity_cpu(data_stripes: &[&[u32]]) -> Vec<u32> {
 /// [`crate::compute::dispatch_parity_shader`]内部で選定し直す)。
 pub fn compute_parity_accelerated(device: &AccelDevice, data_stripes: &[&[u32]]) -> Vec<u32> {
     match device.kind {
-        crate::device::AccelKind::Gpu => {
+        crate::device::AccelKind::Gpu | crate::device::AccelKind::Npu => {
             #[cfg(feature = "gpu")]
             {
-                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz_parity.cso"));
-                dispatch_or_fallback(device, data_stripes, shader, "GPU")
+                let shader = if device.kind == crate::device::AccelKind::Npu {
+                    // NPU側は現状GPU版と同一アルゴリズムだが、シェーダバイトコードは
+                    // `raidnpu_parity.hlsl`由来の別バイナリを使う(経緯は同ファイルの
+                    // 先頭コメント参照)。
+                    include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_parity.cso")).as_slice()
+                } else {
+                    include_bytes!(concat!(env!("OUT_DIR"), "/raidz_parity.cso")).as_slice()
+                };
+                return dispatch_or_fallback(device, data_stripes, shader);
             }
-            #[cfg(not(feature = "gpu"))]
+            // Windows以外(Linux/Mac/Android等)向け: `vulkan` featureが有効なら
+            // Vulkan Compute経由でディスパッチする(`gpu`はWindows専用APIの
+            // ため、`gpu`が無効なビルドではこちらが実運用経路になる)。
+            #[cfg(all(feature = "vulkan", not(feature = "gpu")))]
             {
-                compute_parity_cpu(data_stripes)
+                return dispatch_or_fallback_vulkan(device, data_stripes);
             }
-        }
-        // NPU側は現状GPU版と同一アルゴリズムだが、シェーダバイトコードは
-        // `raidnpu_parity.hlsl`由来の別バイナリを使う(経緯は同ファイルの
-        // 先頭コメント参照)。
-        crate::device::AccelKind::Npu => {
-            #[cfg(feature = "gpu")]
+            #[cfg(not(any(feature = "gpu", feature = "vulkan")))]
             {
-                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidnpu_parity.cso"));
-                dispatch_or_fallback(device, data_stripes, shader, "NPU")
-            }
-            #[cfg(not(feature = "gpu"))]
-            {
-                // `gpu` feature無効ビルドではNpuが検出されることは無いが
-                // (device.rsのCPU専用実装は常にCpuFallbackを返す)、型として
-                // 到達しうるためCPU実装へ委譲しておく。
                 compute_parity_cpu(data_stripes)
             }
         }
@@ -62,12 +59,7 @@ pub fn compute_parity_accelerated(device: &AccelDevice, data_stripes: &[&[u32]])
 }
 
 #[cfg(feature = "gpu")]
-fn dispatch_or_fallback(
-    device: &AccelDevice,
-    data_stripes: &[&[u32]],
-    shader: &[u8],
-    label: &str,
-) -> Vec<u32> {
+fn dispatch_or_fallback(device: &AccelDevice, data_stripes: &[&[u32]], shader: &[u8]) -> Vec<u32> {
     let stripe_len = data_stripes.first().map(|s| s.len()).unwrap_or(0);
     let num_disks = data_stripes.len();
     let mut input = Vec::with_capacity(num_disks * stripe_len);
@@ -79,7 +71,37 @@ fn dispatch_or_fallback(
         Ok(mut outputs) => outputs.pop().unwrap_or_default(),
         Err(e) => {
             tracing::warn!(
-                "{label}ディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                device.adapter_description
+            );
+            compute_parity_cpu(data_stripes)
+        }
+    }
+}
+
+/// Windows以外(Linux/Mac/Android等)向け: Vulkan Compute経由のディスパッチ
+/// (`raidz_parity.comp`由来のSPIR-V。NPU/GPUどちらも現状同一シェーダを使う)。
+#[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+fn dispatch_or_fallback_vulkan(device: &AccelDevice, data_stripes: &[&[u32]]) -> Vec<u32> {
+    let stripe_len = data_stripes.first().map(|s| s.len()).unwrap_or(0);
+    let num_disks = data_stripes.len();
+    let mut input = Vec::with_capacity(num_disks * stripe_len);
+    for stripe in data_stripes {
+        input.extend_from_slice(stripe);
+    }
+
+    let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz_parity.spv"));
+    match crate::vulkan_compute::dispatch_parity_shader_vulkan(
+        shader,
+        num_disks as u32,
+        stripe_len as u32,
+        &input,
+        1,
+    ) {
+        Ok(mut outputs) => outputs.pop().unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!(
+                "Vulkanディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
                 device.adapter_description
             );
             compute_parity_cpu(data_stripes)
