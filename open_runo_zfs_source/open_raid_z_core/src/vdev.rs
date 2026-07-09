@@ -84,10 +84,11 @@ pub struct RaidZVdev<D: BlockDevice> {
     /// 本物のZFSはこれをブロックポインタ木としてディスク上に永続化するが、
     /// 本層はメモリ上のテーブルとして保持する簡易実装。
     checksums: HashMap<(usize, u64), Checksum>,
-    /// 設定されていれば、Z2のP/QパリティをGPU/NPU(D3D12 Compute)へオフロードする
-    /// (`zfs_accel_hlsl::raidz23_parity::compute_pq_accelerated`)。
-    /// 未設定、またはZ3の場合は常にCPU実装(`compute_pq`/`compute_pqr`)を使う
-    /// (RAID-Z3のR用シェーダは未実装のため)。
+    /// 設定されていれば、Z2のP/Qパリティ・Z3のP/Q/RパリティをGPU/NPU
+    /// (D3D12 Compute)へオフロードする
+    /// (`zfs_accel_hlsl::raidz23_parity::compute_pq_accelerated`/
+    /// `compute_pqr_accelerated`)。未設定の場合は常にCPU実装
+    /// (`compute_pq`/`compute_pqr`)を使う。
     accel: Option<AccelDevice>,
 }
 
@@ -108,7 +109,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
         }
     }
 
-    /// GPU/NPUアクセラレータを設定する(RAID-Z2のP/Q計算のみ対象)。
+    /// GPU/NPUアクセラレータを設定する(RAID-Z2のP/Q、RAID-Z3のP/Q/R計算が対象)。
     pub fn with_accelerator(mut self, accel: AccelDevice) -> Self {
         self.accel = Some(accel);
         self
@@ -148,7 +149,10 @@ impl<D: BlockDevice> RaidZVdev<D> {
                 vec![p, q]
             }
             3 => {
-                let (p, q, r) = raidz23_parity::compute_pqr(chunks, &self.gf);
+                let (p, q, r) = match &self.accel {
+                    Some(accel) => raidz23_parity::compute_pqr_accelerated(accel, chunks, &self.gf),
+                    None => raidz23_parity::compute_pqr(chunks, &self.gf),
+                };
                 vec![p, q, r]
             }
             other => unreachable!(

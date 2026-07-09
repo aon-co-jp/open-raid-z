@@ -1,15 +1,16 @@
-// RAID-Z2 (二重パリティ P/Q) 用 Reed-Solomon Compute Shader
+// RAID-Z3 (三重パリティ P/Q/R) 用 Reed-Solomon Compute Shader
 //
 // GF(2^8)(既約多項式 x^8+x^4+x^3+x^2+1 = 0x11d、生成元2)上で
-// P = XOR(D_i)、Q = XOR(D_i * 2^i) を計算する。
-// 対応するCPU参照実装・テストは ../src/raidz23_parity.rs, ../src/galois.rs を参照。
-//
-// RAID-Z3のR(4^i係数)は本シェーダのQ計算ロジックを流用しつつ、反復2倍算の
-// 回数を2倍にしたものとして raidz3_parity.hlsl に実装済み。
+// P = XOR(D_i)、Q = XOR(D_i * 2^i)、R = XOR(D_i * 4^i)(4^i = 2^(2i))を計算する。
+// 対応するCPU参照実装・テストは ../src/raidz23_parity.rs::compute_pqr,
+// ../src/galois.rs を参照。P/Q部分は raidz2_parity.hlsl と同一のロジック
+// (gf_mul2_packedによる反復2倍算)で、Rはその反復回数を2倍(=2^(2i)倍)にした
+// だけの違いしかない。
 
 RWStructuredBuffer<uint> DataStripes : register(u0); // [num_disks * stripe_len_words]
 RWStructuredBuffer<uint> ParityPOut  : register(u1); // [stripe_len_words]
 RWStructuredBuffer<uint> ParityQOut  : register(u2); // [stripe_len_words]
+RWStructuredBuffer<uint> ParityROut  : register(u3); // [stripe_len_words]
 
 cbuffer Params : register(b0)
 {
@@ -48,21 +49,31 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
 
     uint p_acc = 0;
     uint q_acc = 0;
+    uint r_acc = 0;
 
     for (uint disk = 0; disk < NumDisks; ++disk)
     {
         uint word = DataStripes[disk * StripeLenWords + word_idx];
         p_acc ^= word;
 
-        // term = word * 2^disk (各バイトレーンを独立にdisk回2倍する)
-        uint term = word;
+        // Q用の項: word * 2^disk (各バイトレーンを独立にdisk回2倍する)
+        uint q_term = word;
         for (uint k = 0; k < disk; ++k)
         {
-            term = gf_mul2_packed(term);
+            q_term = gf_mul2_packed(q_term);
         }
-        q_acc ^= term;
+        q_acc ^= q_term;
+
+        // R用の項: word * 4^disk = word * 2^(2*disk) (2倍算をさらに2倍の回数繰り返す)
+        uint r_term = word;
+        for (uint k = 0; k < 2 * disk; ++k)
+        {
+            r_term = gf_mul2_packed(r_term);
+        }
+        r_acc ^= r_term;
     }
 
     ParityPOut[word_idx] = p_acc;
     ParityQOut[word_idx] = q_acc;
+    ParityROut[word_idx] = r_acc;
 }
