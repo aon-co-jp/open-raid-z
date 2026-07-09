@@ -1020,3 +1020,53 @@ Windows実機(`winfsp_backend`+`gpu_accel`、実マウント含む)・WSL2実機
 8. CI(GitHub Actions)追加(前回から変更なし)
 9. `resilver`を`Vdev`トレイトへ統一するかどうかの設計判断(前回から変更なし)
 10. installer実装確認・PR作成・AD/SAM連携(前回から変更なし)
+
+---
+
+## 追記11: `orzctl`CLIツールの新規実装・実機スモークテスト成功
+
+Linux起動ディスク化(initramfsからのマウント)には、`Pool`をコマンドラインから
+操作できる実行可能ファイルが必要だったため、`orzctl`(`src/bin/orzctl.rs`)を
+新規実装した。
+
+### 内容
+
+- `orzctl create --level <raid0|raid1|raid5|raid6|z2|z3> --chunk-size <バイト>
+  --stripes <総ストライプ数> --dataset <名前> <ディスク...>`:
+  実ディスク(またはループバックファイル)から新規プールを作成し、
+  指定名のデータセットを作成して`Pool::save()`で保存する。
+- `orzctl mount --level ... --chunk-size ... --stripes ... --mountpoint
+  <ディレクトリ> <ディスク...>`: 保存済みのプールを`Pool::open()`で開き、
+  FUSE経由でマウントしてフォアグラウンドで待機する(initramfsからは
+  バックグラウンド実行するか、`switch_root`直前でそのまま待たせる運用を想定)。
+- Linux(`fuse_backend`)専用。他環境でビルド・実行した場合はエラー
+  メッセージを出して終了する(`main`をcfgで分岐)。
+- `--stripes`は明示的に指定する方式(生ブロックデバイスの実容量自動検出は
+  未実装。実運用では`blockdev --getsize64`等で事前計算する想定)。
+
+### 実機スモークテスト(WSL2、シェルスクリプト経由で実行・成功)
+
+1MiBのループバックファイル6枚(Z2, chunk_size=4096)に対し、
+`orzctl create`→`orzctl mount`(バックグラウンド)→`echo`でマウント先へ
+書き込み→`fusermount3 -u`でアンマウント→`orzctl mount`で再マウント→
+`cat`で内容確認、という一連を実際にシェルから実行し、**再マウント後も
+書き込んだ内容がそのまま読めることを確認**した(`Pool::save`/`Pool::open`が
+CLIツール経由でも正しく機能することの実証)。
+
+**ハマった点(再発防止のため記録)**: PowerShell経由で`wsl -d Ubuntu --
+bash -c '...'`のように複雑な複数行スクリプト(`for`ループ・セミコロン区切り
+複数コマンド等)を渡すと、セミコロンが正しく渡らず構文エラーになる
+(`for i in 0 1 2 3; do ... done`が`unexpected end of file`になる)。
+原因はPowerShellから`wsl.exe`(ネイティブ実行ファイル)への引数受け渡しの
+段階でのエスケープ崩れと見られる。**複数コマンド・ループを含むスクリプトは、
+インラインの`bash -c '...'`ではなく、一度`.sh`ファイルへ書き出してから
+`wsl -d Ubuntu -- bash /mnt/c/.../script.sh`のように実行する**ことで回避した。
+
+### 次のステップ
+
+1. VirtualBoxでVMを作成し、複数の仮想ディスクを割り当てる
+2. VM内(Linuxライブ環境)で、`/boot`用の通常ext4パーティション+
+   `orzctl`を組み込んだinitramfsを構築する
+3. GRUBが`/boot`からカーネル+initramfsを読み込み、initramfsが`orzctl mount`
+   相当の処理でRAID-Zプールを組み立てて`switch_root`する、という流れを
+   実際に構築・起動テストする

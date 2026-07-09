@@ -99,7 +99,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-Функція `fuse_backend` вмикає crate `fuser` (справжню прив'язку до `libfuse3` у Linux). Вона незалежна від `winfsp_backend`/`gpu_accel` і не може бути увімкнена на платформах, відмінних від Linux, оскільки сам `fuser` там навіть не є залежністю (він міститься в `Cargo.toml` під `target.'cfg(target_os = "linux")'.dependencies`). Інтеграційний тест справжнього монтування (`tests/fuse_mount.rs`) перевірено на WSL2 Ubuntu 26.04 — створення, запис, читання, перейменування, усічення, видалення та цикл читання-запису для більшого файлу, що охоплює кілька смуг. Якщо ви працюєте лише на Windows, для збірки/тестування Linux-цілі рекомендовано WSL2 (`wsl --install`).
+Функція `fuse_backend` вмикає crate `fuser` (справжню прив'язку до `libfuse3` у Linux). Вона незалежна від `winfsp_backend`/`gpu_accel` і не може бути увімкнена на платформах, відмінних від Linux, оскільки сам `fuser` там навіть не є залежністю (він міститься в `Cargo.toml` під `target.'cfg(target_os = "linux")'.dependencies`). Інтеграційний тест справжнього монтування (`tests/fuse_mount.rs`) перевірено на WSL2 Ubuntu 26.04 — створення, запис, читання, перейменування, усічення, видалення, цикл читання-запису для більшого файлу, що охоплює кілька смуг, і збереження метаданих після справжнього демонтування та повторного монтування. Якщо ви працюєте лише на Windows, для збірки/тестування Linux-цілі рекомендовано WSL2 (`wsl --install`).
+
+Також включено невеликий інструмент командного рядка `orzctl` для створення й монтування пулу прямо з терміналу:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### Інсталятор (`open_runo_installer` / `open_runo_installer_core`)
 

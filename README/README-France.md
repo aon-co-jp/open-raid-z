@@ -99,7 +99,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-La fonctionnalité `fuse_backend` active le crate `fuser` (une véritable liaison vers `libfuse3` de Linux). Elle est indépendante de `winfsp_backend`/`gpu_accel` et ne peut pas être activée sur des cibles non Linux, puisque `fuser` lui-même n'y est même pas une dépendance (il se trouve sous `target.'cfg(target_os = "linux")'.dependencies` dans `Cargo.toml`). Le test d'intégration à montage réel (`tests/fuse_mount.rs`) a été vérifié sous WSL2 Ubuntu 26.04 : création, écriture, lecture, renommage, troncature, suppression, et l'aller-retour d'un fichier plus volumineux s'étendant sur plusieurs bandes. Si vous êtes uniquement sous Windows, WSL2 (`wsl --install`) est le moyen recommandé de compiler/tester la cible Linux.
+La fonctionnalité `fuse_backend` active le crate `fuser` (une véritable liaison vers `libfuse3` de Linux). Elle est indépendante de `winfsp_backend`/`gpu_accel` et ne peut pas être activée sur des cibles non Linux, puisque `fuser` lui-même n'y est même pas une dépendance (il se trouve sous `target.'cfg(target_os = "linux")'.dependencies` dans `Cargo.toml`). Le test d'intégration à montage réel (`tests/fuse_mount.rs`) a été vérifié sous WSL2 Ubuntu 26.04 : création, écriture, lecture, renommage, troncature, suppression, l'aller-retour d'un fichier plus volumineux s'étendant sur plusieurs bandes, et la persistance des métadonnées à travers un démontage et remontage réels. Si vous êtes uniquement sous Windows, WSL2 (`wsl --install`) est le moyen recommandé de compiler/tester la cible Linux.
+
+Un petit outil en ligne de commande `orzctl` est également inclus pour créer et monter un pool directement depuis le terminal :
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### Installateur (`open_runo_installer` / `open_runo_installer_core`)
 
