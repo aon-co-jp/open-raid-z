@@ -432,6 +432,99 @@ pub fn reconstruct_missing_data_generic(
     missing_data.iter().copied().zip(results).collect()
 }
 
+/// [`reconstruct_missing_data_generic`]と同じ結果を返すが、シンドローム計算
+/// (既知ディスク×パリティ種別ぶんの「係数倍してXOR畳み込む」処理)を
+/// `zfs_accel_hlsl::dml_gemm::linear_combine_via_dml_gemm`でGPU/NPUへ
+/// オフロードする。これはscrub/resilverが破損を検知した際に実際に走る
+/// 復旧計算の主要コストであり、いわば「パリティチェック」の重い部分。
+///
+/// ディスパッチに失敗した場合(ドライバ非対応・ハードウェア無し等)は
+/// [`reconstruct_missing_data_generic`]と同じCPU計算へ完全にフォールバック
+/// するため、`device`に何を渡しても結果は変わらない(速度のみが変わる)。
+pub fn reconstruct_missing_data_generic_accelerated(
+    device: &AccelDevice,
+    known_data: &[(usize, &[u8])],
+    missing_data: &[usize],
+    available_parity: &[(u8, &[u8])],
+    gf: &GaloisTables,
+) -> Vec<(usize, Vec<u8>)> {
+    if missing_data.is_empty() {
+        return vec![];
+    }
+    let n = missing_data.len();
+    assert!(
+        available_parity.len() >= n,
+        "復旧に必要な数のパリティが揃っていません(必要{n}件、利用可能{}件)",
+        available_parity.len()
+    );
+    let stripe_len = available_parity[0].1.len();
+    let exponents: Vec<u32> = available_parity[..n].iter().map(|(e, _)| *e as u32).collect();
+
+    let gpu_contributions: Option<Vec<Vec<u8>>> = match device.kind {
+        crate::device::AccelKind::CpuFallback => None,
+        _ => {
+            #[cfg(feature = "gpu")]
+            {
+                // 各行(パリティ種別)・既知ディスクごとの係数
+                // (gf.pow2(exponent*元インデックス))。
+                // CPU版(reconstruct_missing_data_generic)と全く同じ式。
+                let known_disks: Vec<&[u8]> = known_data.iter().map(|&(_, d)| d).collect();
+                let coeffs_per_output: Vec<Vec<u8>> = exponents
+                    .iter()
+                    .map(|&exp| known_data.iter().map(|&(idx, _)| gf.pow2(exp * idx as u32)).collect())
+                    .collect();
+                crate::dml_gemm::linear_combine_via_dml_gemm(gf, &known_disks, &coeffs_per_output).ok()
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                None
+            }
+        }
+    };
+
+    let mut syndromes: Vec<Vec<u8>> = exponents.iter().enumerate().map(|(row, _)| available_parity[row].1.to_vec()).collect();
+    match gpu_contributions {
+        Some(contributions) => {
+            for (row, contribution) in contributions.iter().enumerate() {
+                for b in 0..stripe_len {
+                    syndromes[row][b] ^= contribution[b];
+                }
+            }
+        }
+        None => {
+            for (row, &exp) in exponents.iter().enumerate() {
+                for &(idx, disk) in known_data {
+                    let coeff = gf.pow2(exp * idx as u32);
+                    for b in 0..stripe_len {
+                        syndromes[row][b] ^= gf.mul(disk[b], coeff);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut matrix_data = vec![0u8; n * n];
+    for (row, &exp) in exponents.iter().enumerate() {
+        for (col, &idx) in missing_data.iter().enumerate() {
+            matrix_data[row * n + col] = gf.pow2(exp * idx as u32);
+        }
+    }
+    let inv = GfMatrix::new(n, matrix_data)
+        .invert(gf)
+        .expect("係数行列が特異です(欠損インデックスの重複、または不正なパリティ組み合わせ)");
+
+    let mut results: Vec<Vec<u8>> = (0..n).map(|_| vec![0u8; stripe_len]).collect();
+    for b in 0..stripe_len {
+        let target: Vec<u8> = syndromes.iter().map(|s| s[b]).collect();
+        let solved = inv.mul_vec(gf, &target);
+        for (col, result) in results.iter_mut().enumerate() {
+            result[b] = solved[col];
+        }
+    }
+
+    missing_data.iter().copied().zip(results).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +733,83 @@ mod tests {
         assert_eq!(recovered.len(), 2);
         assert_eq!(recovered[0], (1, disks[1].clone()));
         assert_eq!(recovered[1], (3, disks[3].clone()));
+    }
+
+    #[test]
+    fn accelerated_generic_reconstruct_matches_cpu_only_variant_on_cpu_fallback() {
+        // 実機の有無に関わらず常に実行できる回帰テスト: `device.kind`を
+        // 明示的にCpuFallbackにして、GEMM経路を通らない場合でも
+        // `reconstruct_missing_data_generic`と完全に同じ結果を返すことを確認する。
+        let gf = GaloisTables::new();
+        let disks: [Vec<u8>; 4] =
+            [vec![0x11, 0x22], vec![0x33, 0x44], vec![0x55, 0x66], vec![0x77, 0x88]];
+        let refs: Vec<&[u8]> = disks.iter().map(|d| d.as_slice()).collect();
+        let (p, q) = compute_pq(&refs, &gf);
+
+        let known: Vec<(usize, &[u8])> = vec![(0, disks[0].as_slice()), (2, disks[2].as_slice())];
+        let available_parity: Vec<(u8, &[u8])> = vec![(0, &p), (1, &q)];
+
+        let cpu_device = crate::device::AccelDevice {
+            kind: crate::device::AccelKind::CpuFallback,
+            adapter_description: "test".to_string(),
+        };
+        let expected = reconstruct_missing_data_generic(&known, &[1, 3], &available_parity, &gf);
+        let actual = reconstruct_missing_data_generic_accelerated(
+            &cpu_device,
+            &known,
+            &[1, 3],
+            &available_parity,
+            &gf,
+        );
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn accelerated_generic_reconstruct_matches_cpu_only_variant_when_hardware_available() {
+        let device = match crate::device::detect_best_accelerator() {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("D3D12対応アクセラレータが見つからないためテストをスキップします");
+                return;
+            }
+        };
+        if device.kind == crate::device::AccelKind::CpuFallback {
+            eprintln!("GPU/NPUが見つからないためテストをスキップします");
+            return;
+        }
+
+        let gf = GaloisTables::new();
+        let disks: [Vec<u8>; 7] = [
+            vec![0x01, 0x9F, 0x10],
+            vec![0x02, 0x8E, 0x20],
+            vec![0x03, 0x7D, 0x30],
+            vec![0x04, 0x6C, 0x40],
+            vec![0x05, 0x5B, 0x50],
+            vec![0x06, 0x4A, 0x60],
+            vec![0x07, 0x39, 0x70],
+        ];
+        let refs: Vec<&[u8]> = disks.iter().map(|d| d.as_slice()).collect();
+        let (p, q, r) = compute_pqr(&refs, &gf);
+
+        // ディスク1,3,5(0-indexed)が同時に欠損したと仮定(reconstruct_triple_missing系のテストと同条件)。
+        let missing = [1usize, 3, 5];
+        let known: Vec<(usize, &[u8])> = refs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !missing.contains(i))
+            .map(|(i, d)| (i, *d))
+            .collect();
+        let available_parity: Vec<(u8, &[u8])> = vec![(0, &p), (1, &q), (2, &r)];
+
+        let expected = reconstruct_missing_data_generic(&known, &missing, &available_parity, &gf);
+        let actual =
+            reconstruct_missing_data_generic_accelerated(&device, &known, &missing, &available_parity, &gf);
+
+        assert_eq!(actual, expected);
+        for (idx, data) in &actual {
+            assert_eq!(data, &disks[*idx]);
+        }
     }
 
     #[test]

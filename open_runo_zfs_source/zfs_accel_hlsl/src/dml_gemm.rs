@@ -35,13 +35,15 @@ use windows::Win32::AI::MachineLearning::DirectML::*;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
 
-/// `coeff_for_disk(i)`をP/Q/R用の係数として、ディスクごとの`GfBitMatrix`から
-/// 「8行 × 8*num_disks列」の重み行列(行優先でflatten済み)を1パリティ種別ぶん構築する。
-fn weight_rows_for(gf: &GaloisTables, num_disks: usize, coeff_for_disk: impl Fn(usize) -> u8) -> Vec<f32> {
+/// ディスクごとのGF(2^8)係数`coeffs[i]`から、`GfBitMatrix`を経由して
+/// 「8行 × 8*num_disks列」の重み行列(行優先でflatten済み)を1出力(1パリティ種別、
+/// または1復旧対象)ぶん構築する。
+fn weight_rows_for_coeffs(gf: &GaloisTables, coeffs: &[u8]) -> Vec<f32> {
+    let num_disks = coeffs.len();
     let mut rows = vec![0f32; 8 * (8 * num_disks)];
     let cols = 8 * num_disks;
-    for i in 0..num_disks {
-        let matrix = GfBitMatrix::for_constant(gf, coeff_for_disk(i));
+    for (i, &c) in coeffs.iter().enumerate() {
+        let matrix = GfBitMatrix::for_constant(gf, c);
         for j in 0..8 {
             for k in 0..8 {
                 rows[j * cols + (i * 8 + k)] = matrix.bit(j, k) as f32;
@@ -98,17 +100,44 @@ fn unpack_mod2_rows_to_bytes(raw: &[f32], out_rows: usize, stripe_len: usize) ->
     results
 }
 
+/// 任意の出力ごとの係数配列(`coeffs_per_output[out][disk] = GF(2^8)係数`)を使い、
+/// `known_disks`の線形結合(各ディスクを係数倍してXOR畳み込む)を1回のGEMM
+/// ディスパッチでまとめて計算する汎用版。
+///
+/// [`compute_pq_via_dml_gemm`]/[`compute_pqr_via_dml_gemm`](固定係数
+/// 2^i/4^i)はこの関数の特殊形。係数が固定パターンでない場合(例:
+/// [`crate::raidz23_parity::reconstruct_missing_data_generic`]の復旧用
+/// シンドローム計算、生存している既知ディスクの元インデックスに応じて
+/// 係数が変わる)にも使える。
+pub fn linear_combine_via_dml_gemm(
+    gf: &GaloisTables,
+    known_disks: &[&[u8]],
+    coeffs_per_output: &[Vec<u8>],
+) -> ComputeResult<Vec<Vec<u8>>> {
+    let num_disks = known_disks.len();
+    let cols = 8 * num_disks;
+    let weight_rows: Vec<Vec<f32>> = coeffs_per_output
+        .iter()
+        .map(|coeffs| {
+            debug_assert_eq!(coeffs.len(), num_disks, "係数の本数はディスク数と一致する必要があります");
+            weight_rows_for_coeffs(gf, coeffs)
+        })
+        .collect();
+    let w = stack_weight_rows(&weight_rows, cols);
+    let (x, stripe_len) = data_bit_matrix(known_disks);
+    let out_rows = 8 * coeffs_per_output.len();
+
+    let raw = dispatch_gemm(&w, out_rows as u32, cols as u32, &x, stripe_len as u32)?;
+    Ok(unpack_mod2_rows_to_bytes(&raw, out_rows, stripe_len))
+}
+
 /// RAID-Z2用P/Qパリティを、DirectML GEMM経由で(mod 2のGF(2)行列積として)計算する。
 pub fn compute_pq_via_dml_gemm(data_disks: &[&[u8]], gf: &GaloisTables) -> ComputeResult<(Vec<u8>, Vec<u8>)> {
     let num_disks = data_disks.len();
-    let cols = 8 * num_disks;
-    let p_rows = weight_rows_for(gf, num_disks, |_| 1);
-    let q_rows = weight_rows_for(gf, num_disks, |i| gf.pow2(i as u32));
-    let w = stack_weight_rows(&[p_rows, q_rows], cols);
-    let (x, stripe_len) = data_bit_matrix(data_disks);
+    let p_coeffs = vec![1u8; num_disks];
+    let q_coeffs: Vec<u8> = (0..num_disks).map(|i| gf.pow2(i as u32)).collect();
 
-    let raw = dispatch_gemm(&w, 16, cols as u32, &x, stripe_len as u32)?;
-    let mut bytes = unpack_mod2_rows_to_bytes(&raw, 16, stripe_len);
+    let mut bytes = linear_combine_via_dml_gemm(gf, data_disks, &[p_coeffs, q_coeffs])?;
     let q = bytes.pop().unwrap();
     let p = bytes.pop().unwrap();
     Ok((p, q))
@@ -120,15 +149,11 @@ pub fn compute_pqr_via_dml_gemm(
     gf: &GaloisTables,
 ) -> ComputeResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
     let num_disks = data_disks.len();
-    let cols = 8 * num_disks;
-    let p_rows = weight_rows_for(gf, num_disks, |_| 1);
-    let q_rows = weight_rows_for(gf, num_disks, |i| gf.pow2(i as u32));
-    let r_rows = weight_rows_for(gf, num_disks, |i| gf.pow2(2 * i as u32));
-    let w = stack_weight_rows(&[p_rows, q_rows, r_rows], cols);
-    let (x, stripe_len) = data_bit_matrix(data_disks);
+    let p_coeffs = vec![1u8; num_disks];
+    let q_coeffs: Vec<u8> = (0..num_disks).map(|i| gf.pow2(i as u32)).collect();
+    let r_coeffs: Vec<u8> = (0..num_disks).map(|i| gf.pow2(2 * i as u32)).collect();
 
-    let raw = dispatch_gemm(&w, 24, cols as u32, &x, stripe_len as u32)?;
-    let mut bytes = unpack_mod2_rows_to_bytes(&raw, 24, stripe_len);
+    let mut bytes = linear_combine_via_dml_gemm(gf, data_disks, &[p_coeffs, q_coeffs, r_coeffs])?;
     let r = bytes.pop().unwrap();
     let q = bytes.pop().unwrap();
     let p = bytes.pop().unwrap();
@@ -450,6 +475,44 @@ mod tests {
 
         let expected = crate::raidz23_parity::compute_pq(&refs, &gf);
         let actual = compute_pq_via_dml_gemm(&refs, &gf).expect("dml gemm dispatch failed");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn linear_combine_via_dml_gemm_matches_manual_xor_mul_for_arbitrary_coefficients() {
+        if !any_d3d12_device_available() {
+            eprintln!("D3D12対応デバイスが見つからないためテストをスキップします");
+            return;
+        }
+        let gf = GaloisTables::new();
+        let d0: Vec<u8> = vec![0x9A, 0x3C, 0x71, 0x0F];
+        let d1: Vec<u8> = vec![0x4E, 0xD2, 0x88, 0x1B];
+        let d2: Vec<u8> = vec![0x60, 0x7F, 0xA1, 0xEE];
+        let refs: Vec<&[u8]> = vec![&d0, &d1, &d2];
+
+        // reconstruct_missing_data_genericのシンドローム計算で実際に現れる
+        // ような、2^i/4^i以外の任意係数(元のディスクインデックスに依存する
+        // gf.pow2(exp*idx)の形)を使う。
+        let original_indices = [1usize, 4, 6];
+        let out0_coeffs: Vec<u8> = original_indices.iter().map(|&idx| gf.pow2(1 * idx as u32)).collect();
+        let out1_coeffs: Vec<u8> = original_indices.iter().map(|&idx| gf.pow2(2 * idx as u32)).collect();
+
+        let expected: Vec<Vec<u8>> = [&out0_coeffs, &out1_coeffs]
+            .iter()
+            .map(|coeffs| {
+                let mut acc = vec![0u8; d0.len()];
+                for (disk, &c) in refs.iter().zip(coeffs.iter()) {
+                    for (b, &byte) in disk.iter().enumerate() {
+                        acc[b] ^= gf.mul(byte, c);
+                    }
+                }
+                acc
+            })
+            .collect();
+
+        let actual = linear_combine_via_dml_gemm(&gf, &refs, &[out0_coeffs, out1_coeffs])
+            .expect("dml gemm dispatch failed");
 
         assert_eq!(actual, expected);
     }
