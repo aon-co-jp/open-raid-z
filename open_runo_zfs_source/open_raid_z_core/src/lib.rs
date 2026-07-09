@@ -16,6 +16,8 @@ pub mod block_device;
 pub mod checksum;
 pub mod error;
 pub mod exfat_emulation;
+#[cfg(feature = "foreign_fs")]
+pub mod foreign_fs;
 pub mod fs_ops;
 pub mod id_mapping;
 pub mod migrate;
