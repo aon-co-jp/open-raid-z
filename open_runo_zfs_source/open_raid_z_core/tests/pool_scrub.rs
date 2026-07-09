@@ -54,9 +54,9 @@ fn pool_scrub_detects_and_heals_corruption_on_a_raidz_backed_pool() {
     let mut pool = Pool::new(vdev, NUM_STRIPES);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (NUM_STRIPES - 1) * stripe_bytes()).unwrap();
+    pool.grow_dataset("tank", (NUM_STRIPES - 2) * stripe_bytes()).unwrap();
 
-    let payload: Vec<u8> = (0..(NUM_STRIPES - 1) * stripe_bytes()).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = (0..(NUM_STRIPES - 2) * stripe_bytes()).map(|i| (i % 251) as u8).collect();
     pool.write("tank", 0, &payload).unwrap();
 
     // Poolを経由したままではディスクへ直接アクセスできないため、
@@ -68,7 +68,7 @@ fn pool_scrub_detects_and_heals_corruption_on_a_raidz_backed_pool() {
     assert_eq!(report.stripes_scanned, NUM_STRIPES);
     assert_eq!(report.corruptions_healed, 1);
 
-    assert_eq!(pool.read("tank", 0, (NUM_STRIPES - 1) * stripe_bytes()).unwrap(), payload);
+    assert_eq!(pool.read("tank", 0, (NUM_STRIPES - 2) * stripe_bytes()).unwrap(), payload);
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -87,19 +87,25 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     let mut pool = Pool::new(vdev, total_stripes);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (total_stripes - 1) * CHUNK_SIZE as u64).unwrap();
+    pool.grow_dataset("tank", (total_stripes - 2) * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..(total_stripes - 1) * CHUNK_SIZE as u64)
+    let payload: Vec<u8> = (0..(total_stripes - 2) * CHUNK_SIZE as u64)
         .map(|i| (i % 251) as u8)
         .collect();
     pool.write("tank", 0, &payload).unwrap();
 
-    // グループ0の2台目のミラーメンバー(グローバルストライプ0)を直接破壊。
-    let mut garbage = pool.vdev_mut().group_devices_mut(0)[1].read_at(0, CHUNK_SIZE).unwrap();
+    // グループ0の2台目のミラーメンバー(グローバルストライプ2、内部ストライプ1。
+    // ストライプ0はメタデータ用に予約されておりデータセットの範囲外、
+    // かつ2グループのラウンドロビンでグループ0が担当するストライプは
+    // 偶数番のグローバルストライプのため、実際に書き込み済みの範囲を
+    // 確実に破壊できるストライプ2を選ぶ)を直接破壊。
+    let inner_stripe_offset = CHUNK_SIZE as u64; // グローバルストライプ2 = グループ0の内部ストライプ1
+    let mut garbage =
+        pool.vdev_mut().group_devices_mut(0)[1].read_at(inner_stripe_offset, CHUNK_SIZE).unwrap();
     for b in garbage.iter_mut() {
         *b ^= 0xFF;
     }
-    pool.vdev_mut().group_devices_mut(0)[1].write_at(0, &garbage).unwrap();
+    pool.vdev_mut().group_devices_mut(0)[1].write_at(inner_stripe_offset, &garbage).unwrap();
 
     // `Vdev`トレイトに統一された`scrub`のおかげで、RaidZVdevと全く同じ
     // `Pool::scrub()`呼び出しがRaid10Vdev上でも機能する。
@@ -108,7 +114,7 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     assert_eq!(report.corruptions_healed, 1);
 
     assert_eq!(
-        pool.read("tank", 0, (total_stripes - 1) * CHUNK_SIZE as u64).unwrap(),
+        pool.read("tank", 0, (total_stripes - 2) * CHUNK_SIZE as u64).unwrap(),
         payload
     );
 
@@ -131,9 +137,9 @@ fn pool_vdev_mut_allows_raid10_specific_resilver_not_yet_unified_in_the_vdev_tra
     let mut pool = Pool::new(vdev, total_stripes);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (total_stripes - 1) * CHUNK_SIZE as u64).unwrap();
+    pool.grow_dataset("tank", (total_stripes - 2) * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..(total_stripes - 1) * CHUNK_SIZE as u64)
+    let payload: Vec<u8> = (0..(total_stripes - 2) * CHUNK_SIZE as u64)
         .map(|i| (i * 7 % 251) as u8)
         .collect();
     pool.write("tank", 0, &payload).unwrap();
@@ -144,7 +150,7 @@ fn pool_vdev_mut_allows_raid10_specific_resilver_not_yet_unified_in_the_vdev_tra
     pool.vdev_mut().resilver(1, 0, NUM_STRIPES).unwrap();
 
     assert_eq!(
-        pool.read("tank", 0, (total_stripes - 1) * CHUNK_SIZE as u64).unwrap(),
+        pool.read("tank", 0, (total_stripes - 2) * CHUNK_SIZE as u64).unwrap(),
         payload
     );
 

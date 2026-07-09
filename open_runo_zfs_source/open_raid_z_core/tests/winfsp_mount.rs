@@ -25,9 +25,10 @@ use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 4096;
 const DATASET_STRIPES: u64 = 4;
-// CoWの作業領域として最低1ストライプの空きが要るため、プール総容量は
-// データセットが使う分より1ストライプ多く持たせる(モジュールドキュメント参照)。
-const POOL_STRIPES: u64 = DATASET_STRIPES + 1;
+// CoWの作業領域として最低1ストライプの空きが要る(モジュールドキュメント参照)のに
+// 加え、メタデータ(スーパーブロック)用にもう1ストライプ予約されるため、
+// プール総容量はデータセットが使う分より2ストライプ多く持たせる。
+const POOL_STRIPES: u64 = DATASET_STRIPES + 2;
 const MOUNT_POINT: &str = "Z:";
 
 fn scratch_dir() -> PathBuf {

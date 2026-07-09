@@ -78,6 +78,41 @@ fn mounted_pool_supports_a_full_create_write_read_rename_delete_cycle() {
     std::fs::remove_dir_all(&mount_dir).ok();
 }
 
+/// これまでの`Pool`にはメタデータの永続化が無く、アンマウント→再マウントで
+/// 作成したファイルの記録ごと消えていた(実データのバイト列はディスクに
+/// 残っていても、どのファイルのものか分からなくなっていた)。この問題を
+/// 解消した[`Pool::save`]/[`Pool::open`]が、実際にマウント経由(FUSE)でも
+/// 機能することを、本物のアンマウント・再マウントを行って検証する。
+#[test]
+fn a_file_created_through_the_mount_survives_a_real_unmount_and_remount() {
+    let disk_dir = scratch_dir("disks_persist");
+    let mount_dir = scratch_dir("mnt_persist");
+
+    {
+        let pool = build_pool(&disk_dir);
+        let session = mount_pool(pool, mount_dir.to_str().unwrap()).expect("1回目のFUSEマウントに失敗しました");
+        std::fs::write(mount_dir.join("survives.txt"), b"still here after remount")
+            .expect("1回目のマウントでの書き込みに失敗");
+        session.umount_and_join().ok();
+    }
+
+    // 同じディスクイメージから、新しい`Pool`インスタンス(`Pool::open`)を
+    // 使って改めてマウントし直す(=プロセス再起動を経た再マウントに相当)。
+    let devices: Vec<FileBackedDevice> = (0..6)
+        .map(|i| FileBackedDevice::open(disk_dir.join(format!("disk{i}.img"))).unwrap())
+        .collect();
+    let vdev = RaidZVdev::new(devices, RaidLevel::Z2, CHUNK_SIZE);
+    let pool = Pool::open(vdev, NUM_STRIPES).expect("保存されたメタデータの復元(Pool::open)に失敗しました");
+
+    let session = mount_pool(pool, mount_dir.to_str().unwrap()).expect("2回目のFUSEマウントに失敗しました");
+    let read_back = std::fs::read(mount_dir.join("survives.txt")).expect("再マウント後にファイルが読めない");
+    assert_eq!(read_back, b"still here after remount");
+    session.umount_and_join().ok();
+
+    std::fs::remove_dir_all(&disk_dir).ok();
+    std::fs::remove_dir_all(&mount_dir).ok();
+}
+
 #[test]
 fn mounted_pool_streams_a_multi_stripe_file_and_reassembles_it_exactly() {
     let disk_dir = scratch_dir("disks_large");

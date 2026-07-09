@@ -110,7 +110,8 @@ fn destroying_dataset_keeps_snapshot_data_alive_via_refcount() {
     let used_before_destroy = pool.usage().used_stripes;
     assert!(used_before_destroy > 0, "スナップショットがストライプを保持しているはず");
     pool.destroy_snapshot("ds", "keep").unwrap();
-    assert_eq!(pool.usage().used_stripes, 0);
+    // メタデータ用の予約ストライプぶん、常に1が残る。
+    assert_eq!(pool.usage().used_stripes, 1);
 
     std::fs::remove_dir_all(&dir).ok();
 }
