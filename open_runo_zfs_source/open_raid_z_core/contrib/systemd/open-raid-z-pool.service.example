@@ -1,0 +1,43 @@
+# orzctl経由でRAID-Zプールを起動時に自動マウントするsystemdユニットの例。
+#
+# 【使い方】
+# 1. このファイルを /etc/systemd/system/open-raid-z-<プール名>.service へコピーする
+# 2. ExecStart/ExecStartPreの各パス・ディスクデバイス・--level/--chunk-size/
+#    --stripesを実際の環境に合わせて書き換える(値はプール作成時に
+#    `orzctl create`へ渡したものと完全に一致させること。異なる値では
+#    `Pool::open`がスーパーブロックの検証に失敗して起動できない)
+# 3. `sudo systemctl daemon-reload && sudo systemctl enable open-raid-z-<プール名>.service`
+# 4. 実際に`sudo systemctl reboot`で再起動し、`mount | grep open_raid_z`で
+#    自動マウントされていることを確認する
+#
+# 【実機検証済み】2026-07-09、VirtualBox VM(Ubuntu Server 24.04.4)上で、
+# 4台の独立したブロックデバイス(ループバックファイルではない)にRAID-Z2
+# プールを作成し、本ユニット経由で実際の再起動をまたいでマウント・
+# データ永続化を確認済み(CHAT_HANDOFF.md 追記13参照)。
+#
+# 【現状の制約】
+# - ここではRAIDメンバーのディスクパス(/dev/sdb等)を固定で指定している。
+#   実運用ではディスクの挿し直し等でデバイス名が変わる可能性があるため、
+#   本来は/dev/disk/by-id/等の永続的な識別子を使うべき(将来の改善点)。
+# - `Type=simple`でorzctlのFUSEデーモンプロセスをsystemdが直接追跡する。
+#   `systemctl stop`時はFUSEデーモンへSIGTERMが送られ、`fusermount3 -u`相当の
+#   後始末は行われない点に注意(明示的なアンマウントは別途
+#   `ExecStop=/usr/bin/fusermount3 -u /mnt/<マウント先>`を追加するとよい)。
+
+[Unit]
+Description=open-raid-z RAID-Z pool auto-mount (tank)
+DefaultDependencies=no
+After=local-fs-pre.target
+Before=local-fs.target
+Conflicts=umount.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p /mnt/openraidz-tank
+ExecStart=/usr/local/bin/orzctl mount --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/openraidz-tank /dev/sdb /dev/sdc /dev/sdd /dev/sde
+ExecStop=/usr/bin/fusermount3 -u /mnt/openraidz-tank
+Restart=no
+KillMode=process
+
+[Install]
+WantedBy=local-fs.target

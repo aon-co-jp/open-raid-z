@@ -110,6 +110,11 @@ cargo build --no-default-features --features fuse_backend --bin orzctl
 ./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
 ```
 
+To auto-mount at boot, register
+[`contrib/systemd/open-raid-z-pool.service.example`](../open_runo_zfs_source/open_raid_z_core/contrib/systemd/open-raid-z-pool.service.example)
+as a systemd unit (verified on a VirtualBox VM: a pool created across 4
+genuinely separate block devices auto-mounts across a real reboot).
+
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 
 ```powershell
