@@ -37,6 +37,17 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
 ] }
 
+[target.'cfg(windows)'.build-dependencies]
+# `cargo test`が生成するバイナリ名(`open_runo_installer_core-*.exe`)に
+# "installer"という文字列が含まれるため、マニフェスト無しのexeは
+# WindowsのInstaller Detection Technology(未署名・マニフェスト無しの
+# 実行ファイル名にinstall/setup/update等が含まれると自動的に管理者権限を
+# 要求するヒューリスティック)に引っかかり、`cargo test`実行時に
+# `ERROR_ELEVATION_REQUIRED`(os error 740)でプロセス起動自体が失敗する。
+# 明示的なマニフェスト(asInvoker)を埋め込むことでこのヒューリスティックを
+# 無効化する(build.rs参照)。
+embed-manifest = "1"
+
 [features]
 # 実際のD3D12/DirectMLディスパッチ(dxc・Windows SDKが必要)。無効時は
 # zfs_accel_hlslのCPUフォールバックのみを使う。詳細は
