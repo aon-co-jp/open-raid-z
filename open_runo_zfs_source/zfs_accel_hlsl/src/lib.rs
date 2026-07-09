@@ -12,6 +12,8 @@
 pub mod bitmatrix;
 #[cfg(feature = "gpu")]
 pub mod compute;
+#[cfg(feature = "gpu")]
+pub mod dml_gemm;
 pub mod device;
 pub mod galois;
 pub mod gf_matrix;
