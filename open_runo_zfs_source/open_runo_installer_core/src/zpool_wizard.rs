@@ -91,10 +91,14 @@ pub fn init_zpool_preview(req: ZpoolInitRequest) -> Result<ZpoolInitResult, Stri
         vdev = vdev.with_accelerator(accel);
     }
     let mut pool = Pool::new(vdev, total_stripes);
+    // `Pool::new`はメタデータ(スーパーブロック)用に1ストライプを予約するため、
+    // 実際にデータセットへ割り当てられる容量は`total_stripes`より1少ない
+    // (`pool.usage().free_stripes`が予約後の実容量)。
+    let usable_stripes = pool.usage().free_stripes;
 
     pool.create_dataset(&req.dataset_name)
         .map_err(|e| format!("データセットの作成に失敗しました: {e}"))?;
-    pool.grow_dataset(&req.dataset_name, total_stripes * (CHUNK_SIZE as u64 * num_data_disks))
+    pool.grow_dataset(&req.dataset_name, usable_stripes * (CHUNK_SIZE as u64 * num_data_disks))
         .map_err(|e| format!("データセットの容量確保に失敗しました: {e}"))?;
 
     let usage = pool.usage();
@@ -174,13 +178,15 @@ pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, S
     let vdev = Raid10Vdev::new(devices, mirror_width, CHUNK_SIZE)
         .map_err(|e| format!("RAID10 vdevの構築に失敗しました: {e}"))?;
     let num_groups = vdev.num_groups();
-
-    // CoW書き込みには常に1ストライプ以上の空きが必要なため、プール容量を
-    // 丸ごとデータセットへ割り当てず、1ストライプぶんの余裕を残す。
     let total_stripes = num_groups as u64 * STRIPES_PER_DISK;
-    let dataset_stripes = total_stripes.saturating_sub(1).max(1);
 
     let mut pool = Pool::new(vdev, total_stripes);
+    // `pool.usage().free_stripes`は`Pool::new`のスーパーブロック予約(1ストライプ)
+    // を差し引いた実容量。さらにCoW書き込みには常に1ストライプ以上の空きが
+    // 必要なため、そこからもう1ストライプ差し引いた分だけをデータセットへ
+    // 割り当てる(丸ごと割り当てない)。
+    let dataset_stripes = pool.usage().free_stripes.saturating_sub(1).max(1);
+
     pool.create_dataset(&req.dataset_name)
         .map_err(|e| format!("データセットの作成に失敗しました: {e}"))?;
     pool.grow_dataset(&req.dataset_name, dataset_stripes * CHUNK_SIZE as u64)
@@ -289,10 +295,12 @@ pub fn init_zpool_apply(req: ZpoolApplyRequest) -> Result<ZpoolInitResult, Strin
         vdev = vdev.with_accelerator(accel);
     }
     let mut pool = Pool::new(vdev, total_stripes);
+    // `init_zpool_preview`と同様、スーパーブロック予約後の実容量を使う。
+    let usable_stripes = pool.usage().free_stripes;
 
     pool.create_dataset(&req.dataset_name)
         .map_err(|e| format!("データセットの作成に失敗しました: {e}"))?;
-    pool.grow_dataset(&req.dataset_name, total_stripes * (CHUNK_SIZE as u64 * num_data_disks))
+    pool.grow_dataset(&req.dataset_name, usable_stripes * (CHUNK_SIZE as u64 * num_data_disks))
         .map_err(|e| format!("データセットの容量確保に失敗しました: {e}"))?;
 
     let usage = pool.usage();
@@ -358,8 +366,10 @@ mod tests {
             dataset_name: "tank".to_string(),
         })
         .unwrap();
-        // ミラーはデータディスク1台ぶんの容量しかない(残り3台は複製)。
-        assert_eq!(result.dataset_size_bytes, (STRIPES_PER_DISK * CHUNK_SIZE as u64));
+        // ミラーはデータディスク1台ぶんの容量しかない(残り3台は複製)上に、
+        // `Pool::new`がスーパーブロック用に1ストライプ予約するため、実際に
+        // 使える容量は`STRIPES_PER_DISK - 1`ストライプぶん。
+        assert_eq!(result.dataset_size_bytes, (STRIPES_PER_DISK - 1) * CHUNK_SIZE as u64);
     }
 
     #[test]
