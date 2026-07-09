@@ -1070,3 +1070,156 @@ bash -c '...'`のように複雑な複数行スクリプト(`for`ループ・セ
 3. GRUBが`/boot`からカーネル+initramfsを読み込み、initramfsが`orzctl mount`
    相当の処理でRAID-Zプールを組み立てて`switch_root`する、という流れを
    実際に構築・起動テストする
+
+---
+
+## 追記12: 実ディスク適用コマンド追加、`cargo test`が全く動いていなかった問題の発見・修正、GPU/NPUアクセラレーションの大幅拡張(GEMM化)
+
+このセッションでは、Claude Codeで`open-raid-z`リポジトリを直接操作。
+インストーラーの安全設計上の抜け(プレビューのみ)を埋め、
+`cargo test`自体が実は一度も実行できていなかったという重大な問題を発見・修正し、
+GPU/NPUアクセラレーションをパリティ生成だけでなくパリティチェック(復旧計算)にも拡張した。
+
+### 1. インストーラー: 実ディスクへのzpool適用(`init_zpool_apply`)
+
+`zpool_wizard.rs`の`init_zpool_preview`/`init_raid10_preview`は、ずっと
+スクラッチイメージ(`std::env::temp_dir()`)だけを対象にした「プレビュー
+専用」実装で、`hardware::list_physical_disks()`が返す実ディスクパス
+(`\\.\PhysicalDriveN`)へは一切書き込めなかった(意図的な安全設計だったが、
+「将来UIボタンを追加するだけで対応できる」というコメントのまま放置されていた)。
+
+`init_zpool_apply`を新規実装し、`hardware::list_physical_disks`が返す
+実パス+サイズを受け取って`FileBackedDevice::open`で実際に開き、RAIDプールを
+構築する。誤操作防止のため`confirm_data_loss`フラグが`true`でない限り
+ディスクを一切開かない。Tauriコマンドとしても登録済み。実ディスクへは
+一度も自分で書き込みを実行していない(コードとテストのみ、実データ消去は
+最終的にユーザー操作が必要)。
+
+### 2. 【重要な発見】`cargo test`が`open_runo_installer_core`で一度も
+　　成功したことが無かった(Windows Installer Detection Technology)
+
+`cargo test`を実行すると、テスト自体が1つも走らずに
+`ERROR_ELEVATION_REQUIRED`(os error 740)でプロセス起動自体が失敗する
+現象を発見。原因はWindowsの「インストーラー検出ヒューリスティック」:
+マニフェストの無い実行ファイルの名前に"install"等の文字列が含まれると、
+管理者権限を自動的に要求される。テストハーネスのバイナリ名が
+`open_runo_installer_core-<hash>.exe`だったため、この対象に該当していた
+(クレート名に"installer"を含まない`open_raid_z_core`は問題なくテストが
+走っていたため、両者を比較して原因を特定)。
+
+`embed-manifest`クレートでasInvokerマニフェストを埋め込むことで解消
+(`build.rs`)。ただし同クレートの`embed_manifest()`は`cargo:rustc-link-arg-bins`
+を固定で発行するため、`[[bin]]`ターゲットが無い本クレートでは使えず、
+`cargo:rustc-link-arg`(無指定、テストハーネスにも効く)を自前で発行する
+必要があった。
+
+**これが直せたことで、これまで一度も実行されていなかった`zpool_wizard.rs`の
+既存テスト群が初めて実際に走り**、隠れていた本物のバグ(次項)が見つかった。
+
+### 3. 容量計算のオフバイワン修正
+
+`cargo test`が動くようになって初めて発覚: `Pool::new`はメタデータ
+(スーパーブロック)用に1ストライプを予約するが、`init_zpool_preview`/
+`init_raid10_preview`/`init_zpool_apply`はいずれもディスクの生容量
+そのままを`grow_dataset`しようとしており、常に1ストライプぶん容量不足で
+失敗していた(メタデータ永続化機能が追加された際に、呼び出し側が
+追随していなかったための回帰)。`pool.usage().free_stripes`(予約後の
+実容量)を使うよう修正し、7件のテストが green になった。
+
+### 4. RAID-Z3用GPUシェーダの追加
+
+`shaders/raidz2_parity.hlsl`(P/Q)は実装済みだったが、RAID-Z3のR
+(係数4^i)用のシェーダが無く、Z3は常にCPU計算にフォールバックしていた。
+`shaders/raidz3_parity.hlsl`を新規実装(P/Q/R同時計算、Qと同じ
+反復2倍算ロジックをRだけ2倍の回数繰り返す)し、`compute_pqr_accelerated`
+を`RaidZVdev::compute_parity`のparity_count==3分岐に配線。実機GPU
+(NVIDIA GT730)でCPU参照実装とビット単位で一致することを確認。
+
+### 5. NPU専用シェーダ経路の分離(`raidnpu_*.hlsl`)
+
+これまでNPUとGPUは`AccelKind::Npu | AccelKind::Gpu`という同じmatchアーム・
+同じシェーダバイトコードを共有していた。NPU実機は無いため速度上の
+優位性は検証できないが、将来NPU専用の実装(DirectML等)へ書き換える際に
+GPU側の検証済みパスを壊さないよう、`raidnpu_parity.hlsl`/
+`raidnpu_z2_parity.hlsl`/`raidnpu_z3_parity.hlsl`という別ファイル・
+別ディスパッチ経路へ分離した(現状は内容はGPU版と同一)。GT730で
+これらのバイトコード自体もCPU参照実装と一致することを確認済み
+(D3D12ディスパッチ機構はNPU/GPUを区別しないため、GPUでもシェーダの
+正しさは検証できる)。
+
+### 6.【設計の核心】GF(2)ビット行列によるGEMM再定式化(`bitmatrix.rs`)
+
+ユーザーから「NPUの本領(行列演算ユニット)を活かせていない」という
+指摘を受け、根本的な再設計を実施。GF(2^8)上で定数`c`を掛ける操作は、
+GF(2^8)がGF(2)上のベクトル空間であることから、実は**GF(2)上の8x8線形写像
+(行列)**そのものである。複数ディスクぶんをブロック結合すれば、
+「W(8×8N行列)×X(8N×ストライプ長のビット行列)を整数で内積計算し、
+各成分をmod 2で戻す」という**1回の整数GEMM**にRAID-Z2/Z3パリティ計算
+全体を帰着できる。これはDirectMLのGEMMオペレータ経由でNPUのMAC/
+テンソルユニットに乗る形(生のHLSL Compute Shaderでは原理的に到達
+できない領域)。
+
+`bitmatrix.rs`でこの再定式化がCPU上で既存のGaloisTables参照実装と
+完全に一致することを検証(全256バイト値×Q/R両方で使う16種類の係数、
+1〜12ディスク構成)。DirectML配線前にゼロリスクで数学的正しさを
+証明する段階。
+
+### 7. 実際のDirectML GEMMディスパッチ実装(`dml_gemm.rs`)
+
+windows-rs 0.58に`Win32_AI_MachineLearning_DirectML`featureとして
+DirectMLのCOM API(`IDMLDevice`/`IDMLOperator`/`DML_GEMM_OPERATOR_DESC`等)
+が存在することを確認し、実際にGT730上で完全なDirectMLパイプライン
+(デバイス→オペレータ作成→コンパイル→初期化→バインドテーブル→
+コマンドレコーダ→ディスパッチ→リードバック)を構築。
+
+実機でしか見つからない2つのバグに遭遇し、`ID3D12InfoQueue`のメッセージ
+ダンプで特定・修正:
+- テンソル記述を2D形状(`DimensionCount=2`)で渡すとGPUデバイスが
+  リセットされる → DirectMLは4D(NCHW風)形状を要求する仕様だった
+- `BindInputs`で"expected 3 bindings but 2 were provided"エラー →
+  GEMMはC入力が未使用(`CTensor=null`)でも常に3スロット分のバインドが
+  必要。`DML_BINDING_TYPE_NONE`のプレースホルダで解決。
+
+`compute_pq_via_dml_gemm`/`compute_pqr_via_dml_gemm`として実装、
+ディスク数2/3/5/8で実機GPU検証済み(CPU参照実装とビット単位で一致)。
+**production dispatch(`compute_pq_accelerated`等)には意図的に配線して
+いない**(NPU実機が無く生Compute Shader版との速度比較ができない、
+DirectMLのオペレータコンパイルは書き込みごとに毎回行うのは非現実的
+でキャッシュ設計が必要、という2つの理由)。
+
+### 8. パリティチェック(復旧計算)のGEMM高速化・本番配線
+
+ユーザーから「パリティチェックもGPU/NPUで高速化したい」との要望。
+`dml_gemm.rs`を一般化し、固定係数(2^i/4^i)専用だった重み行列構築を
+`linear_combine_via_dml_gemm(gf, known_disks, coeffs_per_output)`
+として任意のGF(2^8)係数行列に対応させた(P/Q/R生成もこの汎用関数を
+呼ぶよう整理)。
+
+これを使って`reconstruct_missing_data_generic_accelerated`を新規実装。
+scrub/resilverが破損を検知した際に実際に走る復旧計算(=パリティチェック
+の重い部分)のシンドローム計算をGPU/NPUへオフロードする。RAID-Z3の
+3台同時故障シナリオで実機GPU検証済み(CPU参照実装と完全一致)。
+
+こちらは**P/Q/R生成とは違い、本番経路(`RaidZVdev::
+read_stripe_forcing_missing`、scrub/resilver/縮退読み込みが使う)に
+配線した**。理由: 復旧計算は書き込みと違って稀にしか走らないため
+DirectMLの初期化コストのリスクが小さく、失敗時はCPU実装へ完全に
+フォールバックするため配線しても害が無いため。
+
+### 検証状況
+
+`zfs_accel_hlsl`: `--no-default-features`で28件、`--features gpu`で
+36件、全てpass(実機GPU検証を含む)。`open_raid_z_core`: 19テスト
+バイナリ全てpass(RAID-Z2/Z3障害復旧統合テスト含む、既存の挙動に
+回帰無し)。`open_runo_installer_core`: 30件pass(今回のセッションで
+初めて実際に実行できるようになった)。
+
+### 残る課題
+
+1. DirectML GEMM経路(`dml_gemm.rs`)をproduction dispatchへ配線するか
+   どうかの判断 ― NPU実機入手待ち。実機無しでは速度上の優位性を
+   主張できないため保留。
+2. DirectMLオペレータのキャッシュ設計(現状は毎回作成・コンパイルして
+   おり、書き込みパスへ配線する場合は必須になる)
+3. NPU実機での`raidnpu_*.hlsl`/DirectML経路の実速度計測(前回から変更なし、
+   実機入手待ち)
