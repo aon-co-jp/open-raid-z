@@ -106,7 +106,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-`fuse_backend` featureは`fuser`クレート(Linuxの`libfuse3`への実バインディング)を有効化する。`winfsp_backend`/`gpu_accel`とは独立しており、Linux以外のターゲットでは`fuser`自体が依存関係に存在しないため有効化できない(Cargo.tomlで`target.'cfg(target_os = "linux")'.dependencies`配下に置いているため)。実マウントの統合テスト(`tests/fuse_mount.rs`)はWSL2 Ubuntu 26.04上で実際に検証済み(新規作成・書き込み・読み込み・リネーム・切り詰め・削除・複数ストライプにまたがる大きめファイルの往復)。WindowsのみでLinuxビルドを試す場合はWSL2(`wsl --install`)の利用を推奨する。
+`fuse_backend` featureは`fuser`クレート(Linuxの`libfuse3`への実バインディング)を有効化する。`winfsp_backend`/`gpu_accel`とは独立しており、Linux以外のターゲットでは`fuser`自体が依存関係に存在しないため有効化できない(Cargo.tomlで`target.'cfg(target_os = "linux")'.dependencies`配下に置いているため)。実マウントの統合テスト(`tests/fuse_mount.rs`)はWSL2 Ubuntu 26.04上で実際に検証済み(新規作成・書き込み・読み込み・リネーム・切り詰め・削除・複数ストライプにまたがる大きめファイルの往復、アンマウント→再マウントをまたいだデータ永続化)。WindowsのみでLinuxビルドを試す場合はWSL2(`wsl --install`)の利用を推奨する。
+
+コマンドラインから直接プールを作成・マウントするための`orzctl`も同梱している:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### インストーラー(`open_runo_installer` / `open_runo_installer_core`)
 

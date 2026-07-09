@@ -101,7 +101,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-ویژگی `fuse_backend` کریت `fuser` (اتصال واقعی به `libfuse3` در لینوکس) را فعال می‌کند. این ویژگی مستقل از `winfsp_backend`/`gpu_accel` است و در هدف‌های غیر لینوکسی قابل فعال‌سازی نیست، زیرا خودِ `fuser` حتی در آنجا یک وابستگی هم نیست (در `Cargo.toml` زیر `target.'cfg(target_os = "linux")'.dependencies` قرار دارد). آزمون یکپارچگی سوارکردن واقعی (`tests/fuse_mount.rs`) روی WSL2 Ubuntu 26.04 تأیید شده است: ایجاد، نوشتن، خواندن، تغییرنام، کوتاه‌کردن، حذف، و رفت‌وبرگشت یک فایل بزرگ‌تر که چند نوار را دربرمی‌گیرد. اگر فقط روی ویندوز کار می‌کنید، WSL2 (‏`wsl --install`) روش توصیه‌شده برای ساخت/آزمایش هدف لینوکس است.
+ویژگی `fuse_backend` کریت `fuser` (اتصال واقعی به `libfuse3` در لینوکس) را فعال می‌کند. این ویژگی مستقل از `winfsp_backend`/`gpu_accel` است و در هدف‌های غیر لینوکسی قابل فعال‌سازی نیست، زیرا خودِ `fuser` حتی در آنجا یک وابستگی هم نیست (در `Cargo.toml` زیر `target.'cfg(target_os = "linux")'.dependencies` قرار دارد). آزمون یکپارچگی سوارکردن واقعی (`tests/fuse_mount.rs`) روی WSL2 Ubuntu 26.04 تأیید شده است: ایجاد، نوشتن، خواندن، تغییرنام، کوتاه‌کردن، حذف، رفت‌وبرگشت یک فایل بزرگ‌تر که چند نوار را دربرمی‌گیرد، و باقی‌ماندن فراداده پس از یک پیاده‌سازی و سوارکردن مجدد واقعی. اگر فقط روی ویندوز کار می‌کنید، WSL2 (‏`wsl --install`) روش توصیه‌شده برای ساخت/آزمایش هدف لینوکس است.
+
+یک ابزار خط فرمان کوچک به نام `orzctl` نیز برای ایجاد و سوارکردن یک استخر مستقیماً از خط فرمان گنجانده شده است:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### نصب‌کننده (`open_runo_installer` / `open_runo_installer_core`)
 

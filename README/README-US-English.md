@@ -99,7 +99,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-The `fuse_backend` feature enables the `fuser` crate (a real binding to Linux's `libfuse3`). It's independent of `winfsp_backend`/`gpu_accel`, and can't be enabled on non-Linux targets since `fuser` itself isn't even a dependency there (it lives under `target.'cfg(target_os = "linux")'.dependencies` in `Cargo.toml`). The real-mount integration test (`tests/fuse_mount.rs`) has been verified on WSL2 Ubuntu 26.04 — create, write, read, rename, truncate, delete, and a round trip of a larger file spanning multiple stripes. If you're on Windows only, WSL2 (`wsl --install`) is the recommended way to build/test the Linux target.
+The `fuse_backend` feature enables the `fuser` crate (a real binding to Linux's `libfuse3`). It's independent of `winfsp_backend`/`gpu_accel`, and can't be enabled on non-Linux targets since `fuser` itself isn't even a dependency there (it lives under `target.'cfg(target_os = "linux")'.dependencies` in `Cargo.toml`). The real-mount integration test (`tests/fuse_mount.rs`) has been verified on WSL2 Ubuntu 26.04 — create, write, read, rename, truncate, delete, a round trip of a larger file spanning multiple stripes, and metadata surviving a real unmount + remount. If you're on Windows only, WSL2 (`wsl --install`) is the recommended way to build/test the Linux target.
+
+A small `orzctl` CLI is also included for creating and mounting a pool directly from the command line:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 

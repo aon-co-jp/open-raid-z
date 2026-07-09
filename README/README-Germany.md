@@ -99,7 +99,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-Das Feature `fuse_backend` aktiviert das `fuser`-Crate (eine echte Anbindung an Linux' `libfuse3`). Es ist unabhängig von `winfsp_backend`/`gpu_accel` und kann auf Nicht-Linux-Zielen nicht aktiviert werden, da `fuser` dort nicht einmal als Abhängigkeit existiert (es liegt in `Cargo.toml` unter `target.'cfg(target_os = "linux")'.dependencies`). Der Echt-Mounting-Integrationstest (`tests/fuse_mount.rs`) wurde auf WSL2 Ubuntu 26.04 verifiziert – Erstellen, Schreiben, Lesen, Umbenennen, Kürzen, Löschen sowie ein Rundlauf einer größeren, über mehrere Stripes verteilten Datei. Wer nur unter Windows arbeitet, sollte für Build/Test des Linux-Ziels WSL2 (`wsl --install`) verwenden.
+Das Feature `fuse_backend` aktiviert das `fuser`-Crate (eine echte Anbindung an Linux' `libfuse3`). Es ist unabhängig von `winfsp_backend`/`gpu_accel` und kann auf Nicht-Linux-Zielen nicht aktiviert werden, da `fuser` dort nicht einmal als Abhängigkeit existiert (es liegt in `Cargo.toml` unter `target.'cfg(target_os = "linux")'.dependencies`). Der Echt-Mounting-Integrationstest (`tests/fuse_mount.rs`) wurde auf WSL2 Ubuntu 26.04 verifiziert – Erstellen, Schreiben, Lesen, Umbenennen, Kürzen, Löschen, ein Rundlauf einer größeren, über mehrere Stripes verteilten Datei sowie das Überstehen eines echten Aushängens und erneuten Einhängens durch die Metadaten. Wer nur unter Windows arbeitet, sollte für Build/Test des Linux-Ziels WSL2 (`wsl --install`) verwenden.
+
+Ein kleines `orzctl`-Kommandozeilenwerkzeug ist ebenfalls enthalten, um einen Pool direkt über die Kommandozeile zu erstellen und einzubinden:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 

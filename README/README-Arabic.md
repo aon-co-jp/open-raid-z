@@ -101,7 +101,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-تُفعّل ميزة `fuse_backend` حزمة `fuser` (ربط حقيقي بـ`libfuse3` في Linux). وهي مستقلة عن `winfsp_backend`/`gpu_accel`، ولا يمكن تفعيلها على أهداف غير Linux لأن `fuser` نفسها ليست حتى تبعية هناك (توجد ضمن `target.'cfg(target_os = "linux")'.dependencies` في `Cargo.toml`). تم التحقق من اختبار التكامل للتركيب الحقيقي (`tests/fuse_mount.rs`) على WSL2 Ubuntu 26.04 — إنشاء وكتابة وقراءة وإعادة تسمية واقتطاع وحذف، بالإضافة إلى تبادل ملف أكبر يمتد عبر عدة شرائح. إذا كنت تعمل على Windows فقط، يُنصح باستخدام WSL2 (‏`wsl --install`) لبناء واختبار هدف Linux.
+تُفعّل ميزة `fuse_backend` حزمة `fuser` (ربط حقيقي بـ`libfuse3` في Linux). وهي مستقلة عن `winfsp_backend`/`gpu_accel`، ولا يمكن تفعيلها على أهداف غير Linux لأن `fuser` نفسها ليست حتى تبعية هناك (توجد ضمن `target.'cfg(target_os = "linux")'.dependencies` في `Cargo.toml`). تم التحقق من اختبار التكامل للتركيب الحقيقي (`tests/fuse_mount.rs`) على WSL2 Ubuntu 26.04 — إنشاء وكتابة وقراءة وإعادة تسمية واقتطاع وحذف، وتبادل ملف أكبر يمتد عبر عدة شرائح، وبقاء البيانات الوصفية بعد إلغاء تركيب حقيقي وإعادة تركيب. إذا كنت تعمل على Windows فقط، يُنصح باستخدام WSL2 (‏`wsl --install`) لبناء واختبار هدف Linux.
+
+كما تتضمن المشروع أداة سطر أوامر صغيرة باسم `orzctl` لإنشاء المجمّع وتركيبه مباشرة من سطر الأوامر:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### المثبّت (`open_runo_installer` / `open_runo_installer_core`)
 

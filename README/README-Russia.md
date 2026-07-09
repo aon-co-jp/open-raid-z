@@ -99,7 +99,15 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features --features fuse_backend
 ```
 
-Функция `fuse_backend` включает crate `fuser` (настоящую привязку к `libfuse3` в Linux). Она независима от `winfsp_backend`/`gpu_accel` и не может быть включена на платформах, отличных от Linux, поскольку сам `fuser` там даже не является зависимостью (он находится в `Cargo.toml` под `target.'cfg(target_os = "linux")'.dependencies`). Интеграционный тест настоящего монтирования (`tests/fuse_mount.rs`) проверен на WSL2 Ubuntu 26.04 — создание, запись, чтение, переименование, усечение, удаление и цикл чтения-записи для файла большего размера, охватывающего несколько полос. Если вы работаете только на Windows, для сборки/тестирования Linux-цели рекомендуется WSL2 (`wsl --install`).
+Функция `fuse_backend` включает crate `fuser` (настоящую привязку к `libfuse3` в Linux). Она независима от `winfsp_backend`/`gpu_accel` и не может быть включена на платформах, отличных от Linux, поскольку сам `fuser` там даже не является зависимостью (он находится в `Cargo.toml` под `target.'cfg(target_os = "linux")'.dependencies`). Интеграционный тест настоящего монтирования (`tests/fuse_mount.rs`) проверен на WSL2 Ubuntu 26.04 — создание, запись, чтение, переименование, усечение, удаление, цикл чтения-записи для файла большего размера, охватывающего несколько полос, и сохранение метаданных после настоящего размонтирования и повторного монтирования. Если вы работаете только на Windows, для сборки/тестирования Linux-цели рекомендуется WSL2 (`wsl --install`).
+
+Также включена небольшая утилита командной строки `orzctl` для создания и монтирования пула прямо из терминала:
+
+```bash
+cargo build --no-default-features --features fuse_backend --bin orzctl
+./target/debug/orzctl create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank /path/to/disk0 /path/to/disk1 ...
+./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
+```
 
 ### Установщик (`open_runo_installer` / `open_runo_installer_core`)
 
