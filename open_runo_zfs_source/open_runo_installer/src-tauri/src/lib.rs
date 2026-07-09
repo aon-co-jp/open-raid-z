@@ -6,7 +6,8 @@
 use open_runo_installer_core::copilot::{Advice, AdviceContext, Advisor, HeuristicAdvisor};
 use open_runo_installer_core::hardware::{self, AcceleratorInfo, DiskInfo};
 use open_runo_installer_core::zpool_wizard::{
-    self, Raid10InitRequest, Raid10InitResult, ZpoolInitRequest, ZpoolInitResult,
+    self, Raid10InitRequest, Raid10InitResult, ZpoolApplyRequest, ZpoolInitRequest,
+    ZpoolInitResult,
 };
 
 #[tauri::command]
@@ -30,6 +31,11 @@ fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, Strin
 }
 
 #[tauri::command]
+fn init_zpool_apply(req: ZpoolApplyRequest) -> Result<ZpoolInitResult, String> {
+    zpool_wizard::init_zpool_apply(req)
+}
+
+#[tauri::command]
 fn get_disk_advice() -> Vec<Advice> {
     let context = AdviceContext::scan_current_machine();
     HeuristicAdvisor.advise(&context)
@@ -44,6 +50,7 @@ pub fn run() {
             list_physical_disks,
             init_zpool_preview,
             init_raid10_preview,
+            init_zpool_apply,
             get_disk_advice
         ])
         .run(tauri::generate_context!())

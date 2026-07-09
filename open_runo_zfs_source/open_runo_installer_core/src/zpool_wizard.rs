@@ -205,6 +205,110 @@ pub fn init_raid10_preview(req: Raid10InitRequest) -> Result<Raid10InitResult, S
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DiskSelection {
+    /// `hardware::list_physical_disks`が返す`\\.\PhysicalDriveN`形式のパス。
+    pub path: String,
+    /// 同関数が返すディスクサイズ(バイト)。実サイズはここでのみ受け取り、
+    /// 本モジュール側では再問い合わせしない(呼び出し元の一覧結果を信頼する)。
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ZpoolApplyRequest {
+    pub disks: Vec<DiskSelection>,
+    pub level: String,
+    pub dataset_name: String,
+    /// UI側の「このディスクの既存データは全て消去されます」チェックボックスに
+    /// 対応するフラグ。false(未確認)の場合は何も開かず・書き込まずエラーで
+    /// 拒否する。
+    pub confirm_data_loss: bool,
+}
+
+/// 実ディスクへzpoolを初期化する(プレビューと異なり、選択したディスクの
+/// 既存データは完全に上書きされる)。
+///
+/// `disks`には`hardware::list_physical_disks`で列挙した実在パスを渡すこと。
+/// `confirm_data_loss`がfalseの場合、ディスクを一切開かずに拒否する。
+pub fn init_zpool_apply(req: ZpoolApplyRequest) -> Result<ZpoolInitResult, String> {
+    if !req.confirm_data_loss {
+        return Err(
+            "実ディスクへの適用には確認が必要です(選択したディスクの既存データは全て消去されます)"
+                .to_string(),
+        );
+    }
+
+    let disk_count = req.disks.len();
+    if disk_count == 0 {
+        return Err("ディスクが選択されていません".to_string());
+    }
+
+    let level = parse_level(&req.level)?;
+    let parity_count = level.parity_count(disk_count);
+    if disk_count <= parity_count {
+        return Err(format!(
+            "{:?}にはデータディスクが最低1台必要です(合計{}台以上を選択してください)",
+            level,
+            parity_count + 1
+        ));
+    }
+
+    let min_size_bytes = req
+        .disks
+        .iter()
+        .map(|d| d.size_bytes)
+        .min()
+        .unwrap_or(0);
+    let stripes_per_disk = min_size_bytes / CHUNK_SIZE as u64;
+    if stripes_per_disk == 0 {
+        return Err("選択したディスクの容量が小さすぎます".to_string());
+    }
+
+    let mut devices = Vec::with_capacity(disk_count);
+    for disk in &req.disks {
+        let dev = FileBackedDevice::open(&disk.path).map_err(|e| {
+            format!(
+                "ディスク{}を開けませんでした(管理者権限で実行しているか確認してください): {e}",
+                disk.path
+            )
+        })?;
+        devices.push(dev);
+    }
+
+    let accel_device = zfs_accel_hlsl::detect_best_accelerator().ok();
+    let accelerator = accel_device
+        .as_ref()
+        .map(|a| format!("{:?}: {}", a.kind, a.adapter_description))
+        .unwrap_or_else(|| "検出失敗".to_string());
+
+    let num_data_disks = disk_count as u64 - parity_count as u64;
+    let total_stripes = num_data_disks * stripes_per_disk;
+
+    let mut vdev = RaidZVdev::new(devices, level, CHUNK_SIZE);
+    if let Some(accel) = accel_device {
+        vdev = vdev.with_accelerator(accel);
+    }
+    let mut pool = Pool::new(vdev, total_stripes);
+
+    pool.create_dataset(&req.dataset_name)
+        .map_err(|e| format!("データセットの作成に失敗しました: {e}"))?;
+    pool.grow_dataset(&req.dataset_name, total_stripes * (CHUNK_SIZE as u64 * num_data_disks))
+        .map_err(|e| format!("データセットの容量確保に失敗しました: {e}"))?;
+
+    let usage = pool.usage();
+    let dataset_size_bytes = pool
+        .dataset_size(&req.dataset_name)
+        .map_err(|e| format!("データセットサイズの取得に失敗しました: {e}"))?;
+
+    Ok(ZpoolInitResult {
+        accelerator,
+        total_stripes: usage.total_stripes,
+        used_stripes: usage.used_stripes,
+        free_stripes: usage.free_stripes,
+        dataset_size_bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +419,105 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("未対応のRAIDレベル"));
+    }
+
+    fn make_fake_disk(name: &str, stripes: u64) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "open_runo_installer_apply_test_{}_{name}.img",
+            std::process::id()
+        ));
+        FileBackedDevice::create_fixed_size(&path, CHUNK_SIZE as u64 * stripes).unwrap();
+        path
+    }
+
+    #[test]
+    fn apply_rejects_without_confirmation() {
+        let err = init_zpool_apply(ZpoolApplyRequest {
+            disks: vec![DiskSelection {
+                path: "irrelevant".to_string(),
+                size_bytes: CHUNK_SIZE as u64 * 16,
+            }],
+            level: "Raid0".to_string(),
+            dataset_name: "tank".to_string(),
+            confirm_data_loss: false,
+        })
+        .unwrap_err();
+        assert!(err.contains("確認が必要"));
+    }
+
+    #[test]
+    fn apply_writes_to_selected_disk_paths() {
+        let disk_a = make_fake_disk("a", 16);
+        let disk_b = make_fake_disk("b", 16);
+
+        let result = init_zpool_apply(ZpoolApplyRequest {
+            disks: vec![
+                DiskSelection {
+                    path: disk_a.to_string_lossy().into_owned(),
+                    size_bytes: CHUNK_SIZE as u64 * 16,
+                },
+                DiskSelection {
+                    path: disk_b.to_string_lossy().into_owned(),
+                    size_bytes: CHUNK_SIZE as u64 * 16,
+                },
+            ],
+            level: "Raid1".to_string(),
+            dataset_name: "tank".to_string(),
+            confirm_data_loss: true,
+        })
+        .unwrap();
+
+        assert!(result.dataset_size_bytes > 0);
+
+        std::fs::remove_file(&disk_a).ok();
+        std::fs::remove_file(&disk_b).ok();
+    }
+
+    #[test]
+    fn apply_rejects_unreadable_disk_path() {
+        let err = init_zpool_apply(ZpoolApplyRequest {
+            disks: vec![
+                DiskSelection {
+                    path: "\\\\.\\ThisDeviceDoesNotExist12345".to_string(),
+                    size_bytes: CHUNK_SIZE as u64 * 16,
+                },
+                DiskSelection {
+                    path: "\\\\.\\ThisDeviceDoesNotExist67890".to_string(),
+                    size_bytes: CHUNK_SIZE as u64 * 16,
+                },
+            ],
+            level: "Raid1".to_string(),
+            dataset_name: "tank".to_string(),
+            confirm_data_loss: true,
+        })
+        .unwrap_err();
+        assert!(err.contains("開けませんでした"));
+    }
+
+    #[test]
+    fn apply_rejects_disks_too_small_for_a_single_chunk() {
+        let disk_a = make_fake_disk("small_a", 0);
+        let disk_b = make_fake_disk("small_b", 0);
+
+        let err = init_zpool_apply(ZpoolApplyRequest {
+            disks: vec![
+                DiskSelection {
+                    path: disk_a.to_string_lossy().into_owned(),
+                    size_bytes: 0,
+                },
+                DiskSelection {
+                    path: disk_b.to_string_lossy().into_owned(),
+                    size_bytes: 0,
+                },
+            ],
+            level: "Raid1".to_string(),
+            dataset_name: "tank".to_string(),
+            confirm_data_loss: true,
+        })
+        .unwrap_err();
+        assert!(err.contains("容量が小さすぎます"));
+
+        std::fs::remove_file(&disk_a).ok();
+        std::fs::remove_file(&disk_b).ok();
     }
 }
