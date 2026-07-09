@@ -1223,3 +1223,75 @@ DirectMLの初期化コストのリスクが小さく、失敗時はCPU実装へ
    おり、書き込みパスへ配線する場合は必須になる)
 3. NPU実機での`raidnpu_*.hlsl`/DirectML経路の実速度計測(前回から変更なし、
    実機入手待ち)
+
+---
+
+## 追記13: VirtualBox VMでLinux/Windows起動ディスク化に着手、実ブロックデバイスでの初検証成功
+
+「WindowsやLinuxをNVMe SSD/HDDにRAIDでインストールできるようにする」という
+起動ディスク化の要望を受け、実機を壊さずに検証するためVirtualBoxを使用。
+`VBoxManage`(CLI)がこのマシンから直接操作可能だったため、VM作成から
+OSインストール・ビルド・実ディスクでの動作確認まで一連の作業を自動化した。
+
+### 作成したVM
+
+- `open-raid-z-linux-boot`: Ubuntu Server 24.04.4 LTS。EFI、4GB RAM、2CPU。
+  起動用ディスク(20GB、`boot-disk.vdi`)+RAID-Z検証用ディスク4台
+  (各2GB、`raid-member-1〜4.vdi`)をSATAで接続。`VBoxManage unattended
+  install`で無人インストール。
+- `open-raid-z-windows-driver`: Windows 11 Home 25H2(日本語版)。EFI、
+  8GB RAM、4CPU、TPM2.0。将来のカーネルモードファイルシステムドライバ
+  開発用(起動ディスク化にはWinFsp(ユーザーモード)ではなく専用の
+  カーネルドライバが必須なため)。
+
+両VMとも無人インストールを同時実行したところ、Linux側でカーネルの
+`watchdog: BUG: soft lockup - CPU#0 stuck for 76s!`が出る場面があった。
+調査した結果、**実際には無限ループではなく偽陽性**(2つのVMを同時に
+重い処理をさせたことによるホスト側スケジューリング遅延で、ゲスト内の
+タイムスタンプカウンタがずれて誤検知した)と判明。インストールは
+その後正常に完了しログインプロンプトまで到達した。このように「警告が
+出たら即異常と判断せず、スクリーンショット比較やCPU使用率でハングかどうか
+実際に確認する」手順を確立した(2回目以降の監視スクリプトに反映済み)。
+
+### 実ブロックデバイスでの検証(Linux VM)
+
+Guest Additions・SSHサーバーが未導入だったため、`VBoxManage
+controlvm keyboardputstring`でコンソールへ直接コマンドを打ち込み、
+`openssh-server`導入→SSH公開鍵登録→パスワード無しsudo設定、という
+手順で自動操作可能な環境を構築した。以降はSSH経由で全て自動実行:
+
+1. Rust(rustup, stable 1.96.1)・ビルド依存(build-essential,
+   libfuse3-dev等)を導入
+2. GitHubから`open-raid-z`(このリポジトリ)を`git clone`
+3. `cargo build --no-default-features --features fuse_backend --bin
+   orzctl`でビルド成功
+4. `cargo test --no-default-features --features fuse_backend`で
+   **19本のテストバイナリ全てpass**(初回この環境での実行、実際の
+   FUSEマウント統合テスト3件含む)
+5. **`orzctl create --level z2 ... /dev/sdb /dev/sdc /dev/sdd
+   /dev/sde`で、ループバックファイルではなく実際に分離した4台の
+   ブロックデバイス上にRAID-Z2プールを新規作成**
+6. `orzctl mount`でFUSEマウント→テキストを書き込み→
+   `fusermount3 -u`でアンマウント→再度`orzctl mount`で再マウント
+   →**書き込んだ内容がそのまま読めることを確認**(`Pool::save`/
+   `Pool::open`による永続化が、実ブロックデバイス構成でも機能する
+   ことの実証)
+
+ハマった点(再発防止): SSH経由でリモートの`orzctl mount`(フォアグラウンド
+待機するデーモン的プロセス)を`nohup ... &`のようにリモート側で
+バックグラウンド化しようとすると、SSHのチャネルが閉じずコマンドが
+ハングする(`disown`や`setsid`を組み合わせても解消しなかった)。
+正しい対処は、**リモートコマンド自体はそのままフォアグラウンドで実行し、
+ssh呼び出し全体をホスト側でバックグラウンドタスク化する**こと
+(別の新しいSSH接続で状態を確認する)。
+
+### 次のステップ
+
+1. Windows VMは25H2セットアップ中(このセッション終了時点で進行中)。
+   完了後、WDK(Windows Driver Kit)導入からカーネルドライバ開発に着手。
+2. Linux側は現状「OSはsdaの通常ext4、RAID-Zプールはsdb〜sdeの別ボリューム」
+   という構成の検証止まり。本来の目標(**OS自体をRAID-Z上にインストール**)
+   には、initramfs内で`orzctl mount`相当の処理を実行し、RAID-Zプールを
+   ルートファイルシステムとして`switch_root`する仕組みが必要(既存の
+   計画通り)。次回はこのinitramfsフック実装・GRUB統合・実際の再起動
+   テストに進む。
