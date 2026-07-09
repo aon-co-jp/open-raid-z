@@ -9,8 +9,9 @@
 //! - 障害復旧(デコード)は「1台欠損(P利用)」「2台欠損(P・Q利用、RAID-Z2相当)」
 //!   「3台同時欠損(P・Q・R利用、RAID-Z3相当、[`gf_matrix::GfMatrix`]による
 //!   3元連立方程式の求解)」まで実装・テスト済み。
-//! - GPU/NPUディスパッチ(HLSL経由)は`shaders/raidz2_parity.hlsl`に
-//!   P/Q生成のシェーダを用意しているが、実際のD3D12コマンド発行は未配線。
+//! - GPU/NPUディスパッチ(HLSL経由)は`shaders/raidz2_parity.hlsl`(P/Q)・
+//!   `shaders/raidz3_parity.hlsl`(P/Q/R)の両方を実装・配線済み
+//!   ([`compute_pq_accelerated`]/[`compute_pqr_accelerated`])。
 
 use crate::device::AccelDevice;
 use crate::galois::GaloisTables;
@@ -78,8 +79,7 @@ pub fn compute_pqr(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>
 /// 独立して行う設計、`shaders/raidz2_parity.hlsl`参照)。ディスパッチに
 /// 失敗した場合はCPU実装([`compute_pq`])へフォールバックする。
 ///
-/// 現状RAID-Z3のR(4^i係数)用シェーダは未実装のため、この関数はZ2(P/Q)のみに
-/// 対応する。
+/// RAID-Z3のP/Q/R(3出力)版は[`compute_pqr_accelerated`]を使うこと。
 pub fn compute_pq_accelerated(
     device: &AccelDevice,
     data_disks: &[&[u8]],
@@ -135,6 +135,69 @@ fn compute_pq_gpu(data_disks: &[&[u8]]) -> crate::compute::ComputeResult<(Vec<u8
     let p = crate::compute::words_to_bytes(&outputs[0]);
     let q = crate::compute::words_to_bytes(&outputs[1]);
     Ok((p, q))
+}
+
+/// RAID-Z3用P/Q/Rパリティ生成のGPU/NPUディスパッチ版。
+///
+/// `shaders/raidz3_parity.hlsl`(ビルド時にDXILへ事前コンパイル済み)を
+/// D3D12 Compute経由でディスパッチする。ディスパッチに失敗した場合はCPU実装
+/// ([`compute_pqr`])へフォールバックする。
+pub fn compute_pqr_accelerated(
+    device: &AccelDevice,
+    data_disks: &[&[u8]],
+    gf: &GaloisTables,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    match device.kind {
+        crate::device::AccelKind::Npu | crate::device::AccelKind::Gpu => {
+            #[cfg(feature = "gpu")]
+            {
+                match compute_pqr_gpu(data_disks) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "GPU/NPUディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pqr(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                compute_pqr(data_disks, gf)
+            }
+        }
+        crate::device::AccelKind::CpuFallback => compute_pqr(data_disks, gf),
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn compute_pqr_gpu(
+    data_disks: &[&[u8]],
+) -> crate::compute::ComputeResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
+    assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");
+
+    let num_disks = data_disks.len();
+    let stripe_len_words = stripe_len / 4;
+    let mut input = Vec::with_capacity(num_disks * stripe_len_words);
+    for disk in data_disks {
+        input.extend_from_slice(&crate::compute::bytes_to_words(disk));
+    }
+
+    let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz3_parity.cso"));
+    let outputs = crate::compute::dispatch_parity_shader(
+        shader,
+        num_disks as u32,
+        stripe_len_words as u32,
+        &input,
+        3,
+    )?;
+
+    let p = crate::compute::words_to_bytes(&outputs[0]);
+    let q = crate::compute::words_to_bytes(&outputs[1]);
+    let r = crate::compute::words_to_bytes(&outputs[2]);
+    Ok((p, q, r))
 }
 
 /// 1台のデータディスク欠損をPパリティのみで復元する。
@@ -579,6 +642,35 @@ mod tests {
 
         assert_eq!(gpu_p, expected_p);
         assert_eq!(gpu_q, expected_q);
+    }
+
+    #[test]
+    fn compute_pqr_accelerated_matches_cpu_when_hardware_available() {
+        let device = match crate::device::detect_best_accelerator() {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("D3D12対応アクセラレータが見つからないためテストをスキップします");
+                return;
+            }
+        };
+        if device.kind == crate::device::AccelKind::CpuFallback {
+            eprintln!("GPU/NPUが見つからないためテストをスキップします");
+            return;
+        }
+
+        let gf = GaloisTables::new();
+        let d0: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04];
+        let d1: Vec<u8> = vec![0x11, 0x22, 0x33, 0x44];
+        let d2: Vec<u8> = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let d3: Vec<u8> = vec![0x55, 0x66, 0x77, 0x88];
+        let refs: Vec<&[u8]> = vec![&d0, &d1, &d2, &d3];
+
+        let (expected_p, expected_q, expected_r) = compute_pqr(&refs, &gf);
+        let (gpu_p, gpu_q, gpu_r) = compute_pqr_accelerated(&device, &refs, &gf);
+
+        assert_eq!(gpu_p, expected_p);
+        assert_eq!(gpu_q, expected_q);
+        assert_eq!(gpu_r, expected_r);
     }
 
     #[test]

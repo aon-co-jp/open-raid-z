@@ -45,4 +45,5 @@ fn main() {
 
     compile_shader(&dxc, "shaders/raidz_parity.hlsl", &out_dir, "raidz_parity.cso");
     compile_shader(&dxc, "shaders/raidz2_parity.hlsl", &out_dir, "raidz2_parity.cso");
+    compile_shader(&dxc, "shaders/raidz3_parity.hlsl", &out_dir, "raidz3_parity.cso");
 }

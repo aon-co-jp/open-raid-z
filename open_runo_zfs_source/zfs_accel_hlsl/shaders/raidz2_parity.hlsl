@@ -4,8 +4,8 @@
 // P = XOR(D_i)、Q = XOR(D_i * 2^i) を計算する。
 // 対応するCPU参照実装・テストは ../src/raidz23_parity.rs, ../src/galois.rs を参照。
 //
-// RAID-Z3のR(4^i係数)は本シェーダのQ計算ロジックを4回の二乗(=2^2i倍)で
-// 流用できるが、現段階では未実装(TODO)。
+// RAID-Z3のR(4^i係数)は本シェーダのQ計算ロジックを流用しつつ、反復2倍算の
+// 回数を2倍にしたものとして raidz3_parity.hlsl に実装済み。
 
 RWStructuredBuffer<uint> DataStripes : register(u0); // [num_disks * stripe_len_words]
 RWStructuredBuffer<uint> ParityPOut  : register(u1); // [stripe_len_words]
