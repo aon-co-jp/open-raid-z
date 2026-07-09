@@ -298,12 +298,27 @@ impl<D: BlockDevice> RaidZVdev<D> {
             ));
         }
 
-        let recovered = raidz23_parity::reconstruct_missing_data_generic(
-            &known,
-            &missing_data,
-            &available_parity,
-            &self.gf,
-        );
+        // データ欠損の復旧(scrub/resilverが破損を検知した際に実際に走る計算)は
+        // 書き込みほど頻度が高くないため、GPU/NPUディスパッチの初期化コストが
+        // 相対的に気にならない。設定されていればGEMM経由でオフロードする
+        // (`reconstruct_missing_data_generic_accelerated`参照。失敗時は
+        // CPU実装へ完全にフォールバックするため、結果は`accel`の有無に
+        // 関わらず常に同じ)。
+        let recovered = match &self.accel {
+            Some(accel) => raidz23_parity::reconstruct_missing_data_generic_accelerated(
+                accel,
+                &known,
+                &missing_data,
+                &available_parity,
+                &self.gf,
+            ),
+            None => raidz23_parity::reconstruct_missing_data_generic(
+                &known,
+                &missing_data,
+                &available_parity,
+                &self.gf,
+            ),
+        };
 
         let mut full: Vec<Vec<u8>> = vec![Vec::new(); num_data];
         for (i, d) in known {
