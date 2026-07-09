@@ -1,0 +1,74 @@
+#!/bin/sh
+# initramfs-tools用のカスタムlocal-bottomフック(案・未検証)。
+#
+# 【重要】このファイルは`.draft`のまま(実行可能にしていない)。
+# ROOT_ON_RAIDZ_DESIGN.mdに記載の通り、実機での動作確認をまだ行っていない。
+# 使う場合は、
+#   1. 必ずVMスナップショットを取る
+#   2. 既存のGRUBエントリを上書きせず、新しいエントリとして追加する
+#   3. `console=ttyS0`でシリアルログを取れる状態にする
+# ことを徹底してから試すこと。
+#
+# 【想定する配置】
+# /usr/share/initramfs-tools/hooks/orzctl_root
+#   (orzctlバイナリと必要な共有ライブラリをinitramfsへコピーするフック。
+#   `copy_exec /usr/local/bin/orzctl`で依存ライブラリも自動的に
+#   コピーされる想定)
+# /usr/share/initramfs-tools/scripts/local-bottom/orzctl_root
+#   (このファイル。local-topではなくlocal-bottomに置く理由: RAID
+#   メンバーディスクの/dev/sd*ノードはudevによる標準のブロック
+#   デバイス検出が完了した後でなければ確実に出現しないため)
+
+set -e
+
+# udev経由でRAIDメンバーディスクが出現するのを待つ
+# (実運用では/dev/disk/by-id/等の永続識別子を使うべき。ここでは
+# 検証用に固定デバイス名を使っている)
+for disk in /dev/sdb /dev/sdc /dev/sdd /dev/sde; do
+    i=0
+    while [ ! -e "$disk" ] && [ "$i" -lt 30 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ ! -e "$disk" ]; then
+        echo "orzctl_root: $disk が見つかりません。RAID-Zルートの組み立てを中止します。" >&2
+        exit 1
+    fi
+done
+
+# FUSEカーネルモジュールをロード(initramfs内にモジュールが
+# 含まれている必要がある。/etc/initramfs-tools/modulesへの
+# 追記が必要になる可能性がある)
+modprobe fuse 2>/dev/null || true
+
+# orzctlでRAID-Zプールのルート用データセットを${rootmnt}(switch_rootが
+# 期待する新ルートのマウント先、initramfs-tools標準の変数)へマウントする。
+# 【注意】--level/--chunk-size/--stripesは、実際に`orzctl create`で
+# このルート用データセットを作成した際に使った値と完全に一致させること
+# (異なる値ではPool::openがスーパーブロック検証で失敗する)。
+/usr/local/bin/orzctl mount \
+    --level z2 --chunk-size 4096 --stripes 1000 \
+    --mountpoint "${rootmnt}" \
+    /dev/sdb /dev/sdc /dev/sdd /dev/sde &
+
+# orzctl mountはフォアグラウンドで待機し続ける設計(fuse_mount::mount_pool
+# 参照)なので、上記は明示的にバックグラウンド化している。マウント完了を
+# 待つ(FUSE経由のマウントが実際に完了するまで少し時間がかかる)。
+i=0
+while ! mountpoint -q "${rootmnt}" && [ "$i" -lt 30 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+
+if ! mountpoint -q "${rootmnt}"; then
+    echo "orzctl_root: ${rootmnt}へのマウントに失敗しました。" >&2
+    exit 1
+fi
+
+# 【ROOT_ON_RAIDZ_DESIGN.mdの調査結果より】switch_root自体は無関係な
+# プロセスをkillしない(/dev,/proc,/sys,/runの移動とchroot+execのみ)ため、
+# 上でバックグラウンド起動したorzctlのFUSEデーモンは、この後の
+# switch_rootをまたいで生存し続けるはずである(未検証)。
+# 本当のリスクは次回シャットダウン時のsendsigs/killall5であり、
+# それは最終的なルート環境(systemd起動後)側のExecStopで対処する設計とし、
+# ここ(initramfs)では対処しない。
