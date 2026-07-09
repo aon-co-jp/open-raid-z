@@ -28,6 +28,38 @@
       </section>
 
       <section class="panel">
+        <h2 data-i18n="section_apply">実ディスクへの適用</h2>
+        <p class="warning" data-i18n="apply_warning">
+          警告: 選択したディスクの既存データは全て消去されます。この操作は元に戻せません。
+        </p>
+        <form id="apply_form" class="row">
+          <label>
+            <span data-i18n="raid_level_label">RAIDレベル</span>
+            <select id="apply_raid_level">
+              <option value="Raid0">RAID0</option>
+              <option value="Raid1">RAID1</option>
+              <option value="Raid5">RAID5</option>
+              <option value="Raid6">RAID6</option>
+              <option value="Z2">RAID-Z2</option>
+              <option value="Z3">RAID-Z3</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="dataset_name_label">データセット名</span>
+            <input id="apply_dataset_name" type="text" value="tank" />
+          </label>
+          <label class="checkbox_row">
+            <input type="checkbox" id="confirm_data_loss" />
+            <span data-i18n="confirm_data_loss_label"
+              >選択したディスクの既存データが完全に消去されることを理解しました</span
+            >
+          </label>
+          <button type="submit" id="apply_button" data-i18n="apply_button" disabled>実ディスクへ適用</button>
+        </form>
+        <div id="apply_result"></div>
+      </section>
+
+      <section class="panel">
         <h2 data-i18n="section_advice">おすすめの構成</h2>
         <ul id="advice_list"></ul>
       </section>

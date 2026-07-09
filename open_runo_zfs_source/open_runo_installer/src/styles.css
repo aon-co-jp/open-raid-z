@@ -108,6 +108,17 @@ button:hover {
   color: #374151;
 }
 
+.checkbox_row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 #raid_result {
   margin-top: 1rem;
   font-family: ui-monospace, monospace;
