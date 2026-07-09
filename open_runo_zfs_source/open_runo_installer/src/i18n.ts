@@ -1,8 +1,13 @@
-// 言語選択機能。日本語をデフォルトとし、インストール時・インストール後の
+// 言語選択機能。英語(米国)をデフォルトとし、インストール時・インストール後の
 // どちらでも切り替え可能(localStorageへ保存し、次回起動時も保持する)。
 //
-// 対応言語(標準として要求されている9言語):
-// 日本語(既定) / イギリス英語 / アメリカ英語 / イタリア語 / フランス語 /
+// これは「OpenRaidZインストーラー」(この`open-raid-z`リポジトリ専用の
+// インストーラー)であり、"OpenRunoインストーラー"(OpenRuno全体のエコシステム
+// 向けインストーラー、別リポジトリ)とは別物。デフォルト言語も両者で異なり、
+// OpenRaidZインストーラーは英語既定・OpenRunoインストーラーは日本語既定。
+//
+// 対応言語(標準として要求されている10言語):
+// アメリカ英語(既定) / イギリス英語 / 日本語 / イタリア語 / フランス語 /
 // ドイツ語 / ロシア語 / ウクライナ語 / アラビア語(RTL) / ペルシャ語(RTL)
 
 export type LangCode =
@@ -33,7 +38,7 @@ export const LANG_NAMES: Record<LangCode, string> = {
 };
 
 const ja = {
-  app_title: "OpenRuno インストーラー",
+  app_title: "OpenRaidZ インストーラー",
   language_label: "言語",
   section_hardware: "ハードウェア構成",
   accelerator_label: "アクセラレータ",
@@ -67,7 +72,7 @@ type TranslationKey = keyof typeof ja;
 type Dict = Record<TranslationKey, string>;
 
 const enGB: Dict = {
-  app_title: "OpenRuno Installer",
+  app_title: "OpenRaidZ Installer",
   language_label: "Language",
   section_hardware: "Hardware Configuration",
   accelerator_label: "Accelerator",
@@ -96,7 +101,7 @@ const enUS: Dict = {
 };
 
 const it: Dict = {
-  app_title: "Installer OpenRuno",
+  app_title: "Installer OpenRaidZ",
   language_label: "Lingua",
   section_hardware: "Configurazione hardware",
   accelerator_label: "Acceleratore",
@@ -120,7 +125,7 @@ const it: Dict = {
 };
 
 const fr: Dict = {
-  app_title: "Programme d'installation OpenRuno",
+  app_title: "Programme d'installation OpenRaidZ",
   language_label: "Langue",
   section_hardware: "Configuration matérielle",
   accelerator_label: "Accélérateur",
@@ -144,7 +149,7 @@ const fr: Dict = {
 };
 
 const de: Dict = {
-  app_title: "OpenRuno-Installationsprogramm",
+  app_title: "OpenRaidZ-Installationsprogramm",
   language_label: "Sprache",
   section_hardware: "Hardwarekonfiguration",
   accelerator_label: "Beschleuniger",
@@ -168,7 +173,7 @@ const de: Dict = {
 };
 
 const ru: Dict = {
-  app_title: "Установщик OpenRuno",
+  app_title: "Установщик OpenRaidZ",
   language_label: "Язык",
   section_hardware: "Конфигурация оборудования",
   accelerator_label: "Ускоритель",
@@ -192,7 +197,7 @@ const ru: Dict = {
 };
 
 const uk: Dict = {
-  app_title: "Інсталятор OpenRuno",
+  app_title: "Інсталятор OpenRaidZ",
   language_label: "Мова",
   section_hardware: "Конфігурація обладнання",
   accelerator_label: "Прискорювач",
@@ -216,7 +221,7 @@ const uk: Dict = {
 };
 
 const ar: Dict = {
-  app_title: "برنامج تثبيت OpenRuno",
+  app_title: "برنامج تثبيت OpenRaidZ",
   language_label: "اللغة",
   section_hardware: "تهيئة العتاد",
   accelerator_label: "المسرّع",
@@ -240,7 +245,7 @@ const ar: Dict = {
 };
 
 const fa: Dict = {
-  app_title: "نصب‌کننده OpenRuno",
+  app_title: "نصب‌کننده OpenRaidZ",
   language_label: "زبان",
   section_hardware: "پیکربندی سخت‌افزار",
   accelerator_label: "شتاب‌دهنده",
@@ -277,7 +282,7 @@ const DICTS: Record<LangCode, Dict> = {
 };
 
 const STORAGE_KEY = "open_runo_installer-lang";
-const DEFAULT_LANG: LangCode = "ja";
+const DEFAULT_LANG: LangCode = "en-US";
 
 export function getLanguage(): LangCode {
   const stored = localStorage.getItem(STORAGE_KEY);
