@@ -218,6 +218,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             buffer.len()
         };
 
+        pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         self.fill_file_info(&pool, context, file_info)?;
         Ok(written as u32)
     }
@@ -244,6 +245,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
         pool.create_dataset(&name)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         let handle = FileHandle::DataFile(name);
         self.fill_file_info(&pool, &handle, file_info.as_mut())?;
         Ok(handle)
@@ -256,8 +258,11 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         if let FileHandle::DataFile(name) = context {
             let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
             // cleanupはエラーを返せない仕様(WinFspの制約)。set_deleteで
-            // 既に削除可能と判定済みのはずなので、失敗しても無視する。
-            let _ = pool.destroy_dataset(name);
+            // 既に削除可能と判定済みのはずなので、失敗しても無視する
+            // (保存の失敗も同様。ベストエフォート)。
+            if pool.destroy_dataset(name).is_ok() {
+                let _ = pool.save();
+            }
         }
     }
 
@@ -283,6 +288,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
         pool.set_dataset_size(name, new_size)
             .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         self.fill_file_info(&pool, context, file_info)
     }
 
@@ -315,7 +321,8 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             }
         }
         pool.rename_dataset(old_name, &new_name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))
+            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))
     }
 
     fn read_directory(

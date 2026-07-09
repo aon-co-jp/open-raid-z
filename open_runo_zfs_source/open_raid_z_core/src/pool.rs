@@ -60,12 +60,21 @@
 
 use crate::error::{BridgeError, BridgeResult};
 use crate::vdev::Vdev;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// メタデータ(スーパーブロック)を保存する予約ストライプの番号。
+/// このストライプは通常のデータ割当(`free_stripes`)には決して含めない。
+const SUPERBLOCK_STRIPE: u64 = 0;
+/// オンディスク形式のバージョン識別子。フォーマットに互換性の無い変更を
+/// 加えた場合はこの値を上げ、`Pool::open`側で拒否できるようにする。
+const SUPERBLOCK_MAGIC: [u8; 8] = *b"ORZPOOL1";
 
 pub struct Pool<V: Vdev> {
     vdev: V,
     total_stripes: u64,
-    /// 空きストライプのインデックス集合(スタックとして扱う: popで払い出す)
+    /// 空きストライプのインデックス集合(スタックとして扱う: popで払い出す)。
+    /// [`SUPERBLOCK_STRIPE`]は決してここに含めない。
     free_stripes: Vec<u64>,
     /// 割当済み(=free_stripesに無い)物理ストライプの参照カウント。
     /// データセット・スナップショット・クローンから参照されるたびに+1、
@@ -76,7 +85,7 @@ pub struct Pool<V: Vdev> {
     snapshots: HashMap<String, Snapshot>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Dataset {
     /// このデータセットが保持する物理ストライプのインデックス列(論理順)
     stripes: Vec<u64>,
@@ -89,10 +98,23 @@ struct Dataset {
     logical_size: u64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Snapshot {
     /// スナップショット作成時点の物理ストライプのインデックス列(論理順・不変)
     stripes: Vec<u64>,
+}
+
+/// [`Pool::save`]/[`Pool::open`]がスーパーブロック(予約ストライプ)へ
+/// シリアライズする内容。`free_stripes`自体は保存せず、`ref_counts`から
+/// 復元時に再計算する(「どのストライプが参照されているか」だけが本質的な
+/// 情報であり、空きリストの中身の順序に意味は無いため)。
+#[derive(Debug, Serialize, Deserialize)]
+struct PoolMetadata {
+    magic: [u8; 8],
+    total_stripes: u64,
+    ref_counts: HashMap<u64, u32>,
+    datasets: HashMap<String, Dataset>,
+    snapshots: HashMap<String, Snapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +133,11 @@ fn snapshot_not_found(key: &str) -> BridgeError {
 }
 
 impl<V: Vdev> Pool<V> {
-    /// `total_stripes`個のストライプ(=`vdev`の総容量)を持つプールを作成する。
+    /// `total_stripes`個のストライプ(=`vdev`の総容量)を持つ、新規の空プールを
+    /// 作成する。[`SUPERBLOCK_STRIPE`]はメタデータ用に予約され、データ割当には
+    /// 使われない。既存のプールを再度開く場合は[`Self::open`]を使うこと。
     pub fn new(vdev: V, total_stripes: u64) -> Self {
-        let free_stripes = (0..total_stripes).rev().collect();
+        let free_stripes = (SUPERBLOCK_STRIPE + 1..total_stripes).rev().collect();
         Self {
             vdev,
             total_stripes,
@@ -122,6 +146,66 @@ impl<V: Vdev> Pool<V> {
             datasets: HashMap::new(),
             snapshots: HashMap::new(),
         }
+    }
+
+    /// 現在のメタデータ(データセット一覧・スナップショット・参照カウント)を
+    /// スーパーブロック(予約ストライプ)へ書き込み、永続化する。
+    ///
+    /// 自動保存はしない。呼び出しのたびに書き込むのは非効率なため、
+    /// いつ保存するか(マウント層の`flush`/`fsync`相当のタイミング等)は
+    /// 呼び出し側(`mount.rs`/`fuse_mount.rs`)が制御する。
+    pub fn save(&mut self) -> BridgeResult<()> {
+        let metadata = PoolMetadata {
+            magic: SUPERBLOCK_MAGIC,
+            total_stripes: self.total_stripes,
+            ref_counts: self.ref_counts.clone(),
+            datasets: self.datasets.clone(),
+            snapshots: self.snapshots.clone(),
+        };
+        let mut bytes = bincode::serialize(&metadata)
+            .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータのシリアライズに失敗しました: {e}"))))?;
+        let chunk_bytes = self.chunk_bytes() as usize;
+        if bytes.len() > chunk_bytes {
+            return Err(BridgeError::CapacityExceeded(format!(
+                "メタデータ({}バイト)がスーパーブロック用の1ストライプ({chunk_bytes}バイト)に収まりません(データセット数が多すぎます)",
+                bytes.len()
+            )));
+        }
+        bytes.resize(chunk_bytes, 0);
+        self.vdev.write_stripe(SUPERBLOCK_STRIPE, &bytes)
+    }
+
+    /// [`Self::save`]で保存済みのメタデータを読み込み、既存のプールを復元する。
+    /// `vdev`・`total_stripes`は保存時と同じ構成(ディスク構成・RAIDレベル・
+    /// チャンクサイズ・ストライプ数)である必要がある(異なる場合はエラー)。
+    pub fn open(mut vdev: V, total_stripes: u64) -> BridgeResult<Self> {
+        let bytes = vdev.read_stripe(SUPERBLOCK_STRIPE)?;
+        let metadata: PoolMetadata = bincode::deserialize(&bytes)
+            .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータの復元に失敗しました: {e}"))))?;
+        if metadata.magic != SUPERBLOCK_MAGIC {
+            return Err(BridgeError::InvalidConfig(
+                "スーパーブロックの形式が不正です(open-raid-zで作成されたプールではないか、非対応バージョンです)".to_string(),
+            ));
+        }
+        if metadata.total_stripes != total_stripes {
+            return Err(BridgeError::InvalidConfig(format!(
+                "保存されていた総ストライプ数({})と指定された値({total_stripes})が一致しません",
+                metadata.total_stripes
+            )));
+        }
+
+        let occupied: std::collections::HashSet<u64> = metadata.ref_counts.keys().copied().collect();
+        let free_stripes: Vec<u64> =
+            (SUPERBLOCK_STRIPE + 1..total_stripes).rev().filter(|s| !occupied.contains(s)).collect();
+
+        Ok(Self {
+            vdev,
+            total_stripes,
+            free_stripes,
+            ref_counts: metadata.ref_counts,
+            datasets: metadata.datasets,
+            snapshots: metadata.snapshots,
+        })
     }
 
     pub fn usage(&self) -> PoolUsage {

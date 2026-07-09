@@ -43,7 +43,9 @@ fn pool_creates_and_round_trips_a_dataset_on_top_of_raid10() {
     // CoW書き込みは常に新しい空きストライプへ先に書いてから参照を切り替えるため、
     // データセットにはプール容量を丸ごと割り当てず、CoW用の空き(1ストライプ以上)を
     // 残しておく必要がある(RaidZVdevでもRaid10Vdevでも共通のPoolの制約)。
-    let dataset_stripes = total_stripes - 1;
+    // さらにストライプ0はメタデータ(スーパーブロック)用に予約されているため、
+    // 合計2ストライプぶんを差し引く。
+    let dataset_stripes = total_stripes - 2;
     pool.create_dataset("tank").unwrap();
     pool.grow_dataset("tank", dataset_stripes * CHUNK_SIZE as u64).unwrap();
     assert_eq!(pool.dataset_size("tank").unwrap(), dataset_stripes * CHUNK_SIZE as u64);

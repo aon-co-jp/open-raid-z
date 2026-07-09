@@ -245,6 +245,10 @@ impl<V: Vdev + Send + Sync + 'static> Filesystem for PoolFilesystem<V> {
                 reply.error(errno_from_bridge_error(&e));
                 return;
             }
+            if let Err(e) = state.pool.save() {
+                reply.error(errno_from_bridge_error(&e));
+                return;
+            }
         }
         match state.pool.dataset_size(&name) {
             Ok(current_size) => reply.attr(&ATTR_TTL, &Self::file_attr(ino.0, current_size)),
@@ -305,7 +309,7 @@ impl<V: Vdev + Send + Sync + 'static> Filesystem for PoolFilesystem<V> {
             reply.error(Errno::ENOENT);
             return;
         };
-        match state.pool.write_unaligned_growing(&name, offset, data) {
+        match state.pool.write_unaligned_growing(&name, offset, data).and_then(|()| state.pool.save()) {
             Ok(()) => reply.written(data.len() as u32),
             Err(e) => reply.error(errno_from_bridge_error(&e)),
         }
@@ -384,6 +388,11 @@ impl<V: Vdev + Send + Sync + 'static> Filesystem for PoolFilesystem<V> {
             reply.error(errno_from_bridge_error(&e));
             return;
         }
+        if let Err(e) = state.pool.save() {
+            let _ = state.pool.destroy_dataset(name_str); // 保存に失敗したなら作成自体をロールバックする
+            reply.error(errno_from_bridge_error(&e));
+            return;
+        }
         let ino = state.ino_for_name(name_str);
         reply.created(&ATTR_TTL, &Self::file_attr(ino, 0), Generation(0), FileHandle(0), FopenFlags::empty());
     }
@@ -398,7 +407,7 @@ impl<V: Vdev + Send + Sync + 'static> Filesystem for PoolFilesystem<V> {
             return;
         };
         let mut state = self.state.lock().expect("プールのロックに失敗しました");
-        match state.pool.destroy_dataset(name_str) {
+        match state.pool.destroy_dataset(name_str).and_then(|()| state.pool.save()) {
             Ok(()) => {
                 state.forget_name(name_str);
                 reply.ok();
@@ -430,7 +439,7 @@ impl<V: Vdev + Send + Sync + 'static> Filesystem for PoolFilesystem<V> {
             return;
         }
         let mut state = self.state.lock().expect("プールのロックに失敗しました");
-        match state.pool.rename_dataset(old_name, new_name) {
+        match state.pool.rename_dataset(old_name, new_name).and_then(|()| state.pool.save()) {
             Ok(()) => {
                 state.rename_name(old_name, new_name);
                 reply.ok();
