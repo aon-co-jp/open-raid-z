@@ -4,11 +4,12 @@
 //! Cargo.tomlコメント参照)。
 
 use open_runo_installer_core::copilot::{Advice, AdviceContext, Advisor, HeuristicAdvisor};
-use open_runo_installer_core::hardware::{self, AcceleratorInfo, DiskInfo};
+use open_runo_installer_core::hardware::{self, AcceleratorInfo, DiskInfo, OsCompatEntry};
 use open_runo_installer_core::zpool_wizard::{
     self, Raid10InitRequest, Raid10InitResult, ZpoolApplyRequest, ZpoolInitRequest,
     ZpoolInitResult,
 };
+use serde::Serialize;
 
 #[tauri::command]
 fn detect_accelerator() -> AcceleratorInfo {
@@ -18,6 +19,27 @@ fn detect_accelerator() -> AcceleratorInfo {
 #[tauri::command]
 fn list_physical_disks() -> Vec<DiskInfo> {
     hardware::list_physical_disks()
+}
+
+/// 「対応状況」パネル(開閉可能)向けの一括取得コマンド。現在のOS・
+/// OSごとの対応状況・検出できた全GPU/NPU・検出できたディスクの
+/// メディア種別を1回の呼び出しでまとめて返す。
+#[derive(Debug, Clone, Serialize)]
+struct SystemStatus {
+    current_os: String,
+    os_compatibility: Vec<OsCompatEntry>,
+    accelerators: Vec<AcceleratorInfo>,
+    disks: Vec<DiskInfo>,
+}
+
+#[tauri::command]
+fn get_system_status() -> SystemStatus {
+    SystemStatus {
+        current_os: hardware::current_os().to_string(),
+        os_compatibility: hardware::os_compatibility(),
+        accelerators: hardware::list_accelerators(),
+        disks: hardware::list_physical_disks(),
+    }
 }
 
 #[tauri::command]
@@ -51,7 +73,8 @@ pub fn run() {
             init_zpool_preview,
             init_raid10_preview,
             init_zpool_apply,
-            get_disk_advice
+            get_disk_advice,
+            get_system_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

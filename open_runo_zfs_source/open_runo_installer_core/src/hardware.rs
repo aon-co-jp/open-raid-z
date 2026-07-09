@@ -22,6 +22,9 @@ pub struct DiskInfo {
     pub path: String,
     pub index: u32,
     pub size_bytes: u64,
+    /// 検出できたメディア種別("HDD"/"SSD"/"NVMe"/"USB"/"SD"/"CF"/"Unknown")。
+    /// Windows以外、または権限/ドライバの都合で判別できない場合は"Unknown"。
+    pub media_type: String,
 }
 
 /// `\\.\PhysicalDrive0`〜`\\.\PhysicalDrive15`を試しに開き、開けたものだけ
@@ -45,28 +48,40 @@ mod imp {
     use super::DiskInfo;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
-    use windows::Win32::System::Ioctl::{GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, BusTypeAta, BusTypeMmc, BusTypeNvme, BusTypeRAID, BusTypeSata, BusTypeScsi, BusTypeSd,
+        BusTypeUsb, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, STORAGE_BUS_TYPE,
+    };
+    use windows::Win32::System::Ioctl::{
+        DEVICE_SEEK_PENALTY_DESCRIPTOR, GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO,
+        IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
+        StorageDeviceProperty, StorageDeviceSeekPenaltyProperty,
+    };
     use windows::Win32::System::IO::DeviceIoControl;
 
     pub fn list_physical_disks() -> Vec<DiskInfo> {
         let mut disks = Vec::new();
         for index in 0..16u32 {
-            let Some(size_bytes) = query_disk_size(index) else {
+            let Some((handle, size_bytes)) = open_and_query_size(index) else {
                 continue;
             };
+            let media_type = query_media_type(handle).unwrap_or_else(|| "Unknown".to_string());
+            unsafe {
+                CloseHandle(handle).ok();
+            }
             disks.push(DiskInfo {
                 path: format!("\\\\.\\PhysicalDrive{index}"),
                 index,
                 size_bytes,
+                media_type,
             });
         }
         disks
     }
 
-    fn query_disk_size(index: u32) -> Option<u64> {
+    fn open_disk(index: u32) -> Option<HANDLE> {
         let path_wide: Vec<u16> = format!("\\\\.\\PhysicalDrive{index}\0").encode_utf16().collect();
-        let handle: HANDLE = unsafe {
+        unsafe {
             CreateFileW(
                 PCWSTR(path_wide.as_ptr()),
                 0, // 問い合わせ専用(読み書きなし)。UAC昇格なしで開ける。
@@ -76,8 +91,12 @@ mod imp {
                 Default::default(),
                 None,
             )
-            .ok()?
-        };
+            .ok()
+        }
+    }
+
+    fn open_and_query_size(index: u32) -> Option<(HANDLE, u64)> {
+        let handle = open_disk(index)?;
 
         let mut info = GET_LENGTH_INFORMATION::default();
         let mut bytes_returned = 0u32;
@@ -94,15 +113,97 @@ mod imp {
             )
             .is_ok()
         };
-        unsafe {
-            CloseHandle(handle).ok();
-        }
 
         if ok && info.Length > 0 {
-            Some(info.Length as u64)
+            Some((handle, info.Length as u64))
         } else {
+            unsafe {
+                CloseHandle(handle).ok();
+            }
             None
         }
+    }
+
+    /// バス種別(USB/NVMe/SATA/SD/CF等)とシーク遅延の有無(SSD/HDD判別)を
+    /// `IOCTL_STORAGE_QUERY_PROPERTY`で問い合わせ、人間向けの文字列へ変換する。
+    /// どちらも問い合わせ専用のIOCTLで、`\\.\PhysicalDriveN`を読み書き
+    /// モードなしで開けている時点(=UAC昇格不要)で使える。
+    fn query_media_type(handle: HANDLE) -> Option<String> {
+        let bus_type = query_bus_type(handle);
+
+        // USB/SD/CFはバス種別からメディア種別が確定するため、シーク遅延の
+        // 問い合わせ(HDD/SSD判別)は「内蔵ドライブ相当のバス」の場合のみ行う。
+        match bus_type {
+            Some(BusTypeUsb) => Some("USB".to_string()),
+            Some(BusTypeSd) => Some("SD".to_string()),
+            Some(BusTypeMmc) => Some("CF".to_string()),
+            Some(BusTypeNvme) => Some("NVMe".to_string()),
+            Some(BusTypeSata) | Some(BusTypeAta) | Some(BusTypeScsi) | Some(BusTypeRAID) => {
+                match query_seek_penalty(handle) {
+                    Some(true) => Some("HDD".to_string()),
+                    Some(false) => Some("SSD".to_string()),
+                    None => Some("HDD/SSD".to_string()),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn query_bus_type(handle: HANDLE) -> Option<STORAGE_BUS_TYPE> {
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0u8; 1],
+        };
+        // STORAGE_DEVICE_DESCRIPTORは可変長(末尾にベンダー文字列等が続く)ため、
+        // 十分な大きさの生バッファへ書き込んでもらい、先頭の固定長部分だけ読む。
+        let mut buf = [0u8; 512];
+        let mut bytes_returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                Some(&query as *const _ as *const _),
+                std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+                Some(buf.as_mut_ptr() as *mut _),
+                buf.len() as u32,
+                Some(&mut bytes_returned),
+                None,
+            )
+            .is_ok()
+        };
+        if !ok || (bytes_returned as usize) < std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+            return None;
+        }
+        let desc = unsafe { *(buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
+        Some(desc.BusType)
+    }
+
+    fn query_seek_penalty(handle: HANDLE) -> Option<bool> {
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceSeekPenaltyProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0u8; 1],
+        };
+        let mut result = DEVICE_SEEK_PENALTY_DESCRIPTOR::default();
+        let mut bytes_returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                IOCTL_STORAGE_QUERY_PROPERTY,
+                Some(&query as *const _ as *const _),
+                std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+                Some(&mut result as *mut _ as *mut _),
+                std::mem::size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32,
+                Some(&mut bytes_returned),
+                None,
+            )
+            .is_ok()
+        };
+        if !ok {
+            return None;
+        }
+        Some(result.IncursSeekPenalty.as_bool())
     }
 }
 
@@ -123,19 +224,92 @@ mod imp {
 pub struct AcceleratorInfo {
     pub kind: String,
     pub description: String,
+    /// GPUベンダー("Intel"/"AMD"/"NVIDIA"/"Qualcomm"/"Unknown")。
+    pub vendor: String,
 }
 
 pub fn detect_accelerator() -> AcceleratorInfo {
     match zfs_accel_hlsl::detect_best_accelerator() {
         Ok(device) => AcceleratorInfo {
             kind: format!("{:?}", device.kind),
+            vendor: zfs_accel_hlsl::classify_vendor(&device.adapter_description).to_string(),
             description: device.adapter_description,
         },
         Err(e) => AcceleratorInfo {
             kind: "Unknown".to_string(),
+            vendor: "Unknown".to_string(),
             description: format!("検出に失敗しました: {e}"),
         },
     }
+}
+
+/// システム上の**全ての**NPU/GPUアダプタを一覧する(複数GPU/複数ベンダー
+/// 構成の表示用)。見つからなければ空配列(呼び出し側でCPUのみの意味に扱う)。
+pub fn list_accelerators() -> Vec<AcceleratorInfo> {
+    zfs_accel_hlsl::list_all_accelerators()
+        .into_iter()
+        .map(|device| AcceleratorInfo {
+            kind: format!("{:?}", device.kind),
+            vendor: zfs_accel_hlsl::classify_vendor(&device.adapter_description).to_string(),
+            description: device.adapter_description,
+        })
+        .collect()
+}
+
+/// 現在実行中のOS名("Windows"/"macOS"/"Linux"/"Android"/"iOS"、
+/// それ以外は`std::env::consts::OS`の値そのまま)。
+pub fn current_os() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        "android" => "Android",
+        "ios" => "iOS",
+        other => other,
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OsCompatEntry {
+    pub os: String,
+    /// "full" | "partial" | "planned" | "unsupported"
+    pub status: String,
+    pub note: String,
+}
+
+/// open-raid-z本体フォーマットの対応状況(マルチOS対応ロードマップ、
+/// `MULTIPLATFORM_ROADMAP.md`参照)。実装状況が変わるたびに更新すること。
+pub fn os_compatibility() -> Vec<OsCompatEntry> {
+    vec![
+        OsCompatEntry {
+            os: "Windows".to_string(),
+            status: "full".to_string(),
+            note: "WinFsp経由で実マウント対応済み(create/delete/rename/append/truncate含む)".to_string(),
+        },
+        OsCompatEntry {
+            os: "Linux".to_string(),
+            status: "full".to_string(),
+            note: "FUSE経由で実マウント対応済み(実ブロックデバイスでの動作確認済み)".to_string(),
+        },
+        OsCompatEntry {
+            os: "macOS".to_string(),
+            status: "planned".to_string(),
+            note: "macFUSE/FUSE-T経由での実装を計画中。Apple製実機での検証待ち(仮想化不可のため)"
+                .to_string(),
+        },
+        OsCompatEntry {
+            os: "Android".to_string(),
+            status: "planned".to_string(),
+            note: "FUSE経由の専用アプリを計画中(root化不要)".to_string(),
+        },
+        OsCompatEntry {
+            os: "iOS/iPad".to_string(),
+            status: "partial".to_string(),
+            note: "サードパーティのブロックデバイスRAID構成はAppleが許可していないため、\
+                File Provider Extension経由のファイル閲覧のみ対応予定"
+                .to_string(),
+        },
+    ]
 }
 
 #[cfg(test)]

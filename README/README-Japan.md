@@ -46,6 +46,9 @@ id/class名など、このプロジェクト自身が定義する識別子は、
 - **NTFS互換**: ACL(NFSv4⇔NTFS)・UID/GID⇔SIDマッピング(ローカルSAM/ADドメインのRIDベース決定論的マッピング)
 - **exFAT互換**: ファイル属性・タイムスタンプの相互変換、4GB超ファイル/大容量ボリューム対応
 - **GPU/NPUハードウェアアクセラレーション**: DirectX 12 Compute + DirectMLでRAID-Z1/Z2/Z3のパリティ生成をオフロード(ハードウェアが無い場合はCPUへ自動フォールバック)。さらに、GF(2^8)の係数倍をGF(2)ビット行列に変換して1回のDirectML GEMM呼び出しへ帰着させる方式(`zfs_accel_hlsl::dml_gemm`)も実装し、実機GPUで正しさを検証済み(実機NPUでは未検証)。この仕組みはscrub/resilverが破損を検知した際の復旧計算(=パリティチェック)にも実際に配線済み。NPU専用のシェーダ経路(`raidnpu_*.hlsl`)も用意し、将来の実機NPUでの検証・最適化に備えている
+- **Vulkan Computeアクセラレーション(Windows以外)**: DirectX/DirectMLはWindows専用APIのため、Linux/Mac/Android向けに`ash`クレート経由のVulkan Compute実装(`zfs_accel_hlsl::vulkan_compute`、`vulkan` feature)を追加。RAID-Z1のXORパリティ生成が実機GPU(NVIDIA GeForce GT 730、Vulkan 1.2)で正しく動作することを確認済み
+- **既存フォーマットの読み書きブリッジ(`foreign_fs`)**: open-raid-z独自のプール形式とは別に、他OSが作成した既存のFAT32/FAT16ボリューム(USBメモリ/microSD/CFカード等)を読み書き、exFATボリュームを読み取り可能(exFATは上流クレートの制約により現時点で読み取り専用)。`orzctl foreign`(`ls`/`cat`/`put`)から操作できる
+- **インストーラーの「対応状況」パネル**: ボタンで開閉できるパネルで、現在のOSの対応状況、検出された全GPU/NPU(Intel/AMD/NVIDIA/Qualcommベンダー判定付き、複数対応)、検出されたストレージメディアの種別(HDD/SSD/NVMe/USB/SD/CF)を一覧表示
 - **実ディスクへのzpool適用**: インストーラーのzpool初期化ウィザードに、スクラッチイメージでのプレビューだけでなく実際の物理ディスク(`\\.\PhysicalDriveN`)へ適用するコマンド(`init_zpool_apply`)を追加。既存データの消去を明示的に確認するフラグが無いと動作しない安全設計
 - **Copilot風構成アドバイザー**: ディスク構成・アクセラレータ・CPUコア数から推奨RAIDレベルを提案(ヒューリスティック版。ローカルLLM検知の骨組みも搭載)。ロジックは`open_runo_installer_core`としてTauriから独立しており、Linux/macOS上でも`cargo test`で検証可能
 - **WinFsp実マウント(Windows)**: 実際にWindows上のドライブレターとしてマウント可能。プール内の全データセットがそれぞれ1ファイルとして見え、バイト単位の任意オフセット読み書き・ファイルの新規作成/削除/名前変更/追記/切り詰めに対応(現状はルート直下のフラットな名前空間のみで、サブディレクトリは未対応)。実機での読み書き・作成・削除・リネーム・追記・切り詰めをそれぞれ実際にマウントした状態で検証済み。
@@ -149,6 +152,19 @@ cargo tauri dev / cargo tauri build
 (`\\.\PhysicalDriveN`)のみWindows専用APIを使うため`#[cfg(windows)]`で
 分離しており、それ以外(構成助言・zpoolプレビュー計算)はOS非依存で
 26件のテストが全て通ることを確認済み。
+
+## マルチOS対応・既存フォーマット相互運用ロードマップ
+
+open-raid-z自体をWindows/Mac/Linux/Android/iOS/iPadで読み書きできるようにし、
+既存の他OSフォーマット(NTFS/exFAT/FAT32/ext4/APFS等)とも相互運用できるように
+することを目指している。現状の実現可否・優先順位・技術的制約(特にiOS/iPadは
+サードパーティのブロックデバイスRAID構成をAppleが許可していないため
+File Provider Extension経由の閲覧に限定される見込み)は
+[`MULTIPLATFORM_ROADMAP.md`](open_runo_zfs_source/open_raid_z_core/contrib/systemd/MULTIPLATFORM_ROADMAP.md)
+に記録している。GPU/NPUアクセラレーションはWindows以外では各OS標準の
+ネイティブAPI(Mac=Metal Performance Shaders、Android=NNAPI等)へ順次
+対応していく方針。また、mdadm(Linux)やStorage Spaces(Windows)といった
+**他社製RAID形式との相互運用**も将来的な対応範囲として検討中。
 
 ## ライセンス
 

@@ -114,6 +114,51 @@ button:hover {
   gap: 0.5em;
 }
 
+.header_actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.overlay_panel {
+  position: fixed;
+  top: 4rem;
+  right: 1.5rem;
+  left: 1.5rem;
+  max-width: 640px;
+  margin: 0 auto;
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.overlay_panel_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.overlay_panel h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.4rem;
+  font-size: 1em;
+}
+
+.status_full {
+  color: #15803d;
+}
+
+.status_partial,
+.status_planned {
+  color: #b45309;
+}
+
+.status_unsupported {
+  color: #b91c1c;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.5;

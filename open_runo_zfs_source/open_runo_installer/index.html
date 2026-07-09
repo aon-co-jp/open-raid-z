@@ -12,11 +12,33 @@
     <main class="container">
       <header class="app_header">
         <h1 data-i18n="app_title">OpenRaidZ Installer</h1>
-        <label class="lang_switcher">
-          <span data-i18n="language_label">言語</span>
-          <select id="lang_select"></select>
-        </label>
+        <div class="header_actions">
+          <button id="system_status_toggle" type="button" data-i18n="system_status_button">対応状況</button>
+          <label class="lang_switcher">
+            <span data-i18n="language_label">言語</span>
+            <select id="lang_select"></select>
+          </label>
+        </div>
       </header>
+
+      <section id="system_status_panel" class="panel overlay_panel" hidden>
+        <div class="overlay_panel_header">
+          <h2 data-i18n="system_status_title">対応状況</h2>
+          <button id="system_status_close" type="button" data-i18n="close_button">CLOSE</button>
+        </div>
+
+        <h3 data-i18n="system_status_os">現在のOS</h3>
+        <p id="system_status_current_os">-</p>
+
+        <h3 data-i18n="system_status_os_compat">OS対応状況</h3>
+        <ul id="system_status_os_list"></ul>
+
+        <h3 data-i18n="system_status_gpu">GPU/NPU検出状況</h3>
+        <ul id="system_status_gpu_list"></ul>
+
+        <h3 data-i18n="system_status_storage">検出されたストレージメディア</h3>
+        <ul id="system_status_storage_list"></ul>
+      </section>
 
       <section class="panel">
         <h2 data-i18n="section_hardware">ハードウェア構成</h2>
