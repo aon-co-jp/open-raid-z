@@ -110,6 +110,12 @@ cargo build --no-default-features --features fuse_backend --bin orzctl
 ./target/debug/orzctl mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint /mnt/tank /path/to/disk0 /path/to/disk1 ...
 ```
 
+Для автоматического монтирования при загрузке зарегистрируйте
+[`contrib/systemd/open-raid-z-pool.service.example`](../open_runo_zfs_source/open_raid_z_core/contrib/systemd/open-raid-z-pool.service.example)
+как systemd-юнит (проверено на VM VirtualBox: пул, созданный на 4
+действительно раздельных блочных устройствах, автоматически
+монтируется даже после настоящей перезагрузки).
+
 ### Установщик (`open_runo_installer` / `open_runo_installer_core`)
 
 ```powershell
