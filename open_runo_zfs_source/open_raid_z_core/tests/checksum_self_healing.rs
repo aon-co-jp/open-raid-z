@@ -5,8 +5,8 @@
 //! し、`RaidZVdev`がチェックサム不一致を検知してパリティから自動修復
 //! (自己修復)することを検証する。
 
-use open_zfs_winfsp_bridge::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

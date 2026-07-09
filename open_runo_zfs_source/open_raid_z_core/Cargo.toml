@@ -1,10 +1,10 @@
 [workspace]
 
 [package]
-name = "open_zfs_winfsp_bridge"
+name = "open_raid_z_core"
 version = "0.0.1"
 edition = "2021"
-description = "OpenRuno: ZFS on Windows <-> NTFS ACL互換ブリッジ (WinFsp経由)"
+description = "open-raid-z: ZFS風RAIDプール・実マウント(Windows=WinFsp / Linux=FUSE)のOS共通コア"
 license = "MPL-2.0"
 
 [dependencies]
@@ -24,6 +24,11 @@ bitflags = { version = "2.6", features = ["serde"] }
 zfs_accel_hlsl = { path = "../zfs_accel_hlsl", default-features = false }
 sha2 = "0.10"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
+# LinuxのFUSE(Filesystem in Userspace)への実Rustバインディング。
+fuser = { version = "0.17", optional = true }
+
 [build-dependencies]
 # NOTE: `dependencies` の winfsp と同じ optional 化が必須。ここを外すと
 # `--no-default-features` を指定しても cargo が常に winfsp(および
@@ -42,7 +47,11 @@ winfsp_backend = ["dep:winfsp", "dep:widestring"]
 # `cargo test --no-default-features` だけでRAID-Z/Z2/Z3のプール管理・
 # パリティ計算・障害復旧ロジックを非Windows環境でも検証できる。
 gpu_accel = ["zfs_accel_hlsl/gpu"]
+# Linux版の実マウント(FUSE経由)。既定では無効(winfsp_backend/gpu_accelと
+# 同様、明示的に有効化する)。Linux以外のターゲットでは`fuser`クレート自体が
+# 依存関係として存在しないため、他OSでこのfeatureを有効化することはできない。
+fuse_backend = ["dep:fuser"]
 
 [lib]
-name = "open_zfs_winfsp_bridge"
+name = "open_raid_z_core"
 crate-type = ["cdylib", "rlib"]

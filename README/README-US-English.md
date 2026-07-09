@@ -1,6 +1,6 @@
 # open-raid-z
 
-An experimental filesystem project for Windows that stays near-compatible with NTFS/exFAT while providing ZFS-style features (self-healing checksums, storage pools, copy-on-write, snapshots/clones) alongside RAID0/1/5/6/10/Z2/Z3.
+An experimental filesystem project for Windows/Linux that stays near-compatible with NTFS/exFAT while providing ZFS-style features (self-healing checksums, storage pools, copy-on-write, snapshots/clones) alongside RAID0/1/5/6/10/Z2/Z3. The core logic is a single OS-independent shared program (`open_raid_z_core`); the Windows build (WinFsp) and Linux build (FUSE) differ only in the thin mount layer on top of it (distributed under the names `open-raid-z-win`/`open-raid-z-linux`).
 
 Language: [日本語](README-Japan.md) | [UK English](README-UK-English.md) | **US English** | [Italiano](README-Italy.md) | [Français](README-France.md) | [Deutsch](README-Germany.md) | [Русский](README-Russia.md) | [Українська](README-Ukraine.md) | [العربية](README-Arabic.md) | [فارسی](<README-Iran(Persian).md>)
 
@@ -12,7 +12,7 @@ We understand this requires cooperation from each OS vendor — boot-start drive
 
 ## Naming convention
 
-Identifiers defined by this project itself — directory names, crate names, npm package names, Cargo feature names, HTML/CSS ids/classes, and so on — are consistently **underscore-separated (`_`) rather than hyphen-separated (`-`)** (e.g. `open_zfs_winfsp_bridge`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, and the Cargo features `winfsp_backend`/`gpu_accel`). Names that used to be hyphenated, such as `openzfs-winfsp-bridge`, were renamed for consistency within this project.
+Identifiers defined by this project itself — directory names, crate names, npm package names, Cargo feature names, HTML/CSS ids/classes, and so on — are consistently **underscore-separated (`_`) rather than hyphen-separated (`-`)** (e.g. `open_raid_z_core`, `zfs_accel_hlsl`, `open_runo_installer`, `open_runo_installer_core`, and the Cargo features `winfsp_backend`/`gpu_accel`). Names that used to be hyphenated, such as `openzfs-winfsp-bridge`, were renamed for consistency within this project.
 
 The following are exempt, because they follow external specifications or ecosystem conventions rather than this project's own naming choices:
 
@@ -26,7 +26,7 @@ The following are exempt, because they follow external specifications or ecosyst
 
 | Component | Role |
 |---|---|
-| `open_zfs_winfsp_bridge` | RAID-Z/RAID0-10 vdevs, storage pool, NTFS ACL/exFAT attribute compatibility layer, real WinFsp mount |
+| `open_raid_z_core` | RAID-Z/RAID0-10 vdevs, storage pool, NTFS ACL/exFAT attribute compatibility layer, real mount (Windows = WinFsp `mount.rs` / Linux = FUSE `fuse_mount.rs`; everything but the per-OS mount layer is fully shared) |
 | `zfs_accel_hlsl` | Parity computation offload to GPU/NPU hardware accelerators (DirectX 12 Compute + DirectML) |
 | `open_runo_installer_core` | OS-independent logic for disk detection, the Copilot-style configuration advisor, and zpool-init preview (no Tauri dependency; `cargo test` also works on Linux/macOS) |
 | `open_runo_installer` | The Tauri installer itself (a thin UI layer that calls into `open_runo_installer_core`): hardware detection, zpool-init wizard, Copilot-style configuration advisor UI |
@@ -40,7 +40,8 @@ The following are exempt, because they follow external specifications or ecosyst
 - **exFAT compatibility**: file attribute and timestamp conversion, support for files/volumes beyond 4GB
 - **GPU/NPU hardware acceleration**: RAID-Z1/Z2 parity computation is actually dispatched via DirectX 12 Compute + DirectML (automatically falls back to CPU when no hardware is present)
 - **Copilot-style configuration advisor**: recommends a RAID level based on disk layout, accelerator, and CPU core count (heuristic first pass; a local-LLM detection skeleton is also in place). The logic lives in `open_runo_installer_core`, independent of Tauri, and can also be verified with `cargo test` on Linux/macOS
-- **Real WinFsp mount**: can actually be mounted as a Windows drive letter. Every dataset in the pool shows up as its own file, with arbitrary byte-offset reads/writes and file create/delete/rename/append/truncate all supported (still a flat namespace at the root — subdirectories are not supported yet). Verified on real hardware: reading, writing, creating, deleting, renaming, appending, and truncating files through an actual mounted drive.
+- **Real WinFsp mount (Windows)**: can actually be mounted as a Windows drive letter. Every dataset in the pool shows up as its own file, with arbitrary byte-offset reads/writes and file create/delete/rename/append/truncate all supported (still a flat namespace at the root — subdirectories are not supported yet). Verified on real hardware: reading, writing, creating, deleting, renaming, appending, and truncating files through an actual mounted drive.
+- **Real FUSE mount (Linux)**: the same `Pool` mounts directly on Linux too (`fuse_mount.rs`), with the same functionality as the Windows build (create/delete/rename/append/truncate). Verified end-to-end on WSL2 Ubuntu 26.04 — mounted and exercised via plain `std::fs` calls. Because it's inode-based, it doesn't share the WinFsp build's known limitation where another open handle can keep referencing a stale name after a rename. The `fuser` crate also has a `macfuse-4-compat` feature, so the same design could plausibly extend to macOS (as a data volume, not a boot disk) down the road.
 - **Multilingual support**: the installer defaults to Japanese with a UI language switcher, changeable after installation too
 - **Existing-data migration tool (the `migrate` module, experimental)**: copies an existing NTFS (or similar) directory tree into the pool. It never writes to the source, so it can run **while Windows keeps running**. It cannot, however, convert the **currently running system drive (C: etc.) in place** into RAID format without downtime (an OS cannot have the volume it is actively using rewritten by software running on that same OS — this is a hard constraint, not a missing feature). It is strictly a "copy to another location (the pool)" tool. Currently a library function only, with no CLI/GUI yet; subdirectories are flattened to one level using a separator character.
 
@@ -63,7 +64,7 @@ The following are exempt, because they follow external specifications or ecosyst
 ## Build & test
 
 ```powershell
-cd open_runo_zfs_source/open_zfs_winfsp_bridge
+cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features   # without WinFsp/GPU acceleration (pure CPU logic; neither dxc nor the WinFsp SDK is needed)
 cargo test                         # default (includes the real WinFsp mount and GPU/NPU acceleration; requires WinFsp + dxc)
 ```
@@ -86,6 +87,18 @@ cargo test --features winfsp_backend,gpu_accel
 ```
 
 Without this, `mount_pool` returns an `Err`, and the test treats it as an environment-dependent issue, printing a skip message via `eprintln` and returning early. **Without `--nocapture`, this skip still just shows as `ok`, indistinguishable from an actual successful mount+read/write.** Always pass `--nocapture` when checking real-mount tests, and confirm visually that no skip message appears.
+
+### Building & testing the Linux build (FUSE)
+
+```bash
+# On Ubuntu/Debian: build-essential, pkg-config, and libfuse3-dev are required.
+sudo apt-get install -y build-essential pkg-config libfuse3-dev
+
+cd open_runo_zfs_source/open_raid_z_core
+cargo test --no-default-features --features fuse_backend
+```
+
+The `fuse_backend` feature enables the `fuser` crate (a real binding to Linux's `libfuse3`). It's independent of `winfsp_backend`/`gpu_accel`, and can't be enabled on non-Linux targets since `fuser` itself isn't even a dependency there (it lives under `target.'cfg(target_os = "linux")'.dependencies` in `Cargo.toml`). The real-mount integration test (`tests/fuse_mount.rs`) has been verified on WSL2 Ubuntu 26.04 — create, write, read, rename, truncate, delete, and a round trip of a larger file spanning multiple stripes. If you're on Windows only, WSL2 (`wsl --install`) is the recommended way to build/test the Linux target.
 
 ### Installer (`open_runo_installer` / `open_runo_installer_core`)
 

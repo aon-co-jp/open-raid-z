@@ -19,10 +19,10 @@ license = "MPL-2.0"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-# NOTE: default-features = false が必須。open_zfs_winfsp_bridge/Cargo.toml
+# NOTE: default-features = false が必須。open_raid_z_core/Cargo.toml
 # 参照(既定featureの`gpu`統合によりdxcが無い環境でビルド不能になる問題)。
 zfs_accel_hlsl = { path = "../zfs_accel_hlsl", default-features = false }
-open_zfs_winfsp_bridge = { path = "../open_zfs_winfsp_bridge", default-features = false }
+open_raid_z_core = { path = "../open_raid_z_core", default-features = false }
 
 # `windows`クレートはWindows以外のターゲットでは中身が空になる
 # (`#![cfg(windows)]`)。`hardware.rs`はWindows専用のディスク列挙APIを

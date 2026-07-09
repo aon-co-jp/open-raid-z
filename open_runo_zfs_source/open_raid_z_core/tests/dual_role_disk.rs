@@ -6,9 +6,9 @@
 //! 同じ物理ディスクの異なるバイト範囲を独立に読み書きしても、互いの
 //! データを一切破壊しないことを実際のI/Oで検証する。
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::partition::partition_device;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::partition::partition_device;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

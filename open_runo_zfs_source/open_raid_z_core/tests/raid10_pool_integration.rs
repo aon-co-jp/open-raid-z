@@ -6,9 +6,9 @@
 //! `Raid10Vdev`に対しても使えるはずである。本テストはそれを、
 //! 実際にデータセットを作成・書き込み・読み出しすることで検証する。
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::raid10::Raid10Vdev;
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::raid10::Raid10Vdev;
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

@@ -10,18 +10,18 @@
 //! WinFspへ返すNTSTATUSを細かく分類しようにも、元のエラーに情報が残って
 //! いなかった)。
 //!
-//! [`DatasetNotFound`]: open_zfs_winfsp_bridge::BridgeError::DatasetNotFound
-//! [`SnapshotNotFound`]: open_zfs_winfsp_bridge::BridgeError::SnapshotNotFound
-//! [`AlreadyExists`]: open_zfs_winfsp_bridge::BridgeError::AlreadyExists
-//! [`CapacityExceeded`]: open_zfs_winfsp_bridge::BridgeError::CapacityExceeded
-//! [`InvalidConfig`]: open_zfs_winfsp_bridge::BridgeError::InvalidConfig
-//! [`Unrecoverable`]: open_zfs_winfsp_bridge::BridgeError::Unrecoverable
+//! [`DatasetNotFound`]: open_raid_z_core::BridgeError::DatasetNotFound
+//! [`SnapshotNotFound`]: open_raid_z_core::BridgeError::SnapshotNotFound
+//! [`AlreadyExists`]: open_raid_z_core::BridgeError::AlreadyExists
+//! [`CapacityExceeded`]: open_raid_z_core::BridgeError::CapacityExceeded
+//! [`InvalidConfig`]: open_raid_z_core::BridgeError::InvalidConfig
+//! [`Unrecoverable`]: open_raid_z_core::BridgeError::Unrecoverable
 
-use open_zfs_winfsp_bridge::block_device::{FaultInjectableDevice, FileBackedDevice};
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::raid10::Raid10Vdev;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
-use open_zfs_winfsp_bridge::BridgeError;
+use open_raid_z_core::block_device::{FaultInjectableDevice, FileBackedDevice};
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::raid10::Raid10Vdev;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::BridgeError;
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;
