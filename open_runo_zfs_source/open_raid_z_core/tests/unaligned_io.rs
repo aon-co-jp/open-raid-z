@@ -5,9 +5,9 @@
 //! なっている主因)、`read_unaligned`/`write_unaligned`はread-modify-write
 //! により任意のバイトオフセット・任意長の読み書きを提供する。
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

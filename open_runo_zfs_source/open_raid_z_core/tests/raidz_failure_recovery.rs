@@ -4,12 +4,12 @@
 //! I/Oを経由してRAID-Z2(2台同時故障)・RAID-Z3(3台同時故障)からの
 //! データ復旧と、故障ディスク交換後の自動修復(resilver)までを検証する。
 //!
-//! 実ドライブ(VHDX/USBメモリ等)を使わずに、`open_zfs_winfsp_bridge`の
+//! 実ドライブ(VHDX/USBメモリ等)を使わずに、`open_raid_z_core`の
 //! ストレージ層(`block_device`/`vdev`)の正しさをエンドツーエンドで
 //! 確認できる、安全な検証手段として用意した。
 
-use open_zfs_winfsp_bridge::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

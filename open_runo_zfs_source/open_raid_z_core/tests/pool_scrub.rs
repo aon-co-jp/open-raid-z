@@ -8,10 +8,10 @@
 //! `Pool::vdev_mut`経由でRAID10固有の`resilver`(シグネチャがRAID-Z系と
 //! 異なるため`Vdev`トレイトには未統一)を呼び出せることを検証する。
 
-use open_zfs_winfsp_bridge::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::raid10::Raid10Vdev;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::{BlockDevice, FaultInjectableDevice, FileBackedDevice};
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::raid10::Raid10Vdev;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;

@@ -1,4 +1,4 @@
-//! open_zfs_winfsp_bridge
+//! open_raid_z_core
 //!
 //! ZFS on Windows のI/OをWinFsp経由でフックし、
 //! NTFSのACL/タイムスタンプ/代替データストリーム相当のセマンティクスを
@@ -21,6 +21,8 @@ pub mod id_mapping;
 pub mod migrate;
 #[cfg(feature = "winfsp_backend")]
 pub mod mount;
+#[cfg(all(target_os = "linux", feature = "fuse_backend"))]
+pub mod fuse_mount;
 pub mod partition;
 pub mod pool;
 pub mod raid10;

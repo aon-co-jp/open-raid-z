@@ -17,10 +17,10 @@
 
 #![cfg(feature = "winfsp_backend")]
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::mount::mount_pool;
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::mount::mount_pool;
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 4096;

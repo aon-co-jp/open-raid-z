@@ -4,14 +4,14 @@
 //! 本ウィザードはまず一時ファイル(スクラッチイメージ)上でプールを構築して
 //! 動作を確認する「プレビュー」モードのみを提供する。実ディスクへの適用は、
 //! VHDXアタッチ等で得られる`\\.\PhysicalDriveN`パスを
-//! `open_zfs_winfsp_bridge::block_device::FileBackedDevice::open`へそのまま
+//! `open_raid_z_core::block_device::FileBackedDevice::open`へそのまま
 //! 渡せる設計になっている(`block_device.rs`のドキュメント参照)ため、将来
 //! UI側に「実ディスクへ適用」ボタンを追加するだけで対応できる。
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::raid10::Raid10Vdev;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::raid10::Raid10Vdev;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use serde::{Deserialize, Serialize};
 
 const CHUNK_SIZE: usize = 4096;
@@ -135,7 +135,7 @@ pub struct Raid10InitResult {
 
 /// RAID10(ストライプ+ミラー)のプレビュー。
 ///
-/// [`Raid10Vdev`]は[`open_zfs_winfsp_bridge::vdev::Vdev`]トレイトを実装して
+/// [`Raid10Vdev`]は[`open_raid_z_core::vdev::Vdev`]トレイトを実装して
 /// いるため、[`Pool`]は`RaidZVdev`と全く同じデータセットAPI
 /// (`create_dataset`/`grow_dataset`/`write`/`read`)でRAID10も扱える
 /// (`raid10.rs`のモジュールドキュメント参照)。

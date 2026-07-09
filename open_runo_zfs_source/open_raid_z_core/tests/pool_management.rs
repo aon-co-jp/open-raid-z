@@ -4,9 +4,9 @@
 //! (ファイルシステム)へ動的に容量を切り出す、というZFSのプール管理の
 //! 特徴を、実ファイルI/Oを経由して検証する。
 
-use open_zfs_winfsp_bridge::block_device::FileBackedDevice;
-use open_zfs_winfsp_bridge::pool::Pool;
-use open_zfs_winfsp_bridge::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::block_device::FileBackedDevice;
+use open_raid_z_core::pool::Pool;
+use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;
