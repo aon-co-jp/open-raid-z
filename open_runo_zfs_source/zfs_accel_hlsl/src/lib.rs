@@ -24,4 +24,6 @@ pub mod vulkan_compute;
 #[cfg(feature = "vulkan")]
 pub mod vulkan_device;
 
-pub use device::{detect_best_accelerator, AccelDevice, AccelKind, DeviceError};
+pub use device::{
+    classify_vendor, detect_best_accelerator, list_all_accelerators, AccelDevice, AccelKind, DeviceError,
+};

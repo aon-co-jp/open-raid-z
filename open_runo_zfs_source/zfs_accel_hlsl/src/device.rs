@@ -35,6 +35,45 @@ pub struct AccelDevice {
     pub adapter_description: String,
 }
 
+/// アダプタ名からGPUベンダーを判定する(Intel/AMD/NVIDIA/Qualcomm。
+/// いずれにも一致しなければ`Unknown`)。インストーラーUIの「今のGPU
+/// (INTEL、AMD、nVIDIA対応状況)」表示のためのベンダー分類。
+pub fn classify_vendor(description: &str) -> &'static str {
+    let lower = description.to_lowercase();
+    if lower.contains("nvidia") || lower.contains("geforce") || lower.contains("quadro") || lower.contains("rtx") {
+        "NVIDIA"
+    } else if lower.contains("amd") || lower.contains("radeon") {
+        "AMD"
+    } else if lower.contains("intel") {
+        "Intel"
+    } else if lower.contains("qualcomm") || lower.contains("adreno") || lower.contains("hexagon") {
+        "Qualcomm"
+    } else {
+        "Unknown"
+    }
+}
+
+/// システム上の**全ての**NPU/GPUアダプタを列挙する(ベストな1台だけを
+/// 選ぶ[`detect_best_accelerator`]とは異なり、インストーラーUIの
+/// 「今のGPU(複数なら複数)」表示のために全件返す)。
+/// ソフトウェアアダプタ(WARP等)は除外する。見つからない場合は空配列。
+pub fn list_all_accelerators() -> Vec<AccelDevice> {
+    #[cfg(feature = "gpu")]
+    {
+        let list = imp::list_all_devices();
+        if !list.is_empty() {
+            return list;
+        }
+    }
+    #[cfg(feature = "vulkan")]
+    {
+        if let Ok(accel) = crate::vulkan_device::detect_best_vulkan_device() {
+            return vec![accel];
+        }
+    }
+    Vec::new()
+}
+
 /// システム上のアダプタを列挙し、NPU/GPUの優先順位で選択する。
 /// どちらも見つからない場合はCPUフォールバックを返す(安全側のデフォルト)。
 ///
@@ -163,6 +202,41 @@ mod imp {
 
         Err(DeviceError::NoD3D12Device)
     }
+
+    /// [`super::list_all_accelerators`]向け: ソフトウェアアダプタを除いた
+    /// 全物理アダプタを、NPU的な名前ならNpu、それ以外はGpuとして列挙する
+    /// (`create_best_device`と異なり、最初の1台で確定せず全件走査する)。
+    pub fn list_all_devices() -> Vec<AccelDevice> {
+        let Ok(factory) = (unsafe { CreateDXGIFactory1() }) else {
+            return Vec::new();
+        };
+        let factory: IDXGIFactory1 = factory;
+
+        let mut devices = Vec::new();
+        let mut index = 0u32;
+        loop {
+            let adapter = match unsafe { factory.EnumAdapters1(index) } {
+                Ok(adapter) => adapter,
+                Err(_) => break,
+            };
+            index += 1;
+
+            let (description, flags) = match adapter_description(&adapter) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+                continue;
+            }
+            if try_create_d3d12_device(&adapter).is_none() {
+                continue;
+            }
+
+            let kind = if looks_like_npu(&description) { AccelKind::Npu } else { AccelKind::Gpu };
+            devices.push(AccelDevice { kind, adapter_description: description });
+        }
+        devices
+    }
 }
 
 #[cfg(not(feature = "gpu"))]
@@ -174,5 +248,30 @@ mod imp {
     /// これを[`super::AccelKind::CpuFallback`]へ変換する。
     pub fn create_best_device() -> Result<(AccelDevice, ()), DeviceError> {
         Err(DeviceError::NoD3D12Device)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_all_accelerators_finds_at_least_the_best_device_on_this_machine() {
+        let all = list_all_accelerators();
+        println!("detected accelerators: {all:?}");
+        if let Ok(best) = detect_best_accelerator() {
+            if best.kind != AccelKind::CpuFallback {
+                assert!(!all.is_empty(), "detect_best_accelerator found a device but list_all_accelerators found none");
+            }
+        }
+    }
+
+    #[test]
+    fn classify_vendor_recognizes_known_vendor_strings() {
+        assert_eq!(classify_vendor("NVIDIA GeForce GT 730"), "NVIDIA");
+        assert_eq!(classify_vendor("AMD Radeon RX 6600"), "AMD");
+        assert_eq!(classify_vendor("Intel(R) UHD Graphics 630"), "Intel");
+        assert_eq!(classify_vendor("Qualcomm(R) Adreno(TM) 690"), "Qualcomm");
+        assert_eq!(classify_vendor("Totally Unknown Adapter"), "Unknown");
     }
 }

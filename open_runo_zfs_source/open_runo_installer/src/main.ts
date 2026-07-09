@@ -13,11 +13,26 @@ interface DiskInfo {
   path: string;
   index: number;
   size_bytes: number;
+  media_type: string;
 }
 
 interface AcceleratorInfo {
   kind: string;
   description: string;
+  vendor: string;
+}
+
+interface OsCompatEntry {
+  os: string;
+  status: string;
+  note: string;
+}
+
+interface SystemStatus {
+  current_os: string;
+  os_compatibility: OsCompatEntry[];
+  accelerators: AcceleratorInfo[];
+  disks: DiskInfo[];
 }
 
 interface Advice {
@@ -95,6 +110,61 @@ async function loadHardware(): Promise<void> {
   updateApplyButtonState();
 }
 
+function openSystemStatusPanel(): void {
+  const panel = document.getElementById("system_status_panel")!;
+  panel.hidden = false;
+  void loadSystemStatus();
+}
+
+function closeSystemStatusPanel(): void {
+  document.getElementById("system_status_panel")!.hidden = true;
+}
+
+async function loadSystemStatus(): Promise<void> {
+  const status = await invoke<SystemStatus>("get_system_status");
+
+  document.getElementById("system_status_current_os")!.textContent = status.current_os;
+
+  const osListEl = document.getElementById("system_status_os_list")!;
+  osListEl.innerHTML = "";
+  for (const entry of status.os_compatibility) {
+    const li = document.createElement("li");
+    li.className = `status_${entry.status}`;
+    const statusLabel = t(`status_${entry.status}`);
+    li.innerHTML = `<strong>${entry.os}</strong>: ${statusLabel} — ${entry.note}`;
+    osListEl.appendChild(li);
+  }
+
+  const gpuListEl = document.getElementById("system_status_gpu_list")!;
+  gpuListEl.innerHTML = "";
+  if (status.accelerators.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = t("no_gpu_detected");
+    gpuListEl.appendChild(li);
+  } else {
+    for (const accel of status.accelerators) {
+      const li = document.createElement("li");
+      li.textContent = `[${accel.vendor}] ${accel.kind}: ${accel.description}`;
+      gpuListEl.appendChild(li);
+    }
+  }
+
+  const storageListEl = document.getElementById("system_status_storage_list")!;
+  storageListEl.innerHTML = "";
+  if (status.disks.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = t("no_storage_detected");
+    storageListEl.appendChild(li);
+  } else {
+    for (const disk of status.disks) {
+      const li = document.createElement("li");
+      const gib = (disk.size_bytes / (1024 * 1024 * 1024)).toFixed(1);
+      li.textContent = `[${disk.media_type}] ${disk.path} — ${gib} GiB`;
+      storageListEl.appendChild(li);
+    }
+  }
+}
+
 function getSelectedDisks(): { path: string; size_bytes: number }[] {
   const checkboxes = document.querySelectorAll<HTMLInputElement>(".disk_select_checkbox:checked");
   return Array.from(checkboxes).map((cb) => ({
@@ -167,6 +237,8 @@ window.addEventListener("DOMContentLoaded", () => {
   toggleMirrorWidthVisibility();
 
   document.getElementById("refresh_button")?.addEventListener("click", () => void loadHardware());
+  document.getElementById("system_status_toggle")?.addEventListener("click", openSystemStatusPanel);
+  document.getElementById("system_status_close")?.addEventListener("click", closeSystemStatusPanel);
   document.getElementById("raid_level")?.addEventListener("change", toggleMirrorWidthVisibility);
   document.getElementById("raid_form")?.addEventListener("submit", (e) => void submitRaidForm(e));
   document.getElementById("confirm_data_loss")?.addEventListener("change", updateApplyButtonState);

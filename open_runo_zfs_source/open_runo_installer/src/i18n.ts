@@ -59,6 +59,19 @@ const ja = {
   apply_warning: "警告: 選択したディスクの既存データは全て消去されます。この操作は元に戻せません。",
   confirm_data_loss_label: "選択したディスクの既存データが完全に消去されることを理解しました",
   apply_button: "実ディスクへ適用",
+  system_status_button: "対応状況",
+  system_status_title: "対応状況",
+  close_button: "CLOSE",
+  system_status_os: "現在のOS",
+  system_status_os_compat: "OS対応状況",
+  system_status_gpu: "GPU/NPU検出状況",
+  system_status_storage: "検出されたストレージメディア",
+  status_full: "対応済み",
+  status_partial: "部分対応",
+  status_planned: "対応予定",
+  status_unsupported: "未対応",
+  no_gpu_detected: "GPU/NPUは検出されませんでした(CPUのみで動作します)。",
+  no_storage_detected: "ストレージメディアは検出されませんでした(管理者権限が必要な場合があります)。",
 };
 
 // 日本語辞書のキー集合を「唯一の正」とし、他言語の辞書型をこれに厳密化する。
@@ -93,6 +106,19 @@ const enGB: Dict = {
   apply_warning: "Warning: all existing data on the selected disks will be permanently erased. This cannot be undone.",
   confirm_data_loss_label: "I understand the existing data on the selected disks will be permanently erased",
   apply_button: "Apply to Real Disks",
+  system_status_button: "Compatibility",
+  system_status_title: "Compatibility Status",
+  close_button: "CLOSE",
+  system_status_os: "Current OS",
+  system_status_os_compat: "OS Compatibility",
+  system_status_gpu: "Detected GPU/NPU",
+  system_status_storage: "Detected Storage Media",
+  status_full: "Supported",
+  status_partial: "Partially Supported",
+  status_planned: "Planned",
+  status_unsupported: "Not Supported",
+  no_gpu_detected: "No GPU/NPU detected (running on CPU only).",
+  no_storage_detected: "No storage media detected (administrator privileges may be required).",
 };
 
 const enUS: Dict = {
@@ -122,6 +148,19 @@ const it: Dict = {
   apply_warning: "Attenzione: tutti i dati esistenti sui dischi selezionati verranno cancellati definitivamente. Questa operazione non può essere annullata.",
   confirm_data_loss_label: "Ho compreso che i dati esistenti sui dischi selezionati verranno cancellati definitivamente",
   apply_button: "Applica ai dischi reali",
+  system_status_button: "Compatibilità",
+  system_status_title: "Stato di compatibilità",
+  close_button: "CHIUDI",
+  system_status_os: "Sistema operativo attuale",
+  system_status_os_compat: "Compatibilità dei sistemi operativi",
+  system_status_gpu: "GPU/NPU rilevate",
+  system_status_storage: "Supporti di archiviazione rilevati",
+  status_full: "Supportato",
+  status_partial: "Parzialmente supportato",
+  status_planned: "Pianificato",
+  status_unsupported: "Non supportato",
+  no_gpu_detected: "Nessuna GPU/NPU rilevata (funziona solo su CPU).",
+  no_storage_detected: "Nessun supporto di archiviazione rilevato (potrebbero essere necessari privilegi di amministratore).",
 };
 
 const fr: Dict = {
@@ -146,6 +185,19 @@ const fr: Dict = {
   apply_warning: "Avertissement : toutes les données existantes sur les disques sélectionnés seront définitivement effacées. Cette opération est irréversible.",
   confirm_data_loss_label: "Je comprends que les données existantes sur les disques sélectionnés seront définitivement effacées",
   apply_button: "Appliquer aux disques réels",
+  system_status_button: "Compatibilité",
+  system_status_title: "État de compatibilité",
+  close_button: "FERMER",
+  system_status_os: "Système d'exploitation actuel",
+  system_status_os_compat: "Compatibilité des systèmes d'exploitation",
+  system_status_gpu: "GPU/NPU détectés",
+  system_status_storage: "Supports de stockage détectés",
+  status_full: "Pris en charge",
+  status_partial: "Partiellement pris en charge",
+  status_planned: "Prévu",
+  status_unsupported: "Non pris en charge",
+  no_gpu_detected: "Aucun GPU/NPU détecté (fonctionne uniquement sur le CPU).",
+  no_storage_detected: "Aucun support de stockage détecté (des privilèges administrateur peuvent être requis).",
 };
 
 const de: Dict = {
@@ -170,6 +222,19 @@ const de: Dict = {
   apply_warning: "Warnung: Alle vorhandenen Daten auf den ausgewählten Datenträgern werden endgültig gelöscht. Dieser Vorgang kann nicht rückgängig gemacht werden.",
   confirm_data_loss_label: "Ich verstehe, dass die vorhandenen Daten auf den ausgewählten Datenträgern endgültig gelöscht werden",
   apply_button: "Auf echte Datenträger anwenden",
+  system_status_button: "Kompatibilität",
+  system_status_title: "Kompatibilitätsstatus",
+  close_button: "SCHLIESSEN",
+  system_status_os: "Aktuelles Betriebssystem",
+  system_status_os_compat: "Betriebssystem-Kompatibilität",
+  system_status_gpu: "Erkannte GPU/NPU",
+  system_status_storage: "Erkannte Speichermedien",
+  status_full: "Unterstützt",
+  status_partial: "Teilweise unterstützt",
+  status_planned: "Geplant",
+  status_unsupported: "Nicht unterstützt",
+  no_gpu_detected: "Keine GPU/NPU erkannt (läuft nur auf der CPU).",
+  no_storage_detected: "Keine Speichermedien erkannt (Administratorrechte könnten erforderlich sein).",
 };
 
 const ru: Dict = {
@@ -194,6 +259,19 @@ const ru: Dict = {
   apply_warning: "Внимание: все существующие данные на выбранных дисках будут безвозвратно удалены. Это действие невозможно отменить.",
   confirm_data_loss_label: "Я понимаю, что существующие данные на выбранных дисках будут безвозвратно удалены",
   apply_button: "Применить к реальным дискам",
+  system_status_button: "Совместимость",
+  system_status_title: "Статус совместимости",
+  close_button: "ЗАКРЫТЬ",
+  system_status_os: "Текущая ОС",
+  system_status_os_compat: "Совместимость с ОС",
+  system_status_gpu: "Обнаруженные GPU/NPU",
+  system_status_storage: "Обнаруженные носители",
+  status_full: "Поддерживается",
+  status_partial: "Частично поддерживается",
+  status_planned: "Запланировано",
+  status_unsupported: "Не поддерживается",
+  no_gpu_detected: "GPU/NPU не обнаружены (работа только на CPU).",
+  no_storage_detected: "Носители не обнаружены (может потребоваться запуск от имени администратора).",
 };
 
 const uk: Dict = {
@@ -218,6 +296,19 @@ const uk: Dict = {
   apply_warning: "Попередження: усі наявні дані на вибраних дисках будуть остаточно видалені. Цю дію неможливо скасувати.",
   confirm_data_loss_label: "Я розумію, що наявні дані на вибраних дисках будуть остаточно видалені",
   apply_button: "Застосувати до реальних дисків",
+  system_status_button: "Сумісність",
+  system_status_title: "Стан сумісності",
+  close_button: "ЗАКРИТИ",
+  system_status_os: "Поточна ОС",
+  system_status_os_compat: "Сумісність з ОС",
+  system_status_gpu: "Виявлені GPU/NPU",
+  system_status_storage: "Виявлені носії",
+  status_full: "Підтримується",
+  status_partial: "Частково підтримується",
+  status_planned: "Заплановано",
+  status_unsupported: "Не підтримується",
+  no_gpu_detected: "GPU/NPU не виявлено (робота лише на CPU).",
+  no_storage_detected: "Носії не виявлено (можуть знадобитися права адміністратора).",
 };
 
 const ar: Dict = {
@@ -242,6 +333,19 @@ const ar: Dict = {
   apply_warning: "تحذير: سيتم مسح جميع البيانات الموجودة على الأقراص المحددة بشكل نهائي. لا يمكن التراجع عن هذا الإجراء.",
   confirm_data_loss_label: "أفهم أن البيانات الموجودة على الأقراص المحددة ستُمسح بشكل نهائي",
   apply_button: "التطبيق على الأقراص الحقيقية",
+  system_status_button: "التوافق",
+  system_status_title: "حالة التوافق",
+  close_button: "إغلاق",
+  system_status_os: "نظام التشغيل الحالي",
+  system_status_os_compat: "توافق أنظمة التشغيل",
+  system_status_gpu: "وحدات GPU/NPU المكتشفة",
+  system_status_storage: "وسائط التخزين المكتشفة",
+  status_full: "مدعوم",
+  status_partial: "مدعوم جزئيًا",
+  status_planned: "مخطط له",
+  status_unsupported: "غير مدعوم",
+  no_gpu_detected: "لم يتم اكتشاف أي GPU/NPU (يعمل على المعالج فقط).",
+  no_storage_detected: "لم يتم اكتشاف وسائط تخزين (قد تكون صلاحيات المسؤول مطلوبة).",
 };
 
 const fa: Dict = {
@@ -266,6 +370,19 @@ const fa: Dict = {
   apply_warning: "هشدار: تمام داده‌های موجود روی دیسک‌های انتخاب‌شده برای همیشه پاک خواهد شد. این عملیات قابل بازگشت نیست.",
   confirm_data_loss_label: "متوجه‌ام که داده‌های موجود روی دیسک‌های انتخاب‌شده برای همیشه پاک خواهد شد",
   apply_button: "اعمال روی دیسک‌های واقعی",
+  system_status_button: "سازگاری",
+  system_status_title: "وضعیت سازگاری",
+  close_button: "بستن",
+  system_status_os: "سیستم‌عامل فعلی",
+  system_status_os_compat: "سازگاری سیستم‌عامل‌ها",
+  system_status_gpu: "GPU/NPU شناسایی‌شده",
+  system_status_storage: "رسانه‌های ذخیره‌سازی شناسایی‌شده",
+  status_full: "پشتیبانی می‌شود",
+  status_partial: "پشتیبانی جزئی",
+  status_planned: "برنامه‌ریزی‌شده",
+  status_unsupported: "پشتیبانی نمی‌شود",
+  no_gpu_detected: "هیچ GPU/NPU شناسایی نشد (فقط روی CPU اجرا می‌شود).",
+  no_storage_detected: "هیچ رسانه ذخیره‌سازی شناسایی نشد (ممکن است به دسترسی مدیر نیاز باشد).",
 };
 
 const DICTS: Record<LangCode, Dict> = {

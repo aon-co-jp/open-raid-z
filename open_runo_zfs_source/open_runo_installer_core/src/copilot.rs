@@ -249,11 +249,13 @@ mod tests {
                     path: format!("\\\\.\\PhysicalDrive{i}"),
                     index: i as u32,
                     size_bytes,
+                    media_type: "Unknown".to_string(),
                 })
                 .collect(),
             accelerator: AcceleratorInfo {
                 kind: accel_kind.to_string(),
                 description: "test".to_string(),
+                vendor: "Unknown".to_string(),
             },
             cpu_cores,
             local_llm: LocalLlmInfo {
