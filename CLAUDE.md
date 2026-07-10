@@ -27,6 +27,10 @@
 
 - **open-runo**(元はWunderGraph Cosmoを参考にしたが、現在はPure Rustで
   ゼロから再実装する方針。WEBサイト開発用): https://github.com/aon-co-jp/open-runo
+- **poem-cosmo-tauri**(open-runo → poem-runo と分岐した最新の後継リポジトリ。
+  Poem(バックエンド)+ Tauri(フロントエンド)+ Cosmo(着想元・実装には
+  絶対使用しない)の統合を名前に明示。今後の開発の主軸):
+  https://github.com/aon-co-jp/poem-cosmo-tauri
 - **open-web-server**: https://github.com/aon-co-jp/open-web-server
 - **aruaru-db**: https://github.com/aon-co-jp/aruaru-db
 - **open-raid-z**(このリポジトリ): https://github.com/aon-co-jp/open-raid-z
