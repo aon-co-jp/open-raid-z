@@ -4,32 +4,36 @@
 `aruaru-db`)で開発・保守を行う際は、以下を基本方針とする。作業ドライブは
 `F:\open-runo`(E:ドライブは2026-07-10に消失、以後Fが実体)。
 
+## 方針転換(2026-07-10)
+
+ユーザー指示により以下へ転換。**Tauri・Poem・WunderGraph Cosmo(有料版含む)は
+いずれも不要**。`poem-cosmo-tauri`は廃止し、`open-runo`1リポジトリに統合する。
+
 ## フロントエンド
 
-- **Tauri**(メインフレームワーク): https://v2.tauri.app/ | https://github.com/tauri-apps/tauri
-- HTML5 / CSS3
-- **TypeScript**: 必要最低限・最小限の範囲に留める(ロジックはRust側に置き、
-  TypeScript側はDOM操作・`invoke()`呼び出し等の薄い配線のみとする方針)
-- **Bootstrap**
+- 専用フレームワークなし。必要になった場合はHTML5/CSS3 + 必要最低限のTypeScriptで
+  薄いUIを都度用意する方針(Tauriは使わない)。
 
 ## バックエンド・コア
 
-- **Rust**(メイン言語): https://www.rust-lang.org/ja/ | https://github.com/rust-lang/rust
-- **Poem**(Webフレームワーク): https://docs.rs/poem/latest/poem/ | https://github.com/poem-web/poem
+- **Rust**(メイン言語、標準ライブラリ中心): https://www.rust-lang.org/ja/ | https://github.com/rust-lang/rust
+- **tokio** + **hyper**(Webフレームワークなしで直接HTTPサーバを自前実装):
+  https://tokio.rs/ | https://docs.rs/hyper/latest/hyper/
+- Poemを含む既存Webフレームワークは今後使用しない。既存のPoem依存コードは
+  順次tokio/hyper直接実装へ移行する。
 
 ## API設計思想(参考・概念のみ)
 
 - **VersionLess API**という考え方を参考にする(WunderGraphのブログ/podcast参照)。
 - **WunderGraph Cosmo**: あくまで**参考・着想元としてのみ**参照する。
-  **実装には絶対に使用しない**。https://github.com/wundergraph/cosmo
+  **有料版を含め実装には絶対に使用しない**。https://github.com/wundergraph/cosmo
 
 ## 関連プロジェクト
 
-- **open-runo**(元はWunderGraph Cosmoを参考にしたが、現在はPure Rustで
-  ゼロから再実装する方針。WEBサイト開発用): https://github.com/aon-co-jp/open-runo
-- **poem-cosmo-tauri**(open-runo → poem-runo と分岐した最新の後継リポジトリ。
-  Poem(バックエンド)+ Tauri(フロントエンド)+ Cosmo(着想元・実装には
-  絶対使用しない)の統合を名前に明示。今後の開発の主軸):
+- **open-runo**(唯一の正本リポジトリ。Pure Rust + tokio/hyper直接実装で
+  ゼロから再実装する方針。WEBサイト開発用。poem-cosmo-tauriはここに統合済み):
+  https://github.com/aon-co-jp/open-runo
+- **poem-cosmo-tauri**(2026-07-10付けで廃止・open-runoへ統合。今後更新しない):
   https://github.com/aon-co-jp/poem-cosmo-tauri
 - **open-web-server**: https://github.com/aon-co-jp/open-web-server
 - **aruaru-db**: https://github.com/aon-co-jp/aruaru-db
