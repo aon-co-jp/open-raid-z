@@ -79,11 +79,15 @@ impl ForeignFatVolume {
 
         for entry in dir.iter() {
             let entry = entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
-            entries.push(ForeignDirEntry {
-                name: entry.file_name(),
-                is_dir: entry.is_dir(),
-                size_bytes: entry.len(),
-            });
+            let name = entry.file_name();
+            // ルート直下と異なり、非ルートディレクトリは`fatfs`が`.`/`..`を
+            // 実エントリとして返す(FATのディレクトリ領域そのものに含まれる
+            // ため)。呼び出し側(CLIの`ls`・FUSEの`readdir`)は`.`/`..`を
+            // 自前で合成する前提のため、ここでは除外する。
+            if name == "." || name == ".." {
+                continue;
+            }
+            entries.push(ForeignDirEntry { name, is_dir: entry.is_dir(), size_bytes: entry.len() });
         }
         Ok(entries)
     }
