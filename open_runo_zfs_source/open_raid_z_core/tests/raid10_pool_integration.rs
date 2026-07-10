@@ -11,7 +11,11 @@ use open_raid_z_core::pool::Pool;
 use open_raid_z_core::raid10::Raid10Vdev;
 use std::path::PathBuf;
 
-const CHUNK_SIZE: usize = 64;
+// 512(以前は64): メタデータ予約ストライプ数はチャンクサイズに反比例して
+// 増える(`pool.rs`の`superblock_stripe_count`参照)。64バイトのように
+// 極端に小さいチャンクサイズは実運用ではまず使われない非現実的な値であり、
+// 予約比率が過大にならない程度の現実的な値へ引き上げた。
+const CHUNK_SIZE: usize = 512;
 const STRIPES_PER_GROUP: u64 = 8;
 
 fn scratch_dir(name: &str) -> PathBuf {
@@ -43,9 +47,9 @@ fn pool_creates_and_round_trips_a_dataset_on_top_of_raid10() {
     // CoW書き込みは常に新しい空きストライプへ先に書いてから参照を切り替えるため、
     // データセットにはプール容量を丸ごと割り当てず、CoW用の空き(1ストライプ以上)を
     // 残しておく必要がある(RaidZVdevでもRaid10Vdevでも共通のPoolの制約)。
-    // さらにストライプ0はメタデータ(スーパーブロック)用に予約されているため、
-    // 合計2ストライプぶんを差し引く。
-    let dataset_stripes = total_stripes - 2;
+    // メタデータ予約ストライプ数は`total_stripes`に応じて動的に決まるため、
+    // ハードコードせず実際の空き容量から逆算する。
+    let dataset_stripes = pool.usage().free_stripes - 1;
     pool.create_dataset("tank").unwrap();
     pool.grow_dataset("tank", dataset_stripes * CHUNK_SIZE as u64).unwrap();
     assert_eq!(pool.dataset_size("tank").unwrap(), dataset_stripes * CHUNK_SIZE as u64);
