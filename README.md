@@ -16,3 +16,6 @@ Language-specific READMEs live in the [`README/`](README/README-Japan.md) folder
 - [فارسی (Iran/Persian)](<README/README-Iran(Persian).md>)
 
 このプロジェクトの経緯・引き継ぎ情報は [CHAT_HANDOFF.md](CHAT_HANDOFF.md) を参照してください。
+
+既存のZFS/NTFS/ext4/他社製RAID等から`open-raid-z`へデータを移行する手順は
+[MIGRATION.md](MIGRATION.md) を参照してください。
