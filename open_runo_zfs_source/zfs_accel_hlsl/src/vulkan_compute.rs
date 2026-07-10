@@ -27,6 +27,23 @@ impl From<vk::Result> for VulkanComputeError {
 
 pub type VulkanComputeResult<T> = Result<T, VulkanComputeError>;
 
+/// 1ワード=4バイト(u32)としてバイト列を読み書きするためのヘルパー。
+/// `crate::compute`(D3D12版、`gpu` feature専用)にある同名関数と全く同じ
+/// 実装だが、`vulkan` featureのみ有効な(=`gpu`が無効な)ビルドでも使える
+/// よう、こちらは`gpu`に依存せず定義する。
+pub(crate) fn bytes_to_words(bytes: &[u8]) -> Vec<u32> {
+    assert_eq!(bytes.len() % 4, 0, "データ長は4バイトの倍数である必要があります");
+    bytes.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+
+pub(crate) fn words_to_bytes(words: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(words.len() * 4);
+    for w in words {
+        out.extend_from_slice(&w.to_le_bytes());
+    }
+    out
+}
+
 fn find_memory_type(
     mem_props: &vk::PhysicalDeviceMemoryProperties,
     type_bits: u32,

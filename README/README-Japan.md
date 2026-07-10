@@ -46,7 +46,7 @@ id/class名など、このプロジェクト自身が定義する識別子は、
 - **NTFS互換**: ACL(NFSv4⇔NTFS)・UID/GID⇔SIDマッピング(ローカルSAM/ADドメインのRIDベース決定論的マッピング)
 - **exFAT互換**: ファイル属性・タイムスタンプの相互変換、4GB超ファイル/大容量ボリューム対応
 - **GPU/NPUハードウェアアクセラレーション**: DirectX 12 Compute + DirectMLでRAID-Z1/Z2/Z3のパリティ生成をオフロード(ハードウェアが無い場合はCPUへ自動フォールバック)。さらに、GF(2^8)の係数倍をGF(2)ビット行列に変換して1回のDirectML GEMM呼び出しへ帰着させる方式(`zfs_accel_hlsl::dml_gemm`)も実装し、実機GPUで正しさを検証済み(実機NPUでは未検証)。この仕組みはscrub/resilverが破損を検知した際の復旧計算(=パリティチェック)にも実際に配線済み。NPU専用のシェーダ経路(`raidnpu_*.hlsl`)も用意し、将来の実機NPUでの検証・最適化に備えている
-- **Vulkan Computeアクセラレーション(Windows以外)**: DirectX/DirectMLはWindows専用APIのため、Linux/Mac/Android向けに`ash`クレート経由のVulkan Compute実装(`zfs_accel_hlsl::vulkan_compute`、`vulkan` feature)を追加。RAID-Z1のXORパリティ生成が実機GPU(NVIDIA GeForce GT 730、Vulkan 1.2)で正しく動作することを確認済み
+- **Vulkan Computeアクセラレーション(Windows以外)**: DirectX/DirectMLはWindows専用APIのため、Linux/Mac/Android向けに`ash`クレート経由のVulkan Compute実装(`zfs_accel_hlsl::vulkan_compute`、`vulkan` feature)を追加。RAID-Z1のXORパリティ生成に加え、RAID-Z2/Z3(P/Q/Rパリティ生成)も`raidz2_parity.comp`/`raidz3_parity.comp`(GLSL)経由でVulkan Compute化済み。全て実機GPU(NVIDIA GeForce GT 730、Vulkan 1.2)でCPU参照実装と一致することを確認済み
 - **既存フォーマットの読み書きブリッジ(`foreign_fs`)**: open-raid-z独自のプール形式とは別に、他OSが作成した既存のFAT32/FAT16・exFATボリューム(USBメモリ/microSD/CFカード等)を読み書き両対応で扱える(`hadris-fat`クレート採用により、exFATも読み書き両対応)。`orzctl foreign`(`ls`/`cat`/`put`)から操作できる
 - **インストーラーの「対応状況」パネル**: ボタンで開閉できるパネルで、現在のOSの対応状況、検出された全GPU/NPU(Intel/AMD/NVIDIA/Qualcommベンダー判定付き、複数対応)、検出されたストレージメディアの種別(HDD/SSD/NVMe/USB/SD/CF)を一覧表示
 - **実ディスクへのzpool適用**: インストーラーのzpool初期化ウィザードに、スクラッチイメージでのプレビューだけでなく実際の物理ディスク(`\\.\PhysicalDriveN`)へ適用するコマンド(`init_zpool_apply`)を追加。既存データの消去を明示的に確認するフラグが無いと動作しない安全設計
