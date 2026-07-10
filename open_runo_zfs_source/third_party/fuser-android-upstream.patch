@@ -1,0 +1,234 @@
+--- a/build.rs
++++ b/build.rs
+@@ -9,7 +9,7 @@
+ 
+     if matches!(
+         target_os.as_str(),
+-        "linux" | "freebsd" | "dragonfly" | "openbsd" | "netbsd"
++        "linux" | "android" | "freebsd" | "dragonfly" | "openbsd" | "netbsd"
+     ) && cfg!(not(feature = "libfuse"))
+     {
+         println!("cargo::rustc-cfg=fuser_mount_impl=\"pure-rust\"");
+--- a/src/channel.rs
++++ b/src/channel.rs
+@@ -63,7 +63,7 @@
+     /// requests across all cloned fds.
+     ///
+     /// Requires Linux 4.5+. Returns an error on older kernels or non-Linux.
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub(crate) fn clone_fd(&self) -> io::Result<Channel> {
+         use std::os::fd::AsRawFd;
+ 
+--- a/src/passthrough.rs
++++ b/src/passthrough.rs
+@@ -36,7 +36,7 @@
+ 
+ impl BackingId {
+     pub(crate) fn create(channel: &Arc<DevFuse>, fd: impl AsFd) -> std::io::Result<Self> {
+-        if !cfg!(target_os = "linux") {
++        if !cfg!(any(target_os = "linux", target_os = "android")) {
+             return Err(std::io::Error::new(
+                 std::io::ErrorKind::Other,
+                 "backing IDs are only supported on Linux",
+--- a/src/rename_flags.rs
++++ b/src/rename_flags.rs
+@@ -15,6 +15,15 @@
+         /// Overlay/union-specific operation.
+         #[cfg(target_os = "linux")]
+         const RENAME_WHITEOUT = libc::RENAME_WHITEOUT;
++        // Android(bionic libc)では`libc`クレートの`RENAME_*`定数がi32型で
++        // 提供される(glibcではu32)ため、`as u32`キャストが必要。値自体は
++        // Linuxカーネルのrenameat2(2)と同一。
++        #[cfg(target_os = "android")]
++        const RENAME_NOREPLACE = libc::RENAME_NOREPLACE as u32;
++        #[cfg(target_os = "android")]
++        const RENAME_EXCHANGE = libc::RENAME_EXCHANGE as u32;
++        #[cfg(target_os = "android")]
++        const RENAME_WHITEOUT = libc::RENAME_WHITEOUT as u32;
+     }
+ }
+ 
+--- a/src/session.rs
++++ b/src/session.rs
+@@ -253,7 +253,7 @@
+ 
+         let n_threads = config.n_threads.unwrap_or(1);
+ 
+-        if !cfg!(target_os = "linux") && n_threads != 1 {
++        if !cfg!(any(target_os = "linux", target_os = "android")) && n_threads != 1 {
+             // TODO: check whether it works on macOS/FreeBSD and enable if it works.
+             return Err(io::Error::other(
+                 "n_threads != 1 is only supported on Linux",
+@@ -270,12 +270,12 @@
+ 
+         for _ in 0..n_threads_minus_one {
+             if config.clone_fd {
+-                #[cfg(target_os = "linux")]
++                #[cfg(any(target_os = "linux", target_os = "android"))]
+                 {
+                     channels.push(ch.clone_fd()?);
+                     continue;
+                 }
+-                #[cfg(not(target_os = "linux"))]
++                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                 {
+                     return Err(io::Error::other("clone_fd is only supported on Linux"));
+                 }
+--- a/src/mnt/fuse3.rs
++++ b/src/mnt/fuse3.rs
+@@ -80,7 +80,7 @@
+             // Linux always returns EPERM for non-root users.  We have to let the
+             // library go through the setuid-root "fusermount -u" to unmount.
+             if err == nix::errno::Errno::EPERM {
+-                #[cfg(target_os = "linux")]
++                #[cfg(any(target_os = "linux", target_os = "android"))]
+                 unsafe {
+                     fuse_session_unmount(self.fuse_session);
+                     fuse_session_destroy(self.fuse_session);
+--- a/src/mnt/fuse_pure.rs
++++ b/src/mnt/fuse_pure.rs
+@@ -113,7 +113,7 @@
+     // The direct mount path is currently implemented only for Linux and macOS.
+     // Other supported Unix targets (such as the BSDs) rely on the setuid
+     // mount helper, which mirrors libfuse's approach.
+-    if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
++    if cfg!(any(target_os = "linux", target_os = "android")) || cfg!(target_os = "macos") {
+         let res = fuse_mount_sys(mountpoint, options, acl)?;
+         match res {
+             Some(file) => return Ok((file, None)),
+@@ -127,7 +127,7 @@
+ }
+ 
+ fn fuse_unmount_pure(mountpoint: &CStr) {
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     {
+         if nix::mount::umount2(mountpoint, nix::mount::MntFlags::MNT_DETACH).is_ok() {
+             return;
+@@ -375,7 +375,7 @@
+ }
+ 
+ // If returned option is none. Then fusermount binary should be tried
+-#[cfg(any(target_os = "linux", target_os = "macos"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+ fn fuse_mount_sys(
+     mountpoint: &OsStr,
+     options: &[MountOption],
+@@ -423,14 +423,14 @@
+         mount_options.push_str(acl_option);
+     }
+ 
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     let mut flags = nix::mount::MsFlags::empty();
+     #[cfg(target_os = "macos")]
+     let mut flags = nix::mount::MntFlags::empty();
+ 
+     if !options.contains(&MountOption::Dev) {
+         // Default to nodev
+-        #[cfg(target_os = "linux")]
++        #[cfg(any(target_os = "linux", target_os = "android"))]
+         {
+             flags |= nix::mount::MsFlags::MS_NODEV;
+         }
+@@ -441,7 +441,7 @@
+     }
+     if !options.contains(&MountOption::Suid) {
+         // Default to nosuid
+-        #[cfg(target_os = "linux")]
++        #[cfg(any(target_os = "linux", target_os = "android"))]
+         {
+             flags |= nix::mount::MsFlags::MS_NOSUID;
+         }
+@@ -472,7 +472,7 @@
+         source = name;
+     }
+ 
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     let result = nix::mount::mount(
+         Some(source),
+         mountpoint,
+@@ -495,7 +495,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
++#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+ fn fuse_mount_sys(
+     _mountpoint: &OsStr,
+     _options: &[MountOption],
+@@ -504,7 +504,7 @@
+     Ok(None)
+ }
+ 
+-#[cfg(any(target_os = "linux", target_os = "macos"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+ #[derive(PartialEq)]
+ pub(crate) enum MountOptionGroup {
+     KernelOption,
+@@ -512,7 +512,7 @@
+     Fusermount,
+ }
+ 
+-#[cfg(any(target_os = "linux", target_os = "macos"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+ pub(crate) fn option_group(option: &MountOption) -> MountOptionGroup {
+     match option {
+         MountOption::FSName(_) => MountOptionGroup::Fusermount,
+@@ -536,7 +536,7 @@
+     }
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ pub(crate) fn option_to_flag(option: &MountOption) -> io::Result<nix::mount::MsFlags> {
+     match option {
+         MountOption::Dev => Ok(nix::mount::MsFlags::empty()), // There is no option for dev. It's the absence of NoDev
+--- a/src/mnt/mod.rs
++++ b/src/mnt/mod.rs
+@@ -289,7 +289,7 @@
+         // Linux supports MNT_DETACH, so we expect unmount to succeed even if the FS
+         // is busy.  Other systems don't so the unmount may fail and we will still
+         // have the mount listed.  The mount will get cleaned up later.
+-        #[cfg(target_os = "linux")]
++        #[cfg(any(target_os = "linux", target_os = "android"))]
+         assert!(detached);
+ 
+         if detached {
+--- a/src/ll/ioctl.rs
++++ b/src/ll/ioctl.rs
+@@ -6,7 +6,7 @@
+ }
+ 
+ pub(crate) const FUSE_DEV_IOC_MAGIC: u8 = 229;
+-#[cfg_attr(not(target_os = "linux"), expect(dead_code))]
++#[cfg_attr(not(any(target_os = "linux", target_os = "android")), expect(dead_code))]
+ pub(crate) const FUSE_DEV_IOC_CLONE: u8 = 0;
+ pub(crate) const FUSE_DEV_IOC_BACKING_OPEN: u8 = 1;
+ pub(crate) const FUSE_DEV_IOC_BACKING_CLOSE: u8 = 2;
+--- a/src/ll/mod.rs
++++ b/src/ll/mod.rs
+@@ -231,17 +231,17 @@
+     pub const EFTYPE: Errno = errno!(libc::EFTYPE);
+ 
+     /// No data available
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub const ENODATA: Errno = errno!(libc::ENODATA);
+     #[doc = no_xattr_doc!()]
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub const NO_XATTR: Errno = Self::ENODATA;
+ 
+     /// Attribute not found
+-    #[cfg(not(target_os = "linux"))]
++    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+     pub const ENOATTR: Errno = errno!(libc::ENOATTR);
+     #[doc = no_xattr_doc!()]
+-    #[cfg(not(target_os = "linux"))]
++    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+     pub const NO_XATTR: Errno = Self::ENOATTR;
+ 
+     /// Make errno from `i32`, defaulting to `EIO` if it is not positive.

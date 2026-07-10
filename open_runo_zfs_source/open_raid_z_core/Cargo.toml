@@ -40,19 +40,31 @@ hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
 # LinuxのFUSE(Filesystem in Userspace)への実Rustバインディング。
-#
-# 【重要・Android未対応の理由】Androidも`target_os`こそ別値だがLinuxカーネル
-# ベースであり、`/dev/fuse`のプロトコル自体はLinuxと同一のはずだが、
-# `fuser` 0.17のbuild.rsは`pure-rust`実装を`linux`/`freebsd`/`dragonfly`/
-# `openbsd`/`netbsd`にしか許可しておらず、`android`はこのリストに
-# 含まれていない。そのため`android`向けにこの依存を有効化すると
-# libfuse2/libfuse3をpkg-config経由で要求してしまい、Android NDK環境には
-# 存在しないためビルドが失敗する(このセッションで実機無しに`cargo check
-# --target aarch64-linux-android`で確認済み)。Android対応には
-# `fuser`側へのパッチ(pure-rust対象へ`android`を追加、実際には
-# プロトコルレベルで動くはず)が必要で、今回は見送った。詳細は
-# `contrib/systemd/MULTIPLATFORM_ROADMAP.md`参照。
 fuser = { version = "0.17", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Android版の実マウント(Linux版と同じ`fuse_mount.rs`コードパスを共有)。
+#
+# 上流の`fuser` 0.17は、build.rsが`pure-rust`実装を`linux`/`freebsd`/
+# `dragonfly`/`openbsd`/`netbsd`にしか許可しておらず`android`が
+# 含まれていないため、素の`fuser`をAndroidターゲットで有効化すると
+# libfuse2/libfuse3をpkg-config経由で要求してしまい、Android NDK環境には
+# 存在しないためビルドが失敗する(`/dev/fuse`のプロトコル自体はLinuxと
+# 同一で、動作原理上は問題ないはずというのが出発点)。
+#
+# `../third_party/fuser-0.17.0-android-patch`に、build.rsのpure-rust
+# 許可リストへ`android`を追加し、かつソース中の`target_os = "linux"`
+# gate(mount(2)呼び出し・renameat2フラグ・ioctl番号等)を
+# `any(target_os = "linux", target_os = "android")`へ機械的に拡張した
+# パッチ済みコピーを用意し、それを直接パスで参照する(上流PR送付前の
+# 検証用フォーク。アップストリームへ提案する際はここから差分を切り出す)。
+# Cargoの制約上、`fuser`という同じ依存名を異なるソース(レジストリ/パス)
+# でOSごとに切り替えることはできない(`cargo metadata`がエラーにする)ため、
+# ここでは別名`fuser_android`で依存させ、`lib.rs`側で
+# `extern crate fuser_android_patch as fuser;`により`fuser`という
+# クレート名へエイリアスすることで、`fuse_mount.rs`等の`use fuser::...`を
+# Linux/macOSと共通のコードのまま使えるようにしている。
+fuser_android = { package = "fuser_android_patch", path = "../third_party/fuser-0.17.0-android-patch", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Mac版の実マウント(fuse_mount.rs参照、Linux版と同じコードパスを共有)。
@@ -85,7 +97,7 @@ gpu_accel = ["zfs_accel_hlsl/gpu"]
 # Linux版の実マウント(FUSE経由)。既定では無効(winfsp_backend/gpu_accelと
 # 同様、明示的に有効化する)。Linux以外のターゲットでは`fuser`クレート自体が
 # 依存関係として存在しないため、他OSでこのfeatureを有効化することはできない。
-fuse_backend = ["dep:fuser"]
+fuse_backend = ["dep:fuser", "dep:fuser_android"]
 # 既存OSの既存フォーマット(FAT32等)を読み書きするブリッジ機能。
 # ネイティブライブラリを要さないため全OSで有効化できる。
 foreign_fs = ["dep:fatfs", "dep:fscommon", "dep:hadris-fat"]

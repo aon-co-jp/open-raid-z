@@ -141,3 +141,39 @@ has not been configured to support cross-compilation`)。
   よりも根が深く、**ライブラリレベルの障害(`fuser`が非対応)を
   まず解消する必要がある**ことが判明した。次回はこの障害の解消
   (upstream提案またはフォーク)から着手するのが妥当。
+
+## 追記2: Android対応のライブラリレベル障害を解消(フォーク・クロスコンパイル確認済み)(2026-07-10)
+
+上記「今後の対応候補」の2(フォーク)を実施した。
+
+- `open_runo_zfs_source/third_party/fuser-0.17.0-android-patch/`に、
+  `fuser` 0.17.0のパッチ済みフォークを配置(パッケージ名は
+  `fuser_android_patch`)。
+  - `build.rs`のpure-rust許可OS一覧へ`android`を追加。
+  - `src/`以下の`target_os = "linux"`ゲート(`mount()`呼び出し、
+    `renameat2`フラグ、ioctl番号定義等)を機械的に
+    `any(target_os = "linux", target_os = "android")`へ拡張。
+  - `src/rename_flags.rs`のみ、bionic libcの`libc`クレートで
+    `RENAME_*`定数がi32型になる(glibcではu32)差異を`as u32`
+    キャストで吸収。
+  - 詳細・アップストリーム提案用diffは
+    `third_party/README.md`・`third_party/fuser-android-upstream.patch`
+    参照。
+- Cargoの制約(同一依存名で異なるソース(レジストリ/パス)をOSごとに
+  切り替えることはできない)のため、android向けは別の依存キー
+  `fuser_android`とし、`lib.rs`側で
+  `extern crate fuser_android as fuser;`によりクレート名を
+  `fuser`へエイリアスすることで、`fuse_mount.rs`等の既存コードは
+  Linux/macOS/Androidの3OSで無変更のまま使い回せるようにした。
+- 検証: `cargo ndk -t arm64-v8a check --no-default-features --features
+  fuse_backend`・`--features fuse_backend,foreign_fs`ともに成功
+  (`fuse_mount`・`foreign_fuse_mount`・`orzctl`バイナリ含む)。
+  既存のWindows/Linux向け`cargo test --no-default-features`にも
+  リグレッション無し。
+- 未検証: 実機Android端末上での実際のマウント動作(root権限・
+  SELinuxポリシー起因の追加制約が別途あり得るため、上記「対応候補3」
+  は引き続き残課題)。
+
+これにより、「ライブラリレベルの障害(`fuser`が非対応)」自体は
+解消された。次の残課題は、実機(rooted Android端末またはAVD)での
+実際のマウント検証。
