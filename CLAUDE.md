@@ -4,37 +4,43 @@
 `aruaru-db`)で開発・保守を行う際は、以下を基本方針とする。作業ドライブは
 `F:\open-runo`(E:ドライブは2026-07-10に消失、以後Fが実体)。
 
-## 方針転換(2026-07-10)
+## 方針転換(2026-07-10、最終確定)
 
-ユーザー指示により以下へ転換。**Tauri・Poem・WunderGraph Cosmo(有料版含む)は
-いずれも不要**。`poem-cosmo-tauri`は廃止し、`open-runo`1リポジトリに統合する。
+ユーザー指示により以下へ転換・確定。**Tauri・Poem・WunderGraph Cosmo(有料版
+含む)を外部パッケージ/ライブラリとして直接依存させることはしない**。ただし
+各ツールが提供する**機能・API形状・体験には互換性を保ち**、Rust標準ライブラリ
++ tokio/hyper で自前実装して置き換える(依存だけを断ち、機能面の互換性は
+維持する)。**正本(一本化先)は `poem-cosmo-tauri`**。分岐していた
+`open-runo` はそちらへ統合し、今後更新しない。
 
 ## フロントエンド
 
-- 専用フレームワークなし。必要になった場合はHTML5/CSS3 + 必要最低限のTypeScriptで
-  薄いUIを都度用意する方針(Tauriは使わない)。
+- Tauriパッケージには依存しない。ただしTauriのデスクトップUI体験・
+  `invoke()`的なコマンド呼び出しとは互換性のあるインターフェースを
+  HTML5/CSS3 + 必要最低限のTypeScriptで自前実装する。
 
 ## バックエンド・コア
 
 - **Rust**(メイン言語、標準ライブラリ中心): https://www.rust-lang.org/ja/ | https://github.com/rust-lang/rust
 - **tokio** + **hyper**(Webフレームワークなしで直接HTTPサーバを自前実装):
   https://tokio.rs/ | https://docs.rs/hyper/latest/hyper/
-- Poemを含む既存Webフレームワークは今後使用しない。既存のPoem依存コードは
-  順次tokio/hyper直接実装へ移行する。
+- Poemパッケージには依存しないが、Poemのルーティング/ハンドラAPI形状とは
+  互換性のあるインターフェースを維持しながらtokio/hyper直接実装へ移行する。
 
 ## API設計思想(参考・概念のみ)
 
 - **VersionLess API**という考え方を参考にする(WunderGraphのブログ/podcast参照)。
-- **WunderGraph Cosmo**: あくまで**参考・着想元としてのみ**参照する。
-  **有料版を含め実装には絶対に使用しない**。https://github.com/wundergraph/cosmo
+- **WunderGraph Cosmo**: パッケージとしては直接依存させない。GraphQL
+  Federation / VersionlessAPI というAPI形状・コンセプトのみ参考にし、
+  Rust標準+tokio/hyperで互換性を保ちつつ自前実装する。
+  https://github.com/wundergraph/cosmo
 
 ## 関連プロジェクト
 
-- **open-runo**(唯一の正本リポジトリ。Pure Rust + tokio/hyper直接実装で
-  ゼロから再実装する方針。WEBサイト開発用。poem-cosmo-tauriはここに統合済み):
+- **poem-cosmo-tauri**(正本・一本化先リポジトリ。Pure Rust + tokio/hyper
+  直接実装。WEBサイト開発用): https://github.com/aon-co-jp/poem-cosmo-tauri
+- **open-runo**(2026-07-10付けで廃止・poem-cosmo-tauriへ統合。今後更新しない):
   https://github.com/aon-co-jp/open-runo
-- **poem-cosmo-tauri**(2026-07-10付けで廃止・open-runoへ統合。今後更新しない):
-  https://github.com/aon-co-jp/poem-cosmo-tauri
 - **open-web-server**: https://github.com/aon-co-jp/open-web-server
 - **aruaru-db**: https://github.com/aon-co-jp/aruaru-db
 - **open-raid-z**(このリポジトリ): https://github.com/aon-co-jp/open-raid-z
