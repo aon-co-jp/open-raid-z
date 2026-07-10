@@ -148,6 +148,11 @@ Der aktuelle Stand hinsichtlich Machbarkeit, Priorisierung und technischer Einsc
 
 Die GPU-/NPU-Beschleunigung wird schrittweise die jeweils native API des Betriebssystems übernehmen, wo DirectX nicht verfügbar ist (z. B. Metal Performance Shaders auf dem Mac, NNAPI auf Android). Zudem wird die Interoperabilität mit RAID-Formaten anderer Anbieter (z. B. Linux mdadm, Windows Storage Spaces) als künftiger Umfangspunkt in Betracht gezogen.
 
+## Migration von einer bestehenden Umgebung
+
+Anleitungen zur Migration von Daten aus einer bestehenden ZFS-/NTFS-/ext4-/anderen RAID-Umgebung zu `open-raid-z` finden Sie in [MIGRATION.md](../MIGRATION.md).
+
+
 ## Lizenz
 
 MPL-2.0

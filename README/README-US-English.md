@@ -144,6 +144,11 @@ cargo tauri dev / cargo tauri build
 
 This project aims to make open-raid-z itself readable and writable on Windows/Mac/Linux/Android/iOS/iPad, and interoperable with existing other-OS formats (NTFS/exFAT/FAT32/ext4/APFS, etc). Current feasibility, priority, and technical constraints — most notably that Apple does not allow third-party block-device RAID on iOS/iPad, so support there will likely be limited to browsing via a File Provider Extension — are recorded in [`MULTIPLATFORM_ROADMAP.md`](open_runo_zfs_source/open_raid_z_core/contrib/systemd/MULTIPLATFORM_ROADMAP.md). GPU/NPU acceleration will progressively adopt each OS's native API where DirectX isn't available (e.g. Metal Performance Shaders on Mac, NNAPI on Android). Interoperability with third-party RAID formats (e.g. Linux mdadm, Windows Storage Spaces) is also being considered as a future scope item.
 
+## Migrating from an existing setup
+
+For steps to migrate data from an existing ZFS/NTFS/ext4/other RAID setup into `open-raid-z`, see [MIGRATION.md](../MIGRATION.md).
+
+
 ## License
 
 MPL-2.0

@@ -167,6 +167,11 @@ File Provider Extension経由の閲覧に限定される見込み)は
 対応していく方針。また、mdadm(Linux)やStorage Spaces(Windows)といった
 **他社製RAID形式との相互運用**も将来的な対応範囲として検討中。
 
+## 既存環境からのお引越し(データ移行)
+
+既存のZFS/NTFS/ext4/他社製RAID等から`open-raid-z`へデータを移行する手順は[MIGRATION.md](../MIGRATION.md)を参照してください。
+
+
 ## ライセンス
 
 MPL-2.0
