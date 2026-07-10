@@ -198,11 +198,12 @@ fn run_mount(_args: Args) -> Result<(), String> {
 const HELP_FOREIGN: &str = r#"orzctl foreign - open-raid-z以外の既存フォーマットを読み書きする
 
 使い方:
-  orzctl foreign [--format <FMT>] ls  <VOLUME> [DIR]         DIR(省略時はルート"/")の一覧を表示
-  orzctl foreign [--format <FMT>] cat <VOLUME> <FILE> [OUT]  FILEの内容を標準出力(またはOUTファイル)へ書き出す
-  orzctl foreign [--format <FMT>] put <VOLUME> <FILE> <IN>   ローカルファイルINの内容をFILEとして書き込む(新規作成/上書き)
+  orzctl foreign [--format <FMT>] ls    <VOLUME> [DIR]           DIR(省略時はルート"/")の一覧を表示
+  orzctl foreign [--format <FMT>] cat   <VOLUME> <FILE> [OUT]    FILEの内容を標準出力(またはOUTファイル)へ書き出す
+  orzctl foreign [--format <FMT>] put   <VOLUME> <FILE> <IN>     ローカルファイルINの内容をFILEとして書き込む(新規作成/上書き)
+  orzctl foreign [--format <FMT>] mount <VOLUME> <MOUNTPOINT>    実際にLinux/macOS上へマウントする(Windows未対応)
 
-<FMT>には fat32(既定) または exfat を指定する。どちらも読み書き両対応。
+<FMT>には fat32(既定) または exfat を指定する。どちらも読み書き両対応(`mount`はディレクトリ階層・作成/削除/リネームにも対応。exFATはリネーム・サブディレクトリ書き込み未対応)。
 
 <VOLUME>には、既存のFAT32/FAT16/exFATパーティション(実デバイスパス。例:
 Linuxの"/dev/sdb1"、Windowsの"\\.\PhysicalDrive1"相当のボリューム)、
@@ -306,8 +307,41 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
             println!("'{in_path}'を'{volume_path}'内の'{file_path}'として書き込みました。");
             Ok(())
         }
+        "mount" => {
+            let mountpoint = rest.get(2).copied().ok_or_else(|| format!("<MOUNTPOINT>が必要です\n\n{HELP_FOREIGN}"))?;
+            run_foreign_mount(&format, volume_path, mountpoint)
+        }
         other => Err(format!("未知のforeignサブコマンドです: '{other}'\n\n{HELP_FOREIGN}")),
     }
+}
+
+/// `orzctl foreign [--format <FMT>] mount <VOLUME> <MOUNTPOINT>`。
+/// 実際にLinux/macOS上へマウントし、他ターミナルから`fusermount3 -u`
+/// (macOSは`umount`)されるまでフォアグラウンドで待機する。
+#[cfg(all(any(target_os = "linux", target_os = "macos"), feature = "fuse_backend", feature = "foreign_fs"))]
+fn run_foreign_mount(format: &str, volume_path: &str, mountpoint: &str) -> Result<(), String> {
+    use open_raid_z_core::foreign_fs::{ForeignExfatVolume, ForeignFatVolume};
+    use open_raid_z_core::foreign_fuse_mount::{mount_foreign_volume, ForeignVolume};
+
+    let volume = match format {
+        "fat32" | "fat16" | "fat" => ForeignVolume::Fat(
+            ForeignFatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
+        ),
+        "exfat" => ForeignVolume::Exfat(
+            ForeignExfatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
+        ),
+        other => return Err(format!("未知の--format値です: '{other}'(fat32 | exfat)")),
+    };
+
+    let session = mount_foreign_volume(volume, mountpoint).map_err(|e| format!("マウントに失敗しました: {e}"))?;
+    println!("'{volume_path}'を'{mountpoint}'へマウントしました。別のターミナルから`fusermount3 -u {mountpoint}`するとアンマウントされます。");
+    session.join().map_err(|e| format!("マウントセッションの終了処理に失敗: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(all(any(target_os = "linux", target_os = "macos"), feature = "fuse_backend", feature = "foreign_fs")))]
+fn run_foreign_mount(_format: &str, _volume_path: &str, _mountpoint: &str) -> Result<(), String> {
+    Err("このビルドには既存フォーマットの実マウント機能が含まれていません(Linux/macOS上で`fuse_backend`+`foreign_fs` featureを有効にしてビルドしてください)。".to_string())
 }
 
 #[cfg(not(feature = "foreign_fs"))]

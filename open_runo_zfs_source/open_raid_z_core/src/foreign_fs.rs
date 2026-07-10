@@ -114,6 +114,33 @@ impl ForeignFatVolume {
         io::Write::flush(&mut file).map_err(|e| BridgeError::ForeignFsFailed(format!("flushに失敗: {e}")))?;
         Ok(())
     }
+
+    /// ボリューム内へ新規ディレクトリを作成する(`orzctl foreign`のマウント
+    /// 拡張用。既存の`ls`/`cat`/`put`では使わない)。
+    pub fn create_dir(&self, dir_path: &str) -> BridgeResult<()> {
+        self.fs
+            .root_dir()
+            .create_dir(normalize(dir_path))
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{dir_path}'を作成できませんでした: {e}")))?;
+        Ok(())
+    }
+
+    /// ボリューム内のファイルまたは(空の)ディレクトリを削除する。
+    pub fn remove(&self, path: &str) -> BridgeResult<()> {
+        self.fs
+            .root_dir()
+            .remove(normalize(path))
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を削除できませんでした: {e}")))?;
+        Ok(())
+    }
+
+    /// ボリューム内のファイル・ディレクトリを名前変更/移動する。
+    pub fn rename(&self, src_path: &str, dst_path: &str) -> BridgeResult<()> {
+        let root = self.fs.root_dir();
+        root.rename(normalize(src_path), &root, normalize(dst_path))
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{src_path}'から'{dst_path}'への変更に失敗: {e}")))?;
+        Ok(())
+    }
 }
 
 /// `fatfs`はパス区切りに`/`を使い、先頭の`/`は不要(ルート相対)。
@@ -204,6 +231,34 @@ impl ForeignExfatVolume {
         writer
             .finish()
             .map_err(|e| BridgeError::ForeignFsFailed(format!("'{file_path}'の書き込み確定に失敗: {e:?}")))?;
+        Ok(())
+    }
+
+    /// ルート直下に新規ディレクトリを作成する(FAT32版と同様、現状ルート
+    /// 直下のみ対応)。
+    pub fn create_dir(&self, dir_path: &str) -> BridgeResult<()> {
+        let name = normalize(dir_path);
+        if name.contains('/') {
+            return Err(BridgeError::ForeignFsFailed(
+                "exFATでのディレクトリ作成は現状ルート直下のみ対応しています".to_string(),
+            ));
+        }
+        let root = self.fs.root_dir();
+        self.fs
+            .create_dir(&root, name)
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{dir_path}'を作成できませんでした: {e:?}")))?;
+        Ok(())
+    }
+
+    /// ルート直下のファイルまたはディレクトリを削除する。
+    pub fn remove(&self, path: &str) -> BridgeResult<()> {
+        let name = normalize(path);
+        let root = self.fs.root_dir();
+        let entry = root
+            .find(name)
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を開けませんでした: {e:?}")))?
+            .ok_or_else(|| BridgeError::ForeignFsFailed(format!("'{path}'が見つかりません")))?;
+        self.fs.delete(&entry).map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を削除できませんでした: {e:?}")))?;
         Ok(())
     }
 }
