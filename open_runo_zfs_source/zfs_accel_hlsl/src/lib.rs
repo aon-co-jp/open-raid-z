@@ -9,6 +9,7 @@
 //! - open_raid_z_core からは「バイト列を渡すとパリティ/チェックサムが
 //!   返ってくる」という単純な関数として利用できること
 
+pub mod benchmark;
 pub mod bitmatrix;
 #[cfg(feature = "gpu")]
 pub mod compute;

@@ -138,6 +138,11 @@ fn dispatch_with_instance(
         .position(|qf| qf.queue_flags.contains(vk::QueueFlags::COMPUTE))
         .ok_or(VulkanComputeError::NoDevice)? as u32;
 
+    // 優先度は範囲(0.0〜1.0)の最大値にし、同じGPU上の他プロセスより
+    // このRAID-Zパリティ計算が優先されやすくする(D3D12版の
+    // `D3D12_COMMAND_QUEUE_PRIORITY_HIGH`設定と同じ意図。ドライバが
+    // 実際にどこまでこの値を尊重するかは実装依存だが、ポータブルに
+    // 指定できる範囲では最大値を使うのが正しい)。
     let queue_priorities = [1.0f32];
     let queue_create_info = vk::DeviceQueueCreateInfo::default()
         .queue_family_index(queue_family_index)
