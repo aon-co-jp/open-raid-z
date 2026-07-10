@@ -152,7 +152,7 @@ fn run_create(args: Args) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(all(target_os = "linux", feature = "fuse_backend"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), feature = "fuse_backend"))]
 fn run_mount(args: Args) -> Result<(), String> {
     use open_raid_z_core::fuse_mount::mount_pool;
     let mountpoint = args.mountpoint.ok_or("mountには--mountpointが必須です")?;
@@ -183,7 +183,7 @@ fn run_mount(args: Args) -> Result<(), String> {
 }
 
 #[cfg(not(any(
-    all(target_os = "linux", feature = "fuse_backend"),
+    all(any(target_os = "linux", target_os = "android"), feature = "fuse_backend"),
     all(target_os = "windows", feature = "winfsp_backend")
 )))]
 fn run_mount(_args: Args) -> Result<(), String> {
@@ -318,7 +318,7 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
 /// `orzctl foreign [--format <FMT>] mount <VOLUME> <MOUNTPOINT>`。
 /// 実際にLinux/macOS上へマウントし、他ターミナルから`fusermount3 -u`
 /// (macOSは`umount`)されるまでフォアグラウンドで待機する。
-#[cfg(all(any(target_os = "linux", target_os = "macos"), feature = "fuse_backend", feature = "foreign_fs"))]
+#[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "android"), feature = "fuse_backend", feature = "foreign_fs"))]
 fn run_foreign_mount(format: &str, volume_path: &str, mountpoint: &str) -> Result<(), String> {
     use open_raid_z_core::foreign_fs::{ForeignExfatVolume, ForeignFatVolume};
     use open_raid_z_core::foreign_fuse_mount::{mount_foreign_volume, ForeignVolume};
@@ -339,7 +339,7 @@ fn run_foreign_mount(format: &str, volume_path: &str, mountpoint: &str) -> Resul
     Ok(())
 }
 
-#[cfg(not(all(any(target_os = "linux", target_os = "macos"), feature = "fuse_backend", feature = "foreign_fs")))]
+#[cfg(not(all(any(target_os = "linux", target_os = "macos", target_os = "android"), feature = "fuse_backend", feature = "foreign_fs")))]
 fn run_foreign_mount(_format: &str, _volume_path: &str, _mountpoint: &str) -> Result<(), String> {
     Err("このビルドには既存フォーマットの実マウント機能が含まれていません(Linux/macOS上で`fuse_backend`+`foreign_fs` featureを有効にしてビルドしてください)。".to_string())
 }

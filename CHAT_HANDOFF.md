@@ -2427,3 +2427,47 @@ fn superblock_stripe_count(total_stripes: u64, chunk_bytes: u64) -> u64 {
 
 `cargo test --no-default-features`・`cargo test --features foreign_fs`
 (実WinFspマウントテスト含む)ともに全件成功(リグレッション無し)。
+
+## 追記31: WDKドライバ開発 着手(ホストへWDK導入・最小スケルトンのビルド確認)
+
+「WDKドライバ開発」「Android対応の`fuser`クレートアップストリーム
+パッチ」の2件について、ユーザーから「大変でも手間が掛かってもやって」
+との明示的な指示を受け、このセッションで着手した。
+
+### WDK導入
+
+このホスト(`F:\open-runo`)に、`winget`経由で以下を導入した:
+- `Microsoft.VisualStudio.2022.BuildTools`(C++ Build Tools、既存)
+- `Microsoft.WindowsWDK.10.0.26100`(KMDF 1.35ヘッダ・ライブラリ含む)
+
+VS用WDK拡張(VSIX、vcxprojプロジェクトテンプレート)は未導入のため、
+`cl.exe`/`link.exe`を直接呼び出すコマンドラインビルド
+(`wdk_driver/build.bat`)を採用した。
+
+### 最小スケルトン(`open_runo_zfs_source/wdk_driver/orzflt/`)
+
+「WDFドライバオブジェクトのロード/アンロードのみを確認する、実I/Oを
+一切行わない制御デバイス」に意図的にスコープを絞った`driver.c`+
+`orzflt.inf`を作成し、ビルドに成功した(`orzflt.sys`生成を確認、
+その後クリーンアップ)。
+
+**重要: このホストでは実際のドライバロードテストを行っていない**
+(カーネルドライバのロードはバグがあるとBSOD・ブート不能に直結するため、
+既存の合意事項通り隔離VMでのみ実施すべき、と`wdk_driver/README.md`に
+明記した)。次回以降、隔離Windows VMを用意し、テスト署名モード
+(`bcdedit /set testsigning on`)+自己署名証明書でのロード確認から
+進める。
+
+### Android `fuser`クレートパッチ
+
+`MULTIPLATFORM_ROADMAP.md`追記2に詳細を記録した。要点:
+`open_runo_zfs_source/third_party/fuser-0.17.0-android-patch/`に
+パッチ済みフォークを配置し、`cargo ndk`でarm64-v8a向け
+`fuse_backend`/`foreign_fs`両featureのクロスコンパイルに成功。
+実機Android端末での動作検証は未実施(次回以降の課題)。
+
+### 環境整備(次回以降のため記録)
+
+- `cargo install cargo-ndk`済み(Android NDK 27.1.12297006を使用)。
+- Android向けrustupターゲット(`aarch64-linux-android`等)は
+  既に導入済みだった。
