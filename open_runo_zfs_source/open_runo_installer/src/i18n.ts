@@ -1,4 +1,4 @@
-// 言語選択機能。英語(米国)をデフォルトとし、インストール時・インストール後の
+// 言語選択機能。英語をデフォルトとし、インストール時・インストール後の
 // どちらでも切り替え可能(localStorageへ保存し、次回起動時も保持する)。
 //
 // これは「OpenRaidZインストーラー」(この`open-raid-z`リポジトリ専用の
@@ -6,28 +6,24 @@
 // 向けインストーラー、別リポジトリ)とは別物。デフォルト言語も両者で異なり、
 // OpenRaidZインストーラーは英語既定・OpenRunoインストーラーは日本語既定。
 //
-// 対応言語(標準として要求されている10言語):
-// アメリカ英語(既定) / イギリス英語 / 日本語 / イタリア語 / フランス語 /
-// ドイツ語 / ロシア語 / ウクライナ語 / アラビア語(RTL) / ペルシャ語(RTL)
+// 対応言語(世界9ヶ国語、英語既定): 英語(既定) / 日本語 / イタリア語 /
+// フランス語 / ドイツ語 / ロシア語 / ウクライナ語 / アラビア語(RTL) /
+// ペルシャ語(RTL)。
+// (README(全10言語)はUS英語・UK英語を別ページとして分けているが、
+// フロントエンドの言語切り替えでは英語を1つに統合して9ヶ国語としている。)
+//
+// 表示は2段構成:
+//   1番目(基本): 現在の言語(既定は英語)を単独で表示。
+//   2番目(ハイブリッド、既定ON): 1番目の言語 + 第二言語(既定は日本語)を
+//     併記して表示する。第二言語は9ヶ国語から自由に選択可能。
 
-export type LangCode =
-  | "ja"
-  | "en-GB"
-  | "en-US"
-  | "it"
-  | "fr"
-  | "de"
-  | "ru"
-  | "uk"
-  | "ar"
-  | "fa";
+export type LangCode = "en" | "ja" | "it" | "fr" | "de" | "ru" | "uk" | "ar" | "fa";
 
 export const RTL_LANGS: ReadonlySet<LangCode> = new Set(["ar", "fa"]);
 
 export const LANG_NAMES: Record<LangCode, string> = {
+  en: "English",
   ja: "日本語",
-  "en-GB": "English (UK)",
-  "en-US": "English (US)",
   it: "Italiano",
   fr: "Français",
   de: "Deutsch",
@@ -40,6 +36,8 @@ export const LANG_NAMES: Record<LangCode, string> = {
 const ja = {
   app_title: "OpenRaidZ インストーラー",
   language_label: "言語",
+  second_language_label: "第二言語",
+  hybrid_toggle_label: "ハイブリッド表示",
   section_hardware: "ハードウェア構成",
   accelerator_label: "アクセラレータ",
   disks_label: "検出されたディスク",
@@ -84,16 +82,18 @@ const ja = {
 type TranslationKey = keyof typeof ja;
 type Dict = Record<TranslationKey, string>;
 
-const enGB: Dict = {
+const en: Dict = {
   app_title: "OpenRaidZ Installer",
   language_label: "Language",
+  second_language_label: "Second Language",
+  hybrid_toggle_label: "Hybrid Display",
   section_hardware: "Hardware Configuration",
   accelerator_label: "Accelerator",
   disks_label: "Detected Disks",
   no_disks_admin_warning: "No disks detected. Please run as Administrator.",
   refresh_button: "Rescan",
   section_advice: "Recommended Configuration",
-  section_raid: "Initialise RAID Pool (Preview)",
+  section_raid: "Initialize RAID Pool (Preview)",
   raid_level_label: "RAID Level",
   disk_count_label: "Number of Disks",
   mirror_width_label: "Mirror Width (RAID10 only)",
@@ -121,14 +121,11 @@ const enGB: Dict = {
   no_storage_detected: "No storage media detected (administrator privileges may be required).",
 };
 
-const enUS: Dict = {
-  ...enGB,
-  section_raid: "Initialize RAID Pool (Preview)",
-};
-
 const it: Dict = {
   app_title: "Installer OpenRaidZ",
   language_label: "Lingua",
+  second_language_label: "Seconda lingua",
+  hybrid_toggle_label: "Visualizzazione ibrida",
   section_hardware: "Configurazione hardware",
   accelerator_label: "Acceleratore",
   disks_label: "Dischi rilevati",
@@ -166,6 +163,8 @@ const it: Dict = {
 const fr: Dict = {
   app_title: "Programme d'installation OpenRaidZ",
   language_label: "Langue",
+  second_language_label: "Deuxième langue",
+  hybrid_toggle_label: "Affichage hybride",
   section_hardware: "Configuration matérielle",
   accelerator_label: "Accélérateur",
   disks_label: "Disques détectés",
@@ -203,6 +202,8 @@ const fr: Dict = {
 const de: Dict = {
   app_title: "OpenRaidZ-Installationsprogramm",
   language_label: "Sprache",
+  second_language_label: "Zweite Sprache",
+  hybrid_toggle_label: "Hybridanzeige",
   section_hardware: "Hardwarekonfiguration",
   accelerator_label: "Beschleuniger",
   disks_label: "Erkannte Laufwerke",
@@ -240,6 +241,8 @@ const de: Dict = {
 const ru: Dict = {
   app_title: "Установщик OpenRaidZ",
   language_label: "Язык",
+  second_language_label: "Второй язык",
+  hybrid_toggle_label: "Гибридное отображение",
   section_hardware: "Конфигурация оборудования",
   accelerator_label: "Ускоритель",
   disks_label: "Обнаруженные диски",
@@ -277,6 +280,8 @@ const ru: Dict = {
 const uk: Dict = {
   app_title: "Інсталятор OpenRaidZ",
   language_label: "Мова",
+  second_language_label: "Друга мова",
+  hybrid_toggle_label: "Гібридне відображення",
   section_hardware: "Конфігурація обладнання",
   accelerator_label: "Прискорювач",
   disks_label: "Виявлені диски",
@@ -314,6 +319,8 @@ const uk: Dict = {
 const ar: Dict = {
   app_title: "برنامج تثبيت OpenRaidZ",
   language_label: "اللغة",
+  second_language_label: "اللغة الثانية",
+  hybrid_toggle_label: "العرض الهجين",
   section_hardware: "تهيئة العتاد",
   accelerator_label: "المسرّع",
   disks_label: "الأقراص المكتشفة",
@@ -351,6 +358,8 @@ const ar: Dict = {
 const fa: Dict = {
   app_title: "نصب‌کننده OpenRaidZ",
   language_label: "زبان",
+  second_language_label: "زبان دوم",
+  hybrid_toggle_label: "نمایش ترکیبی",
   section_hardware: "پیکربندی سخت‌افزار",
   accelerator_label: "شتاب‌دهنده",
   disks_label: "دیسک‌های شناسایی‌شده",
@@ -386,9 +395,8 @@ const fa: Dict = {
 };
 
 const DICTS: Record<LangCode, Dict> = {
+  en,
   ja,
-  "en-GB": enGB,
-  "en-US": enUS,
   it,
   fr,
   de,
@@ -399,7 +407,12 @@ const DICTS: Record<LangCode, Dict> = {
 };
 
 const STORAGE_KEY = "open_runo_installer-lang";
-const DEFAULT_LANG: LangCode = "en-US";
+const SECOND_STORAGE_KEY = "open_runo_installer-lang2";
+const HYBRID_STORAGE_KEY = "open_runo_installer-hybrid";
+
+const DEFAULT_LANG: LangCode = "en";
+const DEFAULT_SECOND_LANG: LangCode = "ja";
+const DEFAULT_HYBRID = true;
 
 export function getLanguage(): LangCode {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -412,6 +425,30 @@ export function getLanguage(): LangCode {
 export function setLanguage(lang: LangCode): void {
   localStorage.setItem(STORAGE_KEY, lang);
   applyDocumentDirection(lang);
+}
+
+// 第二言語(ハイブリッド表示で1番目の言語と併記する言語)。既定は日本語。
+export function getSecondLanguage(): LangCode {
+  const stored = localStorage.getItem(SECOND_STORAGE_KEY);
+  if (stored && stored in DICTS) {
+    return stored as LangCode;
+  }
+  return DEFAULT_SECOND_LANG;
+}
+
+export function setSecondLanguage(lang: LangCode): void {
+  localStorage.setItem(SECOND_STORAGE_KEY, lang);
+}
+
+// ハイブリッド表示(1番目の言語 + 第二言語を併記)の有効・無効。既定はON。
+export function isHybridEnabled(): boolean {
+  const stored = localStorage.getItem(HYBRID_STORAGE_KEY);
+  if (stored === null) return DEFAULT_HYBRID;
+  return stored === "1";
+}
+
+export function setHybridEnabled(enabled: boolean): void {
+  localStorage.setItem(HYBRID_STORAGE_KEY, enabled ? "1" : "0");
 }
 
 export function applyDocumentDirection(lang: LangCode): void {
@@ -427,6 +464,19 @@ export function t(key: string, lang: LangCode = getLanguage()): string {
   const dict = DICTS[lang] as Record<string, string | undefined>;
   const fallback = DICTS[DEFAULT_LANG] as Record<string, string | undefined>;
   return dict[key] ?? fallback[key] ?? key;
+}
+
+// 表示用の本体。ハイブリッド表示がONで、かつ第二言語が1番目の言語と
+// 異なる場合のみ「1番目の言語 / 第二言語」の併記にする。それ以外は
+// 1番目の言語(既定は英語)を単独表示する。
+export function tDisplay(key: string): string {
+  const primary = t(key);
+  if (!isHybridEnabled()) return primary;
+  const secondLang = getSecondLanguage();
+  if (secondLang === getLanguage()) return primary;
+  const secondary = t(key, secondLang);
+  if (secondary === primary) return primary;
+  return `${primary} / ${secondary}`;
 }
 
 export function allLanguages(): LangCode[] {
