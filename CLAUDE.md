@@ -15,11 +15,16 @@
 実装(例: crates/open-runo-routerのPoem→tokio/hyper移行)はpoem-cosmo-tauri
 側で先行させ、動作確認できたファイルをopen-runoへミラーする運用とする。
 
-## フロントエンド
+## フロントエンド(2026-07-10、方針更新)
 
-- Tauriパッケージには依存しない。ただしTauriのデスクトップUI体験・
-  `invoke()`的なコマンド呼び出しとは互換性のあるインターフェースを
-  HTML5/CSS3 + 必要最低限のTypeScriptで自前実装する。
+- Tauriパッケージには直接依存しない。ただしTauriのデスクトップUI体験・
+  `invoke()`的なコマンド呼び出しインターフェースとは互換性を保つ。
+- **HTML5/CSS3・TypeScript・Bootstrap・Node.jsのスタックは廃止**。
+  Rustをメイン言語としてフロントエンドとバックエンドを統合し、
+  **WebAssembly (WASM)** に置き換える(コンパイル対象はRust →
+  `wasm32-unknown-unknown`)。DOM操作・`invoke()`相当の呼び出しは
+  Rust製WASMモジュール側で行い、TypeScript/Node.jsのビルドチェーンには
+  依存しない。https://webassembly.org/ | https://rustwasm.github.io/
 
 ## バックエンド・コア
 
