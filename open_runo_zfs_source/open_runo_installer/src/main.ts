@@ -3,10 +3,14 @@ import {
   allLanguages,
   applyDocumentDirection,
   getLanguage,
+  getSecondLanguage,
+  isHybridEnabled,
   LANG_NAMES,
   LangCode,
+  setHybridEnabled,
   setLanguage,
-  t,
+  setSecondLanguage,
+  tDisplay,
 } from "./i18n";
 
 interface DiskInfo {
@@ -44,14 +48,13 @@ interface Advice {
 function renderStaticText(): void {
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
-    if (key) el.textContent = t(key);
+    if (key) el.textContent = tDisplay(key);
   });
   const warning = document.getElementById("no_disks_warning");
-  if (warning) warning.textContent = t("no_disks_admin_warning");
+  if (warning) warning.textContent = tDisplay("no_disks_admin_warning");
 }
 
-function renderLangSelect(): void {
-  const select = document.getElementById("lang_select") as HTMLSelectElement;
+function populateLangOptions(select: HTMLSelectElement): void {
   select.innerHTML = "";
   for (const lang of allLanguages()) {
     const opt = document.createElement("option");
@@ -59,16 +62,38 @@ function renderLangSelect(): void {
     opt.textContent = LANG_NAMES[lang];
     select.appendChild(opt);
   }
+}
+
+function renderLangSelect(): void {
+  const select = document.getElementById("lang_select") as HTMLSelectElement;
+  populateLangOptions(select);
   select.value = getLanguage();
   select.addEventListener("change", () => {
     setLanguage(select.value as LangCode);
+    renderStaticText();
+  });
+
+  const secondSelect = document.getElementById("lang2_select") as HTMLSelectElement;
+  populateLangOptions(secondSelect);
+  secondSelect.value = getSecondLanguage();
+  secondSelect.addEventListener("change", () => {
+    setSecondLanguage(secondSelect.value as LangCode);
+    renderStaticText();
+  });
+
+  const hybridToggle = document.getElementById("hybrid_toggle") as HTMLInputElement;
+  hybridToggle.checked = isHybridEnabled();
+  secondSelect.disabled = !hybridToggle.checked;
+  hybridToggle.addEventListener("change", () => {
+    setHybridEnabled(hybridToggle.checked);
+    secondSelect.disabled = !hybridToggle.checked;
     renderStaticText();
   });
 }
 
 async function loadHardware(): Promise<void> {
   const accelEl = document.getElementById("accelerator_info")!;
-  accelEl.textContent = t("loading");
+  accelEl.textContent = tDisplay("loading");
 
   const [accelerator, disks, advice] = await Promise.all([
     invoke<AcceleratorInfo>("detect_accelerator"),
@@ -130,7 +155,7 @@ async function loadSystemStatus(): Promise<void> {
   for (const entry of status.os_compatibility) {
     const li = document.createElement("li");
     li.className = `status_${entry.status}`;
-    const statusLabel = t(`status_${entry.status}`);
+    const statusLabel = tDisplay(`status_${entry.status}`);
     li.innerHTML = `<strong>${entry.os}</strong>: ${statusLabel} — ${entry.note}`;
     osListEl.appendChild(li);
   }
@@ -139,7 +164,7 @@ async function loadSystemStatus(): Promise<void> {
   gpuListEl.innerHTML = "";
   if (status.accelerators.length === 0) {
     const li = document.createElement("li");
-    li.textContent = t("no_gpu_detected");
+    li.textContent = tDisplay("no_gpu_detected");
     gpuListEl.appendChild(li);
   } else {
     for (const accel of status.accelerators) {
@@ -153,7 +178,7 @@ async function loadSystemStatus(): Promise<void> {
   storageListEl.innerHTML = "";
   if (status.disks.length === 0) {
     const li = document.createElement("li");
-    li.textContent = t("no_storage_detected");
+    li.textContent = tDisplay("no_storage_detected");
     storageListEl.appendChild(li);
   } else {
     for (const disk of status.disks) {
@@ -191,7 +216,7 @@ async function submitRaidForm(e: SubmitEvent): Promise<void> {
   const diskCount = Number((document.getElementById("disk_count") as HTMLInputElement).value);
   const datasetName = (document.getElementById("dataset_name") as HTMLInputElement).value;
   const resultEl = document.getElementById("raid_result")!;
-  resultEl.textContent = t("loading");
+  resultEl.textContent = tDisplay("loading");
 
   try {
     if (level === "Raid10") {
@@ -199,15 +224,15 @@ async function submitRaidForm(e: SubmitEvent): Promise<void> {
       const result = await invoke("init_raid10_preview", {
         req: { disk_count: diskCount, mirror_width: mirrorWidth, dataset_name: datasetName },
       });
-      resultEl.textContent = `${t("result_label")}: ${JSON.stringify(result)}`;
+      resultEl.textContent = `${tDisplay("result_label")}: ${JSON.stringify(result)}`;
     } else {
       const result = await invoke("init_zpool_preview", {
         req: { disk_count: diskCount, level, dataset_name: datasetName },
       });
-      resultEl.textContent = `${t("result_label")}: ${JSON.stringify(result)}`;
+      resultEl.textContent = `${tDisplay("result_label")}: ${JSON.stringify(result)}`;
     }
   } catch (err) {
-    resultEl.textContent = `${t("error_label")}: ${err}`;
+    resultEl.textContent = `${tDisplay("error_label")}: ${err}`;
   }
 }
 
@@ -218,15 +243,15 @@ async function submitApplyForm(e: SubmitEvent): Promise<void> {
   const confirmDataLoss = (document.getElementById("confirm_data_loss") as HTMLInputElement).checked;
   const disks = getSelectedDisks();
   const resultEl = document.getElementById("apply_result")!;
-  resultEl.textContent = t("loading");
+  resultEl.textContent = tDisplay("loading");
 
   try {
     const result = await invoke("init_zpool_apply", {
       req: { disks, level, dataset_name: datasetName, confirm_data_loss: confirmDataLoss },
     });
-    resultEl.textContent = `${t("result_label")}: ${JSON.stringify(result)}`;
+    resultEl.textContent = `${tDisplay("result_label")}: ${JSON.stringify(result)}`;
   } catch (err) {
-    resultEl.textContent = `${t("error_label")}: ${err}`;
+    resultEl.textContent = `${tDisplay("error_label")}: ${err}`;
   }
 }
 

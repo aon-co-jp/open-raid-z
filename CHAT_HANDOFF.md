@@ -1695,3 +1695,310 @@ Vulkan Compute対応・`foreign_fs`(既存フォーマット読み書き)・
 8. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
    Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携、
    他社製RAID形式(mdadm/Storage Spaces)との相互運用。
+
+---
+
+## 追記19: root-on-RAID-Z実験VMの再作成中に、24.04.4固有の起動ハングを確定・切り分け。`open_runo_installer/src-tauri`の初回`cargo check`成功
+
+### `open-raid-z-linux-boot`VMの起動ハングの原因切り分け(進行中)
+
+前回セッションで「起動ディスクのSSH到達性確認」から再開しようとしたところ、`open-raid-z-linux-boot`
+VM(Ubuntu 24.04.4、カーネル`6.8.0-134-generic`)が**毎回同じ箇所
+(`Begin: Loading essential drivers ...`)で再現性を持って停止する**ことを確認した。
+
+- RAID-Z検証用の4台のディスクを全てデタッチしても同じ場所で停止 →
+  「RAIDディスクの残存メタデータが原因」という仮説は否定された。
+- 過去のセッションが残していた`serial-console-hang-1.log.bak`
+  (シリアルコンソール経由のフルカーネルログ)を確認したところ、
+  **画面(フレームバッファ)だけでなくシリアル出力even上でも同じ箇所で
+  完全に沈黙**していることを確認。直前まではAHCI全6ポート・全ディスク
+  (`sda`〜`sde`)・NIC(`enp0s3`)の認識は正常に完了しており、
+  `initramfs-tools`の`load_modules`ステップ内でハングしている
+  ことが分かった。これにより「フレームバッファ描画が固まっているだけ」
+  という説も否定され、**本物のカーネル/initramfsレベルのハング**である
+  ことが確定した。
+- `VBoxManage debugvm ... statistics`でCPUの`Halted`カウンタが多いことも
+  確認(ビジーループではなく、何かを待って本当に停止している状態と一致)。
+
+**対応**: Ubuntu 24.04.4(カーネル6.8系、比較的新しい)とVirtualBox 7.2.12の
+AHCIエミュレーションの組み合わせ固有の相性問題である可能性が高いと判断し、
+VM自体(旧ディスク・旧メディア登録含め全て)を削除し、より枯れたカーネル
+(5.15系)を積む**Ubuntu 22.04.5 LTS**で作り直した(SHA256チェックサムを
+公式`SHA256SUMS`と照合して一致を確認済みのISOを使用)。`VBoxManage`の
+メディアレジストリに関する再現性のある罠(`unregistervm --delete`は、
+セッション中に一度`storageattach ... --medium none`でデタッチした
+ディスクを削除してくれない。`closemedium disk <uuid>`で明示的に
+レジストリから外す必要がある)も踏んで解消した。
+
+**このセッション終了時点で、Ubuntu 22.04.5での無人インストールが進行中
+(curtinによるパーティショニング完了、フォーマット中を確認済み)。
+再起動後に同じ場所でハングするかどうかが次回確認すべき最重要事項**。
+再現しなければ「24.04.4のカーネルとVirtualBoxの相性問題」という診断が
+裏付けられる。再現する場合は、AHCIポート数を実際に使う5(起動+RAID4台)
+ちょうどに絞る(現状6ポート中1つが常に未使用)、`GUI`モードでの起動、
+または`initramfs`の`MODULES=most`を`dep`へ絞る等が次の切り分け候補となる。
+
+### `open_runo_installer/src-tauri`の初回`cargo check`成功
+
+前回まで「Tauri本体(`tauri`クレート自体)がedition2024を要求するため
+未検証」としていたが、このマシンのRustは既に1.96.0(edition2024対応)
+だったため、`cargo check`を実行したところ**初めてエラー無く成功**した。
+警告は`zfs_accel_hlsl`の`create_best_device`(gpu feature無効時のみに
+到達不能になる、無害な誤検知)と`open_runo_installer_core`の
+`BusTypeUsb`等(windows-rsクレートのPascalCase定数命名規則に起因する
+スタイル警告で、パターンマッチ自体は正しく機能している)のみで、
+実質的なバグは無いことを確認済み。
+
+### 残る実用性課題(更新版)
+
+1. **`open-raid-z-linux-boot`VM: Ubuntu 22.04.5でのインストール完了確認・
+   起動ハングが再現しないことの確認**(最優先、次回ここから)
+2. 再現しない場合: SSH到達性確認→Rust/build-essential/libfuse3-dev導入→
+   clone/ビルド→実ブロックデバイスでのRAID-Z2確認→initramfs実験再開
+3. ディスクのメディア種別判定(`media_type`)を管理者権限で実機検証。
+4. exFAT書き込み対応、`foreign_fs`のNTFS/ext4読み取り対応。
+5. Vulkan経路のRAID-Z2/Z3(GEMM/Reed-Solomon)対応(現状XORのみ)。
+6. Android対応、Mac対応の設計・コード先行実装(実機検証待ち)。
+7. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張。
+8. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
+   Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携、
+   他社製RAID形式(mdadm/Storage Spaces)との相互運用。
+
+---
+
+## 追記20: フロントエンド言語体系の再設計(英語既定+ハイブリッド表示+第二言語選択)
+
+ユーザーから「フロントエンドは1番目に英語を基本に、2番目に日本語との
+ハイブリッドを基本に。2番目の言語を選択可能に。世界9ヶ国語(英語既定)を
+選択可能に。READMEの言語は世界10ヶ国語」という指示があり、`i18n.ts`/
+`main.ts`/`index.html`を再設計した。
+
+### 設計
+
+- 従来`en-GB`/`en-US`を別コードとして10言語(README側の構成に合わせていた)
+  だったものを、フロントエンドでは英語を1つの`en`に統合し**9言語**
+  (en/ja/it/fr/de/ru/uk/ar/fa)に整理。README(全10言語、US/UK英語を
+  別ページとして分ける)とは意図的に数を分けている。
+- 表示は2段構成にした:
+  - **1番目(基本)**: 通常の言語選択(`lang_select`、既定`en`)による単独表示。
+  - **2番目(ハイブリッド、既定ON)**: 1番目の言語に加えて「第二言語」
+    (`lang2_select`、既定`ja`)を「English / 日本語」のように併記する。
+    `hybrid_toggle`チェックボックスでON/OFF切り替え可能(OFF時は1番目の
+    言語のみの単独表示に戻る)。第二言語はハイブリッド用途に限らず
+    9言語全てから自由に選択できる。
+- `i18n.ts`に`getSecondLanguage`/`setSecondLanguage`/`isHybridEnabled`/
+  `setHybridEnabled`/`tDisplay`を追加。`tDisplay`が実際の表示文字列
+  (ハイブリッド時は「1番目 / 2番目」、それ以外は1番目のみ)を返す。
+  `main.ts`側のユーザー向け文字列(`data-i18n`要素、loading/result/error等)
+  は全て`t()`から`tDisplay()`へ置き換えた。
+- 新規辞書キー`second_language_label`/`hybrid_toggle_label`を9言語全てに
+  追加(既存の型安全機構`Record<TranslationKey, string>`により、
+  1つでも訳し忘れると`tsc`がコンパイルエラーで検出する)。
+
+### 検証状況
+
+`npx tsc --noEmit`・`npx vite build`ともにエラー無く成功。ブラウザで
+実際に起動し、以下を確認済み:
+- 既定状態で「OpenRaidZ Installer / OpenRaidZ インストーラー」のように
+  英語+日本語のハイブリッド表示になること。
+- `hybrid_toggle`をOFFにすると英語単独表示に戻ること。
+- `lang2_select`をフランス語に変更すると「Hardware Configuration /
+  Configuration matérielle」のように併記言語が切り替わること。
+- 言語セレクタ(1番目・2番目とも)に9言語全てが列挙されること。
+
+(注: ブラウザ単体でのプレビューのためTauriバックエンドは無く、
+`invoke()`が絡む実データ取得は未検証。ロジック自体はDOM操作のみで
+バックエンドに依存しないため、リスクは低いと判断。)
+
+### 残る実用性課題(更新版)
+
+1. **`open-raid-z-linux-boot`VM: Ubuntu 22.04.5でのインストール完了確認・
+   起動ハングが再現しないことの確認**(最優先、次回ここから)
+2. 再現しない場合: SSH到達性確認→Rust/build-essential/libfuse3-dev導入→
+   clone/ビルド→実ブロックデバイスでのRAID-Z2確認→initramfs実験再開
+3. ディスクのメディア種別判定(`media_type`)を管理者権限で実機検証。
+4. exFAT書き込み対応、`foreign_fs`のNTFS/ext4読み取り対応。
+5. Vulkan経路のRAID-Z2/Z3(GEMM/Reed-Solomon)対応(現状XORのみ)。
+6. Android対応、Mac対応の設計・コード先行実装(実機検証待ち)。
+7. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張。
+8. Tauri本体(`cargo tauri dev`)を実際にネイティブウィンドウで起動し、
+   `invoke()`経由の実データ取得込みでハイブリッド表示・言語切り替えを
+   検証する(今回はブラウザプレビューのみで検証、ネイティブウィンドウは
+   スクリーンショット手段が無く未検証)。
+9. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
+   Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携、
+   他社製RAID形式(mdadm/Storage Spaces)との相互運用。
+
+---
+
+## 追記21: 【根本原因判明】起動ハングの正体はAHCIポート数の設定ミス。VM再構築完了、SSH到達性確認済み
+
+前回(追記19)で「カーネルバージョンの相性問題」と推測した`open-raid-z-linux-boot`
+VMの起動ハング(`Begin: Loading essential drivers ...`)について、Ubuntu 22.04.5
+(カーネル5.15)へ切り替えても**全く同じ箇所で再現**したため、この仮説は
+誤りだったことが判明した。
+
+### 真の原因: SATA/AHCIコントローラーのポート数と実接続ディスク数の不一致
+
+VM作成時に`--portcount 6`でSATAコントローラーを作成していたが、実際に
+接続していたディスクは5台(起動ディスク1台+RAID-Z検証用4台)のみだった。
+この**未使用の6番目のポートが、他の全ポートと同一のAHCI ABARアドレス
+(`abar m8192@0xe0c24000`)を共有する**という、これまでのセッションで
+気になっていた挙動(過去のログで気付いていたが「VirtualBoxの6ポート
+AHCIエミュレーションでは正常」と誤って判断していた点)が、実は
+`initramfs-tools`の`load_modules`ステップでのハングの真因だった。
+
+**`VBoxManage storagectl ... --portcount 5`でポート数を実際の接続数
+ちょうどに絞ったところ、Ubuntu 22.04.5が正常にクラウドイニットまで
+完了し、ログインプロンプトに到達することを確認した**(24.04.4の方は
+未再検証だが、原理的には同じ修正で解消するはずと推測される)。
+
+この教訓は今後この種のVM(実ディスクを複数アタッチする構成)を作る際に
+重要: **SATAコントローラーのポート数は、実際にアタッチするディスク数と
+必ず一致させること。余分な未使用ポートを残さない。**
+
+### 副次的な発見: VirtualBox headlessスクリーンショットが「画面が固まって見える」ことがある
+
+起動完了後、コンソールが実際にはログインプロンプトまで到達していたにも
+関わらず、スクリーンショットには最後のブート行(`Reached target
+Cloud-init target.`)までしか表示されず、複数回のスクリーンショットが
+バイト一致していたため一見「ハングしている」ように見えた。
+`VBoxManage controlvm ... keyboardputscancode 1c 9c`(Enterキー)を
+送ってコンソールを再描画させたところ、実際にはログインプロンプトが
+既に表示されていたことが分かった。**今後、起動が完了したはずのタイミングで
+画面が変化しないように見える場合は、まずEnterキー送信による再描画を
+試すこと**(本物のハングとの切り分けの第一歩として、VM再作成や
+ポート数変更より先に試すべき、より軽量な確認手段)。
+
+### VM再構築後の初期セットアップ
+
+- unattended installではopenssh-serverが既定でインストールされない
+  ことが判明(過去のセッションでは既にインストール済みの状態から
+  始めていたため気付いていなかった)。コンソール経由(`keyboardputstring`)
+  で`sudo apt-get install -y openssh-server && sudo systemctl enable
+  --now ssh`を実行し解消。
+- SSH公開鍵(`~/.ssh/id_ed25519.pub`)もコンソール経由で
+  `~/.ssh/authorized_keys`へ追記し、鍵認証でのSSHアクセスを確立。
+- これによりSSH到達性確認(残課題1)が完了。続けてRust/build-essential/
+  libfuse3-dev導入・clone/ビルドへ進行中。
+
+### 残る実用性課題(更新版)
+
+1. Rust/build-essential/libfuse3-dev導入→clone/ビルド→実ブロック
+   デバイスでのRAID-Z2確認→initramfs実験再開(進行中、次のセッション
+   記録で更新)
+2. Ubuntu 24.04.4側でも同じポート数修正(6→5)で解消するかの確認
+   (今回は22.04.5のみ確認。時間があれば24.04.4でも再現テストし、
+   「カーネルではなくAHCI設定が真因」であることを完全に裏付けたい)
+3. ディスクのメディア種別判定(`media_type`)を管理者権限で実機検証。
+4. exFAT書き込み対応、`foreign_fs`のNTFS/ext4読み取り対応。
+5. Vulkan経路のRAID-Z2/Z3(GEMM/Reed-Solomon)対応(現状XORのみ)。
+6. Android対応、Mac対応の設計・コード先行実装(実機検証待ち)。
+7. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張。
+8. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
+   Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携、
+   他社製RAID形式(mdadm/Storage Spaces)との相互運用。
+
+---
+
+## 追記22: VM再構築後の実ディスク検証完了、Tauri cargo checkの再確認、残課題の棚卸し
+
+### 実ディスクでのRAID-Z2検証(完了)
+
+追記21のAHCIポート数修正後のVM(Ubuntu 22.04.5)で、SSH経由(鍵認証)にて
+以下を実施・確認した:
+
+- `build-essential`/`pkg-config`/`libfuse3-dev`/`git`導入、`rustup`で
+  Rust安定版導入(ただし`sudo`は非対話SSHセッションではパスワード入力待ちで
+  静かに失敗する。`echo <pass> | sudo -S ...`で回避する必要があった。
+  これも今後同様の自動化をする際の再発防止メモとして記録)。
+- `git clone` → `feature/raid-z2-z3-scaffolding`チェックアウト。
+- `cargo build --no-default-features --features fuse_backend --bin orzctl`
+  成功。
+- `cargo test --no-default-features --features fuse_backend`
+  全テストパス(`fuse_mount.rs`の3件を`--nocapture`で個別実行し、
+  スキップメッセージ無しで実マウントテストが通ることを確認)。
+- 実ブロックデバイス4台(`/dev/sdb`〜`/dev/sde`、各2GB、`/dev/sda`は
+  OS起動ディスクのため対象外)に対し`orzctl create --level z2
+  --chunk-size 4096 --stripes 1000 --dataset test`でプール作成。
+- `orzctl mount`でFUSEマウント→ファイル書き込み→読み出し確認→
+  `fusermount3 -u`でアンマウント→再度`orzctl mount`で再マウント→
+  ファイル内容がそのまま読めることを確認(`Pool::save`/`Pool::open`に
+  よる永続化が、AHCIポート数修正後の新しいVM・実ブロックデバイス
+  構成でも問題無く機能することの再実証)。
+
+これにより、AHCIポート数修正がRAID member用ディスクの認識・動作に
+悪影響を与えていないことも合わせて確認できた。
+
+### `open_runo_installer/src-tauri`の`cargo check`(前回セッションで確認済み、再掲)
+
+このセッションの前半で実施済み(追記19参照)。エラー無し、警告は無害な
+誤検知のみ。
+
+### フロントエンド言語体系の再設計(前回セッションで実施済み、再掲)
+
+追記20参照。英語既定+ハイブリッド表示(既定ON、第二言語既定=日本語)+
+9言語選択可能への再設計を実施し、ブラウザで動作確認済み。
+
+### 残課題の棚卸し(このセッション終了時点)
+
+以下は**まだ着手していない、それぞれ独立した大きめの開発項目**であり、
+このセッション内では(実機・時間の制約上)着手を見送った。次回以降、
+優先順位を確認のうえ1項目ずつ着手するのが妥当:
+
+1. **initramfs/switch_root実験(root-on-RAID-Z化)の再開** — VM自体は
+   今回作り直したばかりで、この実験にはまだ着手していない
+   (旧VMでの前回の中断状態は、VM自体を削除したため引き継げない。
+   ゼロからのやり直しになる)。
+2. ディスクのメディア種別判定(`media_type`)の管理者権限での実機検証
+   — このセッションのシェルは非管理者権限のままで、UACによる昇格は
+   ユーザーの対話操作が必要なため実施していない。
+3. exFAT書き込み対応 — 上流クレート`exfat-fs`自体が書き込み未対応
+   (前回セッションで判明済み)。対応するには別クレートへの切り替えか
+   自前実装が必要で、相応の設計検討から始める必要がある。
+4. Vulkan経路のRAID-Z2/Z3(GEMM/Reed-Solomon)対応 — 現状XORのみ。
+   `dml_gemm.rs`のGF(2)ビット行列GEMM手法をVulkan(GLSL/SPIR-V)側にも
+   実装する、独立した数学・シェーダ実装作業。
+5. Android対応・Mac対応の設計/コード先行実装 —実機検証はハードウェア
+   入手待ちのため、設計ドキュメント・コード骨格の先行実装から。
+6. `orzctl foreign`をWinFsp/FUSE経由の実マウントへ拡張 — 現状CLIの
+   ls/cat/putのみ。既存フォーマット(FAT32/exFAT)をマウントとして
+   公開する設計が必要。
+7. WDK導入・Windowsカーネルドライバ開発、Windows VMのOpenSSH Server
+   導入続行、AD/SAM実連携、他社製RAID形式との相互運用 — いずれも
+   大規模かつ別々の専門領域。
+
+これらはいずれも「ちょっと触って終わり」にできる規模ではなく、
+1項目ごとに個別のセッション(場合によっては複数セッション)を割く
+のが適切と判断し、今回は表面的な着手を避けた。次回再開時は、
+ユーザーに優先順位を確認したうえで1つずつ着手することを推奨する。
+
+---
+
+## 追記23: 実ディスクでのRAID5(Z1相当)・RAID-Z3検証(追加)
+
+ユーザーから「RAID-Z2の実ディスク検証以外に、RAID-Z1とZ3の検証もして」
+との依頼があった。コード確認の結果、**このプロジェクトに「RAID-Z1」と
+いう名前のレベルは存在しない**(`vdev.rs`の`RaidLevel`列挙型は
+`Raid0/Raid1/Raid5/Raid6/Z2/Z3`のみ)ことが判明。単一XORパリティ(1台の
+故障まで耐える、ZFSのRAID-Z1相当)は`Raid5`として実装されているため、
+**RAID5(Z1相当)とRAID-Z3**を実ディスク4台(`/dev/sdb`〜`/dev/sde`)で
+検証した。
+
+### 検証内容・結果
+
+いずれも追記22のRAID-Z2検証と同じ手順(`orzctl create`→`orzctl mount`→
+書き込み→読み出し確認→`fusermount3 -u`でアンマウント→再度`orzctl mount`
+→再マウント後もファイル内容が読めることを確認→アンマウントでクリーン
+アップ)で実施し、**両方とも問題無く成功**した:
+
+- **RAID5**(`--level raid5`、単一XORパリティ、Z1相当): 作成・マウント・
+  書き込み・アンマウント・再マウント・データ永続化、全て成功。
+- **RAID-Z3**(`--level z3`、3重パリティ): 4台構成(=3パリティ+1データ相当の
+  最小構成)で作成・マウント・書き込み・アンマウント・再マウント・
+  データ永続化、全て成功。
+
+これで実ブロックデバイス上での動作確認は、既存のRAID-Z2に加えて
+RAID5(Z1相当)・RAID-Z3の3レベルで完了した。RAID0/RAID1/RAID6/RAID10は
+未検証(コアロジックのテストスイートでは全レベルとも既にパス済みだが、
+実ブロックデバイス経由でのマウント検証はRAID-Z2/RAID5/RAID-Z3の3つのみ)。
