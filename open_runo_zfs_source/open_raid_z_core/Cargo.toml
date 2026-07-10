@@ -40,7 +40,29 @@ hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
 # LinuxのFUSE(Filesystem in Userspace)への実Rustバインディング。
+#
+# 【重要・Android未対応の理由】Androidも`target_os`こそ別値だがLinuxカーネル
+# ベースであり、`/dev/fuse`のプロトコル自体はLinuxと同一のはずだが、
+# `fuser` 0.17のbuild.rsは`pure-rust`実装を`linux`/`freebsd`/`dragonfly`/
+# `openbsd`/`netbsd`にしか許可しておらず、`android`はこのリストに
+# 含まれていない。そのため`android`向けにこの依存を有効化すると
+# libfuse2/libfuse3をpkg-config経由で要求してしまい、Android NDK環境には
+# 存在しないためビルドが失敗する(このセッションで実機無しに`cargo check
+# --target aarch64-linux-android`で確認済み)。Android対応には
+# `fuser`側へのパッチ(pure-rust対象へ`android`を追加、実際には
+# プロトコルレベルで動くはず)が必要で、今回は見送った。詳細は
+# `contrib/systemd/MULTIPLATFORM_ROADMAP.md`参照。
 fuser = { version = "0.17", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Mac版の実マウント(fuse_mount.rs参照、Linux版と同じコードパスを共有)。
+# macOSでは`fuser`の`macfuse-4-compat` featureを有効にし、システムに
+# インストール済みのmacFUSE(またはFUSE-T)カーネル拡張/システム拡張越しに
+# 動作する(実機Apple製ハードウェアでの動作確認は未実施、後述)。
+# 一時的に`macos-no-mount`(マウント無しスタブ)へ切り替えれば、macFUSE
+# 未インストールのcrossビルド環境でも型チェックだけは通せる
+# (このセッションではその方法で型レベルの正しさのみ確認した)。
+fuser = { version = "0.17", optional = true, features = ["macfuse-4-compat"] }
 
 [build-dependencies]
 # NOTE: `dependencies` の winfsp と同じ optional 化が必須。ここを外すと

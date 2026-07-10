@@ -23,7 +23,10 @@ pub mod id_mapping;
 pub mod migrate;
 #[cfg(feature = "winfsp_backend")]
 pub mod mount;
-#[cfg(all(target_os = "linux", feature = "fuse_backend"))]
+// Linux・macOS(macFUSE/FUSE-T経由)で同じFUSEマウント実装を共有する。
+// Androidは`fuser`クレート側の制約により現状未対応(Cargo.tomlの
+// コメント、およびMULTIPLATFORM_ROADMAP.md参照)。
+#[cfg(all(any(target_os = "linux", target_os = "macos"), feature = "fuse_backend"))]
 pub mod fuse_mount;
 pub mod partition;
 pub mod pool;
