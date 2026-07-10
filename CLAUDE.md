@@ -10,8 +10,10 @@
 含む)を外部パッケージ/ライブラリとして直接依存させることはしない**。ただし
 各ツールが提供する**機能・API形状・体験には互換性を保ち**、Rust標準ライブラリ
 + tokio/hyper で自前実装して置き換える(依存だけを断ち、機能面の互換性は
-維持する)。**正本(一本化先)は `poem-cosmo-tauri`**。分岐していた
-`open-runo` はそちらへ統合し、今後更新しない。
+維持する)。**`poem-cosmo-tauri` と `open-runo` は2リポジトリを同時並行で
+開発する**(2026-07-10、再確定)。どちらもTauri/Poemを含まない構成。
+実装(例: crates/open-runo-routerのPoem→tokio/hyper移行)はpoem-cosmo-tauri
+側で先行させ、動作確認できたファイルをopen-runoへミラーする運用とする。
 
 ## フロントエンド
 
@@ -37,9 +39,9 @@
 
 ## 関連プロジェクト
 
-- **poem-cosmo-tauri**(正本・一本化先リポジトリ。Pure Rust + tokio/hyper
-  直接実装。WEBサイト開発用): https://github.com/aon-co-jp/poem-cosmo-tauri
-- **open-runo**(2026-07-10付けで廃止・poem-cosmo-tauriへ統合。今後更新しない):
+- **poem-cosmo-tauri**(poem-cosmo-tauriとopen-runoを同時並行開発。実装の
+  先行地点。Pure Rust + tokio/hyper直接実装): https://github.com/aon-co-jp/poem-cosmo-tauri
+- **open-runo**(poem-cosmo-tauriと同時並行開発。2026-07-10付けで開発再開):
   https://github.com/aon-co-jp/open-runo
 - **open-web-server**: https://github.com/aon-co-jp/open-web-server
 - **aruaru-db**: https://github.com/aon-co-jp/aruaru-db
