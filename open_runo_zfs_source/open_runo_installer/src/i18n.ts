@@ -69,6 +69,8 @@ const ja = {
   status_planned: "対応予定",
   status_unsupported: "未対応",
   no_gpu_detected: "GPU/NPUは検出されませんでした(CPUのみで動作します)。",
+  benchmark_title: "NPU/GPU/CPU性能ベンチマーク",
+  benchmark_run_button: "ベンチマーク実行",
   no_storage_detected: "ストレージメディアは検出されませんでした(管理者権限が必要な場合があります)。",
 };
 
@@ -118,6 +120,8 @@ const en: Dict = {
   status_planned: "Planned",
   status_unsupported: "Not Supported",
   no_gpu_detected: "No GPU/NPU detected (running on CPU only).",
+  benchmark_title: "NPU/GPU/CPU Performance Benchmark",
+  benchmark_run_button: "Run Benchmark",
   no_storage_detected: "No storage media detected (administrator privileges may be required).",
 };
 
@@ -157,6 +161,8 @@ const it: Dict = {
   status_planned: "Pianificato",
   status_unsupported: "Non supportato",
   no_gpu_detected: "Nessuna GPU/NPU rilevata (funziona solo su CPU).",
+  benchmark_title: "Benchmark delle prestazioni NPU/GPU/CPU",
+  benchmark_run_button: "Esegui benchmark",
   no_storage_detected: "Nessun supporto di archiviazione rilevato (potrebbero essere necessari privilegi di amministratore).",
 };
 
@@ -196,6 +202,8 @@ const fr: Dict = {
   status_planned: "Prévu",
   status_unsupported: "Non pris en charge",
   no_gpu_detected: "Aucun GPU/NPU détecté (fonctionne uniquement sur le CPU).",
+  benchmark_title: "Benchmark de performance NPU/GPU/CPU",
+  benchmark_run_button: "Lancer le benchmark",
   no_storage_detected: "Aucun support de stockage détecté (des privilèges administrateur peuvent être requis).",
 };
 
@@ -235,6 +243,8 @@ const de: Dict = {
   status_planned: "Geplant",
   status_unsupported: "Nicht unterstützt",
   no_gpu_detected: "Keine GPU/NPU erkannt (läuft nur auf der CPU).",
+  benchmark_title: "NPU/GPU/CPU-Leistungsbenchmark",
+  benchmark_run_button: "Benchmark ausführen",
   no_storage_detected: "Keine Speichermedien erkannt (Administratorrechte könnten erforderlich sein).",
 };
 
@@ -274,6 +284,8 @@ const ru: Dict = {
   status_planned: "Запланировано",
   status_unsupported: "Не поддерживается",
   no_gpu_detected: "GPU/NPU не обнаружены (работа только на CPU).",
+  benchmark_title: "Тест производительности NPU/GPU/CPU",
+  benchmark_run_button: "Запустить тест",
   no_storage_detected: "Носители не обнаружены (может потребоваться запуск от имени администратора).",
 };
 
@@ -313,6 +325,8 @@ const uk: Dict = {
   status_planned: "Заплановано",
   status_unsupported: "Не підтримується",
   no_gpu_detected: "GPU/NPU не виявлено (робота лише на CPU).",
+  benchmark_title: "Тест продуктивності NPU/GPU/CPU",
+  benchmark_run_button: "Запустити тест",
   no_storage_detected: "Носії не виявлено (можуть знадобитися права адміністратора).",
 };
 
@@ -352,6 +366,8 @@ const ar: Dict = {
   status_planned: "مخطط له",
   status_unsupported: "غير مدعوم",
   no_gpu_detected: "لم يتم اكتشاف أي GPU/NPU (يعمل على المعالج فقط).",
+  benchmark_title: "اختبار أداء NPU/GPU/CPU",
+  benchmark_run_button: "تشغيل الاختبار",
   no_storage_detected: "لم يتم اكتشاف وسائط تخزين (قد تكون صلاحيات المسؤول مطلوبة).",
 };
 
@@ -391,6 +407,8 @@ const fa: Dict = {
   status_planned: "برنامه‌ریزی‌شده",
   status_unsupported: "پشتیبانی نمی‌شود",
   no_gpu_detected: "هیچ GPU/NPU شناسایی نشد (فقط روی CPU اجرا می‌شود).",
+  benchmark_title: "آزمون کارایی NPU/GPU/CPU",
+  benchmark_run_button: "اجرای آزمون",
   no_storage_detected: "هیچ رسانه ذخیره‌سازی شناسایی نشد (ممکن است به دسترسی مدیر نیاز باشد).",
 };
 

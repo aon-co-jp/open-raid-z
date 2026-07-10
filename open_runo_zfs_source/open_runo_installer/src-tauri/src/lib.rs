@@ -4,7 +4,7 @@
 //! Cargo.tomlコメント参照)。
 
 use open_runo_installer_core::copilot::{Advice, AdviceContext, Advisor, HeuristicAdvisor};
-use open_runo_installer_core::hardware::{self, AcceleratorInfo, DiskInfo, OsCompatEntry};
+use open_runo_installer_core::hardware::{self, AcceleratorInfo, BenchmarkEntry, DiskInfo, OsCompatEntry};
 use open_runo_installer_core::zpool_wizard::{
     self, Raid10InitRequest, Raid10InitResult, ZpoolApplyRequest, ZpoolInitRequest,
     ZpoolInitResult,
@@ -57,6 +57,13 @@ fn init_zpool_apply(req: ZpoolApplyRequest) -> Result<ZpoolInitResult, String> {
     zpool_wizard::init_zpool_apply(req)
 }
 
+/// NPU/GPU/CPUの実効スループットを計測する(数百ms〜1秒程度かかるため、
+/// 「対応状況」パネルを開いたタイミングでのみ呼び出す想定)。
+#[tauri::command]
+fn benchmark_accelerators() -> Vec<BenchmarkEntry> {
+    hardware::benchmark_accelerators()
+}
+
 #[tauri::command]
 fn get_disk_advice() -> Vec<Advice> {
     let context = AdviceContext::scan_current_machine();
@@ -74,7 +81,8 @@ pub fn run() {
             init_raid10_preview,
             init_zpool_apply,
             get_disk_advice,
-            get_system_status
+            get_system_status,
+            benchmark_accelerators
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

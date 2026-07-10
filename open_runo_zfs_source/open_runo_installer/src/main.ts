@@ -45,6 +45,11 @@ interface Advice {
   detail: string;
 }
 
+interface BenchmarkEntry {
+  label: string;
+  throughput_mb_per_sec: number;
+}
+
 function renderStaticText(): void {
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
@@ -190,6 +195,23 @@ async function loadSystemStatus(): Promise<void> {
   }
 }
 
+async function runBenchmark(): Promise<void> {
+  const listEl = document.getElementById("benchmark_result_list")!;
+  listEl.innerHTML = "";
+  const loadingLi = document.createElement("li");
+  loadingLi.textContent = tDisplay("loading");
+  listEl.appendChild(loadingLi);
+
+  const results = await invoke<BenchmarkEntry[]>("benchmark_accelerators");
+
+  listEl.innerHTML = "";
+  for (const entry of results) {
+    const li = document.createElement("li");
+    li.textContent = `${entry.label}: ${entry.throughput_mb_per_sec.toFixed(1)} MB/s`;
+    listEl.appendChild(li);
+  }
+}
+
 function getSelectedDisks(): { path: string; size_bytes: number }[] {
   const checkboxes = document.querySelectorAll<HTMLInputElement>(".disk_select_checkbox:checked");
   return Array.from(checkboxes).map((cb) => ({
@@ -264,6 +286,7 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("refresh_button")?.addEventListener("click", () => void loadHardware());
   document.getElementById("system_status_toggle")?.addEventListener("click", openSystemStatusPanel);
   document.getElementById("system_status_close")?.addEventListener("click", closeSystemStatusPanel);
+  document.getElementById("benchmark_run_button")?.addEventListener("click", () => void runBenchmark());
   document.getElementById("raid_level")?.addEventListener("change", toggleMirrorWidthVisibility);
   document.getElementById("raid_form")?.addEventListener("submit", (e) => void submitRaidForm(e));
   document.getElementById("confirm_data_loss")?.addEventListener("change", updateApplyButtonState);

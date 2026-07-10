@@ -2256,3 +2256,68 @@ open-raid-z独自のRAID-Zプール用`fuse_mount.rs`は現状フラットな名
 
 `orzctl foreign [--format fat32|exfat] mount <VOLUME> <MOUNTPOINT>`
 (既存の`ls`/`cat`/`put`と同じ`--format`オプション体系)。
+
+---
+
+## 追記28: NPU/GPU性能ベンチマーク機能、GPUキュー優先度の引き上げ
+
+ユーザーから「PCやタブレットやスマホなどに搭載のNPUやGPUの性能も評価する
+機能を持たせて、いつも、一台から複数台やRAIDなどで、NPUやGPUを安定して
+使用したい場合に、他の処理よりも優先させてNPUパワーやGPUパワーの使用
+割合を確保が可能な機能を搭載させて」との要望があり、以下を実装した。
+
+### 1. ベンチマーク機能(`zfs_accel_hlsl::benchmark`)
+
+`benchmark_all_available()`が、検出できたCPU/NPU/GPUそれぞれについて
+RAID-Z1(XOR)パリティ計算を一定回数繰り返し、実測スループット(MB/s)を
+算出する。**「検出できたから使う」のではなく、実際にCPUより速いかどうかを
+数値で確認できる**ようにするのが目的(統合GPU等では逆にCPUの方が速い
+場合がある)。
+
+**実機での興味深い実測結果**: このマシン(NVIDIA GeForce GT 730)では、
+**CPU実装(375.8 MB/s)の方がGPU経由のディスパッチ(D3D12版55.7MB/s、
+Vulkan版26.1MB/s)より高速**だった。これは、この規模のデータ量では
+GPUへのディスパッチ+読み戻しのオーバーヘッドがCPU実装の処理時間を
+上回るため(GT730が2013年発売の非常に低性能なGPUであることも影響)。
+まさにこの機能の存在意義を実証する結果。
+
+- Tauriコマンド`benchmark_accelerators`として`open_runo_installer_core::
+  hardware::benchmark_accelerators()`経由で公開し、「対応状況」パネルに
+  「ベンチマーク実行」ボタンを追加(結果をラベル+MB/sで一覧表示)。
+
+### 2. GPUキュー優先度の引き上げ(「他処理より優先」機能)
+
+- **D3D12(Windows)**: コマンドキュー生成時の`Priority`を既定の`NORMAL`
+  (0)から`D3D12_COMMAND_QUEUE_PRIORITY_HIGH`(100)へ変更。
+  `GLOBAL_REALTIME`(10000)は管理者権限相当・システム全体への影響が
+  大きいため意図的に避けた(アプリケーション単位で安全に使える範囲の
+  優先度)。
+- **Vulkan(Linux/Mac/Android)**: キュー優先度は元々1.0(最大)を指定
+  済みだったため変更不要。意図を明示するコメントを追加。
+
+これにより、同じNPU/GPU上で動く他の通常優先度プロセス(ブラウザの動画
+再生、他アプリの描画等)より、このRAID-Zパリティ計算が優先的に
+スケジューリングされやすくなる(実際にドライバがどこまで尊重するかは
+実装依存だが、ポータブルに指定できる範囲では最大限の優先度を要求している)。
+
+### 3. 複数台(RAID構成)への拡張について
+
+今回実装したのは「各ノード上でNPU/GPU/CPUのどれが実際に速いか」を
+個別に計測・優先度を上げる機能。複数マシンにまたがるノード間の
+分散スケジューリング(あるノードのNPU/GPUが空いていれば別ノードの
+処理を肩代わりする、等)は、今回のスコープには含めておらず、将来の
+拡張範囲として残っている。
+
+### 検証状況
+
+- `cargo test --features gpu benchmark -- --nocapture`・
+  `cargo test --no-default-features --features vulkan benchmark
+  -- --nocapture`: 実機で成功、上記の実測値を確認。
+- `open_runo_installer_core`・`open_runo_installer/src-tauri`とも
+  ビルド成功。フロントエンド(`npx tsc --noEmit`・`npx vite build`)も
+  成功。ブラウザプレビューでボタンクリック→ローディング表示までの
+  UI配線を確認済み(Tauriバックエンド無しのため実データ取得は未検証、
+  既知の制約)。
+- リグレッション確認: `zfs_accel_hlsl`(no-default-features/gpu/vulkan
+  全パターン)・`open_raid_z_core`(WinFsp実マウント含むフルテスト)、
+  いずれも引き続き全パス。
