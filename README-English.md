@@ -79,6 +79,20 @@ and real GPU compute) requires a Windows machine with the WinFsp SDK and
 - [CLAUDE.md](CLAUDE.md) — dev rules / tech stack (canonical for this ecosystem)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — development history / handoff notes
 
+## Related Projects
+
+There is a target architecture combining `open-web-server` with
+`poem-cosmo-tauri`/`open-runo`, PostgreSQL, `aruaru-db`, and this
+repository, designed to prevent network loss of paid items and
+financial/securities data in 3D online games (quadruple-redundant
+transport and quadruple-redundant DB writes, revised 2026-07-11).
+open-raid-z participates as the disk-redundancy foundation, and its
+ZFS-like checksum/copy-on-write/snapshot characteristics have real,
+documented relevance to database (PostgreSQL/aruaru-db) read/write
+reliability as well (see
+[open-web-server](https://github.com/aon-co-jp/open-web-server)'s
+`README.md`/`CLAUDE.md` for the full picture with sources).
+
 ## License
 
 MPL-2.0.

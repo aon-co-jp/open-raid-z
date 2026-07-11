@@ -81,6 +81,21 @@ et `dxc`, et doit être vérifié séparément.
 - [CLAUDE.md](CLAUDE.md) — règles de développement / stack technique (référence de cet écosystème)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — historique de développement / notes de passation
 
+## Projets liés
+
+Il existe une architecture cible combinant `open-web-server` avec
+`poem-cosmo-tauri`/`open-runo`, PostgreSQL, `aruaru-db` et ce dépôt,
+conçue pour éviter la perte réseau des objets payants et des données
+financières/boursières dans les jeux en ligne 3D (transport à quadruple
+redondance et écritures BD à quadruple redondance, révisé le
+2026-07-11). open-raid-z y participe comme fondation de redondance
+disque, et ses caractéristiques de type ZFS (checksums, copy-on-write,
+snapshots) ont une pertinence réelle et documentée pour la fiabilité de
+lecture/écriture des bases de données (PostgreSQL/aruaru-db) également
+(voir le `README.md`/`CLAUDE.md` de
+[open-web-server](https://github.com/aon-co-jp/open-web-server) pour la
+vue d'ensemble avec les sources).
+
 ## Licence
 
 MPL-2.0.
