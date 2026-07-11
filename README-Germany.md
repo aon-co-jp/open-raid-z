@@ -80,6 +80,21 @@ und `dxc` und muss separat verifiziert werden.
 - [CLAUDE.md](CLAUDE.md) — Entwicklungsregeln / Tech-Stack (kanonisch für dieses Ökosystem)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — Entwicklungsverlauf / Übergabenotizen
 
+## Verwandte Projekte
+
+Es gibt eine Zielarchitektur, die `open-web-server` mit
+`poem-cosmo-tauri`/`open-runo`, PostgreSQL, `aruaru-db` und diesem
+Repository kombiniert, um den Netzwerkverlust von Bezahlgegenständen
+sowie Finanz-/Wertpapierdaten in 3D-Online-Spielen zu verhindern
+(vierfach redundanter Transport und vierfach redundante
+DB-Schreibvorgänge, überarbeitet am 2026-07-11). open-raid-z wirkt darin
+als Festplatten-Redundanzfundament mit, und seine ZFS-ähnlichen
+Eigenschaften (Prüfsummen, Copy-on-Write, Snapshots) haben ebenfalls
+reale, dokumentierte Relevanz für die Lese-/Schreibzuverlässigkeit von
+Datenbanken (PostgreSQL/aruaru-db) (vollständiges Bild mit Quellen in
+`README.md`/`CLAUDE.md` von
+[open-web-server](https://github.com/aon-co-jp/open-web-server)).
+
 ## Lizenz
 
 MPL-2.0.

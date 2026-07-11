@@ -78,6 +78,18 @@ WinFsp SDK・dxc・Windows SDKいずれも不要な**CPUフォールバック構
 - [CLAUDE.md](CLAUDE.md) — 開発ルール・技術スタック(このエコシステムの正本)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — 開発経緯・引き継ぎ記録
 
+## 関連プロジェクト
+
+`open-web-server` を中心に、`poem-cosmo-tauri`/`open-runo`・PostgreSQL・
+`aruaru-db`・このリポジトリを組み合わせ、3Dオンラインゲームの課金アイテム・
+金融/証券データをネットワーク上で紛失させないための目標アーキテクチャ
+(通信層四重化・DB書き込み四重化、2026-07-11改訂)がある。open-raid-zは
+このディスク冗長化基盤として関与し、実装するZFS類似のチェックサム/
+Copy-on-Write/スナップショット特性はDATABASE(PostgreSQL・aruaru-db)の
+読み書き信頼性とも実務上の関連性がある(詳細・出典は
+[open-web-server](https://github.com/aon-co-jp/open-web-server)の
+`README.md`/`CLAUDE.md`参照)。
+
 ## ライセンス
 
 MPL-2.0。

@@ -78,6 +78,18 @@ GPU 연산)는 Windows 실기기와 WinFsp SDK, `dxc`가 필요하며 별도로
 - [CLAUDE.md](CLAUDE.md) — 개발 규칙/기술 스택(이 생태계의 정본)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — 개발 경위/인수인계 기록
 
+## 관련 프로젝트
+
+`open-web-server`를 중심으로 `poem-cosmo-tauri`/`open-runo`·PostgreSQL·
+`aruaru-db`·이 저장소를 결합하여, 3D 온라인 게임의 유료 아이템 및 금융/
+증권 데이터가 네트워크상에서 손실되지 않도록 하는 목표 아키텍처가
+있습니다(통신 계층 4중화 및 DB 쓰기 4중화, 2026-07-11 개정). open-raid-z는
+디스크 이중화 기반으로 참여하며, 구현하는 ZFS 유사 체크섬/쓰기 시 복사
+(Copy-on-Write)/스냅샷 특성은 DATABASE(PostgreSQL/aruaru-db)의 읽기/쓰기
+신뢰성과도 실질적인 연관성이 있습니다(전체 내용과 출처는
+[open-web-server](https://github.com/aon-co-jp/open-web-server)의
+`README.md`/`CLAUDE.md` 참고).
+
 ## 라이선스
 
 MPL-2.0.

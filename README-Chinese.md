@@ -78,4 +78,15 @@ cargo test --no-default-features
 
 ## 许可证
 
+## 相关项目
+
+存在一个将 `open-web-server` 与 `poem-cosmo-tauri`/`open-runo`、
+PostgreSQL、`aruaru-db`、本仓库组合起来的目标架构,旨在防止 3D 网络游戏的
+付费道具及金融/证券数据在网络上丢失(通信层四重化与数据库写入四重化,
+2026-07-11 修订)。open-raid-z 作为该架构的磁盘冗余基础参与,其实现的
+类 ZFS 校验和/写时复制/快照特性与 DATABASE(PostgreSQL/aruaru-db)的
+读写可靠性也有实际的关联(完整内容及出处参见
+[open-web-server](https://github.com/aon-co-jp/open-web-server) 的
+`README.md`/`CLAUDE.md`)。
+
 MPL-2.0。

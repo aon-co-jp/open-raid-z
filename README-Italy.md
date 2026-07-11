@@ -79,6 +79,20 @@ WinFsp e `dxc` e deve essere verificato separatamente.
 - [CLAUDE.md](CLAUDE.md) — regole di sviluppo / stack tecnologico (canonico per questo ecosistema)
 - [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — cronologia di sviluppo / note di passaggio
 
+## Progetti correlati
+
+Esiste un'architettura obiettivo che combina `open-web-server` con
+`poem-cosmo-tauri`/`open-runo`, PostgreSQL, `aruaru-db` e questo
+repository, pensata per evitare la perdita in rete di oggetti a
+pagamento e dati finanziari/titoli in giochi online 3D (trasporto a
+quadrupla ridondanza e scritture DB a quadrupla ridondanza, rivisto il
+2026-07-11). open-raid-z vi partecipa come base di ridondanza del
+disco, e le sue caratteristiche simil-ZFS (checksum, copy-on-write,
+snapshot) hanno rilevanza reale e documentata anche per l'affidabilità
+di lettura/scrittura dei database (PostgreSQL/aruaru-db) (per il quadro
+completo con fonti vedi il `README.md`/`CLAUDE.md` di
+[open-web-server](https://github.com/aon-co-jp/open-web-server)).
+
 ## Licenza
 
 MPL-2.0.
