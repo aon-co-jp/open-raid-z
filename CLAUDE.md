@@ -15,6 +15,31 @@
 実装(例: crates/open-runo-routerのPoem→tokio/hyper移行)はpoem-cosmo-tauri
 側で先行させ、動作確認できたファイルをopen-runoへミラーする運用とする。
 
+## poem-cosmo-tauri と open-runo の違い(2026-07-11、ユーザー確認済み)
+
+両リポジトリは共通コアを持つが、**スコープが異なる別々のリポジトリ
+プロジェクト**であり、統合・一本化すべき対象ではない。
+
+- **共通コア**: WunderGraph Cosmo 有料版の機能(GraphQL Federation・
+  VersionlessAPI・SSO/SCIM/RBAC・Persisted Queries・キャッシュ制御・
+  細粒度レートリミット等)を、Cosmo自体には依存せず Rust + tokio/hyper で
+  自前再実装した OSS 版。これは両リポジトリで共通。
+- **poem-cosmo-tauri はさらに範囲が広い**: 共通コアに加えて、Poem(Rust
+  Web フレームワーク)と Tauri(デスクトップフロントエンドフレームワーク)
+  の**全機能を、AI駆動開発によって一から自作・再現する**ことを目指す
+  ——単にAPI形状・体験の互換性を保つだけでなく、両フレームワークの
+  機能そのものを自前実装として再現する、という上乗せの目標を持つ。
+  open-runo にはこの上乗せ目標はない。
+- 両リポジトリは共通コアを持つが**全く違うリポジトリのプロジェクト**であり、
+  「ミラー」作業は必ずしも「同一スコープの複製」を意味しない——
+  poem-cosmo-tauri 固有の Poem/Tauri 機能再現タスクが open-runo に
+  存在理由なく持ち込まれることもあれば、逆に open-runo が独自に先行実装し
+  poem-cosmo-tauri へ逆ミラーするケースもある(例:
+  `open-runo-feature-flags`、2026-07-11)。新しいタスクを検討する際は、
+  `docs/cosmo-parity.md` 4a節のギャップ一覧に加えて、poem-cosmo-tauri
+  側では「これは Poem または Tauri の何を再現するか」という軸でも
+  評価すること。
+
 ## フロントエンド(2026-07-10、方針更新)
 
 - Tauriパッケージには直接依存しない。ただしTauriのデスクトップUI体験・
