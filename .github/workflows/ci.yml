@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# open_raid_z_core は既定で winfsp_backend / gpu_accel を有効にしているため
+# (Windows SDK・WinFspヘッダ・dxcが必要)、Linux runner では
+# --no-default-features + foreign_fs_fat/foreign_fs_exfat のみを有効にして
+# ビルド・テストする(CLAUDE.md §運用ルール参照)。
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: open_runo_zfs_source/open_raid_z_core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check (no-default-features + foreign_fs)
+        run: cargo check --no-default-features --features foreign_fs_fat,foreign_fs_exfat
+
+      - name: cargo test (no-default-features + foreign_fs)
+        run: cargo test --no-default-features --features foreign_fs_fat,foreign_fs_exfat
+
+  fmt-and-clippy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: open_runo_zfs_source/open_raid_z_core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust with clippy/rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy (no-default-features + foreign_fs)
+        run: cargo clippy --no-default-features --features foreign_fs_fat,foreign_fs_exfat -- -D warnings
