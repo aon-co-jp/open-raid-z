@@ -1695,3 +1695,18 @@ Vulkan Compute対応・`foreign_fs`(既存フォーマット読み書き)・
 8. (これまでの残課題)WDK導入・Windowsカーネルドライバ開発、
    Windows VMのOpenSSH Serverインストール続行、AD/SAM実連携、
    他社製RAID形式(mdadm/Storage Spaces)との相互運用。
+
+## 2026-07-13 CI (GitHub Actions) 追加
+
+未着手項目リストの「9. CI(GitHub Actions)追加」を解消。
+`.github/workflows/ci.yml` を新規追加(`open_raid_z_core`のみ対象):
+- `build-and-test`: `cargo check`/`cargo test` を
+  `--no-default-features --features foreign_fs_fat,foreign_fs_exfat` で実行
+  (winfsp_backend/gpu_accelはWindows SDK・dxcが必要なためLinux runnerでは無効化)
+- `fmt-and-clippy`: `cargo fmt --check` + `cargo clippy -- -D warnings`
+
+**注意**: このサンドボックス環境にはRustツールチェーンが未導入のため、
+ワークフロー自体をローカルで`cargo`実行検証することはできなかった。
+featureの組み合わせ(`foreign_fs_fat,foreign_fs_exfat`)は前回セッションで
+実際にビルド・テスト済みであることをHANDOFF記録から確認して採用したが、
+実際のGitHub Actions実行結果(初回push後)を必ず確認すること。
