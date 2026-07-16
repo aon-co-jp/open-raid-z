@@ -1,0 +1,68 @@
+// RAID-Z2 (二重パリティ P/Q) 用 Reed-Solomon Compute Shader (GLSL/Vulkan版)
+// shaders/raidz2_parity.hlsl(D3D12/DirectML版)と全く同じアルゴリズム。
+// Windows以外(Linux/Mac/Android等)のGPU/NPUをVulkan Compute経由で
+// 使うための実装(crate::vulkan_compute参照)。
+//
+// GF(2^8)(既約多項式 x^8+x^4+x^3+x^2+1 = 0x11d、生成元2)上で
+// P = XOR(D_i)、Q = XOR(D_i * 2^i) を計算する。
+// 対応するCPU参照実装・テストは ../src/raidz23_parity.rs, ../src/galois.rs を参照。
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer DataStripes {
+    uint data[];
+};
+layout(std430, binding = 1) writeonly buffer ParityPOut {
+    uint parity_p[];
+};
+layout(std430, binding = 2) writeonly buffer ParityQOut {
+    uint parity_q[];
+};
+
+layout(push_constant) uniform Params {
+    uint num_disks;
+    uint stripe_len_words;
+};
+
+// GF(2^8)上で1バイトを2倍する(既約多項式0x11dの下位8bit=0x1dで還元)。
+uint gf_mul2_byte(uint b) {
+    uint shifted = (b << 1) & 0xFFu;
+    uint hibit = (b >> 7) & 1u;
+    return shifted ^ (hibit * 0x1Du);
+}
+
+// 32bit語にパックされた4バイトそれぞれをGF(2^8)上で独立に2倍する。
+uint gf_mul2_packed(uint v) {
+    uint b0 = gf_mul2_byte(v & 0xFFu);
+    uint b1 = gf_mul2_byte((v >> 8) & 0xFFu);
+    uint b2 = gf_mul2_byte((v >> 16) & 0xFFu);
+    uint b3 = gf_mul2_byte((v >> 24) & 0xFFu);
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+void main() {
+    uint word_idx = gl_GlobalInvocationID.x;
+    if (word_idx >= stripe_len_words) {
+        return;
+    }
+
+    uint p_acc = 0u;
+    uint q_acc = 0u;
+
+    for (uint disk = 0u; disk < num_disks; ++disk) {
+        uint word = data[disk * stripe_len_words + word_idx];
+        p_acc ^= word;
+
+        // term = word * 2^disk (各バイトレーンを独立にdisk回2倍する)
+        uint term = word;
+        for (uint k = 0u; k < disk; ++k) {
+            term = gf_mul2_packed(term);
+        }
+        q_acc ^= term;
+    }
+
+    parity_p[word_idx] = p_acc;
+    parity_q[word_idx] = q_acc;
+}

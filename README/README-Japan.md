@@ -46,14 +46,15 @@ id/class名など、このプロジェクト自身が定義する識別子は、
 - **NTFS互換**: ACL(NFSv4⇔NTFS)・UID/GID⇔SIDマッピング(ローカルSAM/ADドメインのRIDベース決定論的マッピング)
 - **exFAT互換**: ファイル属性・タイムスタンプの相互変換、4GB超ファイル/大容量ボリューム対応
 - **GPU/NPUハードウェアアクセラレーション**: DirectX 12 Compute + DirectMLでRAID-Z1/Z2/Z3のパリティ生成をオフロード(ハードウェアが無い場合はCPUへ自動フォールバック)。さらに、GF(2^8)の係数倍をGF(2)ビット行列に変換して1回のDirectML GEMM呼び出しへ帰着させる方式(`zfs_accel_hlsl::dml_gemm`)も実装し、実機GPUで正しさを検証済み(実機NPUでは未検証)。この仕組みはscrub/resilverが破損を検知した際の復旧計算(=パリティチェック)にも実際に配線済み。NPU専用のシェーダ経路(`raidnpu_*.hlsl`)も用意し、将来の実機NPUでの検証・最適化に備えている
-- **Vulkan Computeアクセラレーション(Windows以外)**: DirectX/DirectMLはWindows専用APIのため、Linux/Mac/Android向けに`ash`クレート経由のVulkan Compute実装(`zfs_accel_hlsl::vulkan_compute`、`vulkan` feature)を追加。RAID-Z1のXORパリティ生成が実機GPU(NVIDIA GeForce GT 730、Vulkan 1.2)で正しく動作することを確認済み
-- **既存フォーマットの読み書きブリッジ(`foreign_fs`)**: open-raid-z独自のプール形式とは別に、他OSが作成した既存のFAT32/FAT16ボリューム(USBメモリ/microSD/CFカード等)を読み書き、exFATボリュームを読み取り可能(exFATは上流クレートの制約により現時点で読み取り専用)。`orzctl foreign`(`ls`/`cat`/`put`)から操作できる
+- **Vulkan Computeアクセラレーション(Windows以外)**: DirectX/DirectMLはWindows専用APIのため、Linux/Mac/Android向けに`ash`クレート経由のVulkan Compute実装(`zfs_accel_hlsl::vulkan_compute`、`vulkan` feature)を追加。RAID-Z1のXORパリティ生成に加え、RAID-Z2/Z3(P/Q/Rパリティ生成)も`raidz2_parity.comp`/`raidz3_parity.comp`(GLSL)経由でVulkan Compute化済み。全て実機GPU(NVIDIA GeForce GT 730、Vulkan 1.2)でCPU参照実装と一致することを確認済み
+- **NPU/GPU/CPU性能ベンチマーク**: 検出できた各アクセラレータの実効スループット(MB/s)を実際に計測できる機能(`zfs_accel_hlsl::benchmark`、インストーラーの「対応状況」パネルから実行可能)。「検出できたから使う」のではなく実際にCPUより速いかを数値で確認できる(低性能な統合GPU等ではCPUの方が速い場合もある)。あわせて、GPU/NPUの計算キュー優先度を(D3D12は`HIGH`、Vulkanは最大値へ)引き上げ、同じハードウェア上で動く他プロセスより優先的にスケジューリングされやすくした
+- **既存フォーマットの読み書きブリッジ(`foreign_fs`)**: open-raid-z独自のプール形式とは別に、他OSが作成した既存のFAT32/FAT16・exFATボリューム(USBメモリ/microSD/CFカード等)を読み書き両対応で扱える(`hadris-fat`クレート採用により、exFATも読み書き両対応)。`orzctl foreign`(`ls`/`cat`/`put`)から操作できるほか、`mount`サブコマンドでLinux/macOS上へ実際にマウントし、本物のディレクトリ階層(mkdir/rmdir/リネーム含む)としてそのまま使うこともできる
 - **インストーラーの「対応状況」パネル**: ボタンで開閉できるパネルで、現在のOSの対応状況、検出された全GPU/NPU(Intel/AMD/NVIDIA/Qualcommベンダー判定付き、複数対応)、検出されたストレージメディアの種別(HDD/SSD/NVMe/USB/SD/CF)を一覧表示
 - **実ディスクへのzpool適用**: インストーラーのzpool初期化ウィザードに、スクラッチイメージでのプレビューだけでなく実際の物理ディスク(`\\.\PhysicalDriveN`)へ適用するコマンド(`init_zpool_apply`)を追加。既存データの消去を明示的に確認するフラグが無いと動作しない安全設計
 - **Copilot風構成アドバイザー**: ディスク構成・アクセラレータ・CPUコア数から推奨RAIDレベルを提案(ヒューリスティック版。ローカルLLM検知の骨組みも搭載)。ロジックは`open_runo_installer_core`としてTauriから独立しており、Linux/macOS上でも`cargo test`で検証可能
 - **WinFsp実マウント(Windows)**: 実際にWindows上のドライブレターとしてマウント可能。プール内の全データセットがそれぞれ1ファイルとして見え、バイト単位の任意オフセット読み書き・ファイルの新規作成/削除/名前変更/追記/切り詰めに対応(現状はルート直下のフラットな名前空間のみで、サブディレクトリは未対応)。実機での読み書き・作成・削除・リネーム・追記・切り詰めをそれぞれ実際にマウントした状態で検証済み。
 - **FUSE実マウント(Linux)**: WinFsp版と同じ`Pool`をそのままLinux上へマウント可能(`fuse_mount.rs`)。機能はWindows版と同等(作成/削除/リネーム/追記/切り詰め)で、実際にWSL2 Ubuntu上でマウント・`std::fs`経由の読み書きまで検証済み。inodeベースの設計のため、WinFsp版にある「リネーム中に別ハンドルが古い名前を参照し続ける」という既知の制約はこちらには無い。`fuser`クレートには`macfuse-4-compat` featureがあり、将来macOS(データボリュームとして、起動ディスクとしてではない)にも同じ設計を拡張できる見込み。
-- **多言語対応**: インストーラー(OpenRaidZインストーラー)は英語をデフォルトに、10言語のUI言語切り替えに対応(インストール後も変更可能)
+- **多言語対応**: インストーラー(OpenRaidZインストーラー)は英語をデフォルトに、世界9ヶ国語(英語・日本語・イタリア語・フランス語・ドイツ語・ロシア語・ウクライナ語・アラビア語・ペルシャ語)のUI言語切り替えに対応(インストール後も変更可能)。既定でハイブリッド表示(1番目の言語+選択可能な第二言語を併記、第二言語の既定は日本語)がONになっている
 - **既存データの移行ツール(`migrate`モジュール、実験的)**: 既存のNTFS等のディレクトリをプールへコピーして取り込む。コピー元(ソース)には一切書き込まないため、**起動中のWindowsを止めずに**実行できる。ただし**現在起動中のシステムドライブ(C:等)自体をその場でRAID形式へ無停止変換することはできない**(OS自身が使用中のボリュームを、そのOS上のソフトが書き換えることは原理的に不可能なため)。あくまで「別の場所(プール)へコピーする」ツール。現状はライブラリ関数のみでCLI/GUIは未実装、サブディレクトリは区切り文字で1階層に平坦化される
 - **メタデータの永続化(`Pool::save`/`Pool::open`)**: データセット一覧・ストライプ割当・スナップショット等の管理情報を、プール内の予約領域(スーパーブロック)へ保存・復元できる。以前はこの仕組みが無く、実データのバイト列はディスクに残っていても、プロセスを終了(アンマウント)すると「どのファイルがどこにあるか」という情報ごと失われていた。Windows(WinFsp)・Linux(FUSE)いずれも、マウント中の変更操作のたびに自動保存し、**実際にアンマウント→再マウントしてもファイルが残ること**を実機で検証済み。
 
@@ -165,6 +166,11 @@ File Provider Extension経由の閲覧に限定される見込み)は
 ネイティブAPI(Mac=Metal Performance Shaders、Android=NNAPI等)へ順次
 対応していく方針。また、mdadm(Linux)やStorage Spaces(Windows)といった
 **他社製RAID形式との相互運用**も将来的な対応範囲として検討中。
+
+## 既存環境からのお引越し(データ移行)
+
+既存のZFS/NTFS/ext4/他社製RAID等から`open-raid-z`へデータを移行する手順は[MIGRATION.md](../MIGRATION.md)を参照してください。
+
 
 ## ライセンス
 

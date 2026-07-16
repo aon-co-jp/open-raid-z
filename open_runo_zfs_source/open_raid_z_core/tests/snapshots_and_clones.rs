@@ -93,6 +93,9 @@ fn destroying_dataset_keeps_snapshot_data_alive_via_refcount() {
     let dir = scratch_dir("keepalive");
     let mut pool = build_pool(&dir);
     let sb = stripe_bytes();
+    // メタデータ予約ストライプ数は`total_stripes`に応じて動的に決まるため、
+    // ハードコードせず、構築直後の実際の使用済みストライプ数から逆算する。
+    let reserved = pool.usage().used_stripes;
 
     pool.create_dataset("ds").unwrap();
     pool.grow_dataset("ds", sb).unwrap();
@@ -110,8 +113,8 @@ fn destroying_dataset_keeps_snapshot_data_alive_via_refcount() {
     let used_before_destroy = pool.usage().used_stripes;
     assert!(used_before_destroy > 0, "スナップショットがストライプを保持しているはず");
     pool.destroy_snapshot("ds", "keep").unwrap();
-    // メタデータ用の予約ストライプぶん、常に1が残る。
-    assert_eq!(pool.usage().used_stripes, 1);
+    // メタデータ用の予約ストライプぶんが常に残る。
+    assert_eq!(pool.usage().used_stripes, reserved);
 
     std::fs::remove_dir_all(&dir).ok();
 }

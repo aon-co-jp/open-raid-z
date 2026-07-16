@@ -18,6 +18,14 @@
             <span data-i18n="language_label">言語</span>
             <select id="lang_select"></select>
           </label>
+          <label class="lang_switcher">
+            <span data-i18n="second_language_label">第二言語</span>
+            <select id="lang2_select"></select>
+          </label>
+          <label class="checkbox_row">
+            <input type="checkbox" id="hybrid_toggle" />
+            <span data-i18n="hybrid_toggle_label">ハイブリッド表示</span>
+          </label>
         </div>
       </header>
 
@@ -38,6 +46,10 @@
 
         <h3 data-i18n="system_status_storage">検出されたストレージメディア</h3>
         <ul id="system_status_storage_list"></ul>
+
+        <h3 data-i18n="benchmark_title">NPU/GPU/CPU性能ベンチマーク</h3>
+        <button id="benchmark_run_button" type="button" data-i18n="benchmark_run_button">ベンチマーク実行</button>
+        <ul id="benchmark_result_list"></ul>
       </section>
 
       <section class="panel">

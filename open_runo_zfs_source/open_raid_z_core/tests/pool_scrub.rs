@@ -14,7 +14,12 @@ use open_raid_z_core::raid10::Raid10Vdev;
 use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
-const CHUNK_SIZE: usize = 64;
+// 512(以前は64): メタデータ予約ストライプ数はチャンクサイズに反比例して
+// 増える(`pool.rs`の`superblock_stripe_count`参照)。64バイトのように
+// 極端に小さいチャンクサイズは実運用ではまず使われない非現実的な値であり、
+// このテストの意図(scrub/resilverの検証)には無関係なので、予約比率が
+// 過大にならない程度の現実的な値へ引き上げた。
+const CHUNK_SIZE: usize = 512;
 const NUM_STRIPES: u64 = 8;
 
 fn scratch_dir(name: &str) -> PathBuf {
@@ -54,9 +59,13 @@ fn pool_scrub_detects_and_heals_corruption_on_a_raidz_backed_pool() {
     let mut pool = Pool::new(vdev, NUM_STRIPES);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (NUM_STRIPES - 2) * stripe_bytes()).unwrap();
+    // メタデータ予約ストライプ数は`total_stripes`に応じて動的に決まるため、
+    // ハードコードせず実際の空き容量から逆算する。CoW書き込み用に1ストライプ
+    // ぶんの余白を残す。
+    let usable_stripes = pool.usage().free_stripes - 1;
+    pool.grow_dataset("tank", usable_stripes * stripe_bytes()).unwrap();
 
-    let payload: Vec<u8> = (0..(NUM_STRIPES - 2) * stripe_bytes()).map(|i| (i % 251) as u8).collect();
+    let payload: Vec<u8> = (0..usable_stripes * stripe_bytes()).map(|i| (i % 251) as u8).collect();
     pool.write("tank", 0, &payload).unwrap();
 
     // Poolを経由したままではディスクへ直接アクセスできないため、
@@ -68,7 +77,7 @@ fn pool_scrub_detects_and_heals_corruption_on_a_raidz_backed_pool() {
     assert_eq!(report.stripes_scanned, NUM_STRIPES);
     assert_eq!(report.corruptions_healed, 1);
 
-    assert_eq!(pool.read("tank", 0, (NUM_STRIPES - 2) * stripe_bytes()).unwrap(), payload);
+    assert_eq!(pool.read("tank", 0, usable_stripes * stripe_bytes()).unwrap(), payload);
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -87,18 +96,22 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     let mut pool = Pool::new(vdev, total_stripes);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (total_stripes - 2) * CHUNK_SIZE as u64).unwrap();
+    // メタデータ予約ストライプ数は`total_stripes`に応じて動的に決まるため、
+    // ハードコードせず実際の空き容量から逆算する。CoW書き込み用に1ストライプ
+    // ぶんの余白を残す。
+    let usable_stripes = pool.usage().free_stripes - 1;
+    pool.grow_dataset("tank", usable_stripes * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..(total_stripes - 2) * CHUNK_SIZE as u64)
+    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64)
         .map(|i| (i % 251) as u8)
         .collect();
     pool.write("tank", 0, &payload).unwrap();
 
-    // グループ0の2台目のミラーメンバー(グローバルストライプ2、内部ストライプ1。
-    // ストライプ0はメタデータ用に予約されておりデータセットの範囲外、
-    // かつ2グループのラウンドロビンでグループ0が担当するストライプは
-    // 偶数番のグローバルストライプのため、実際に書き込み済みの範囲を
-    // 確実に破壊できるストライプ2を選ぶ)を直接破壊。
+    // グループ0の2台目のミラーメンバー(グローバルストライプ2、内部ストライプ1)を
+    // 直接破壊する。メタデータ予約ストライプ数が変わっても、2グループの
+    // ラウンドロビンでグループ0が担当するのは偶数番のグローバルストライプで
+    // あり、実際に書き込み済みの範囲(先頭から`usable_stripes`ぶん)に
+    // グローバルストライプ2が含まれることに変わりは無い。
     let inner_stripe_offset = CHUNK_SIZE as u64; // グローバルストライプ2 = グループ0の内部ストライプ1
     let mut garbage =
         pool.vdev_mut().group_devices_mut(0)[1].read_at(inner_stripe_offset, CHUNK_SIZE).unwrap();
@@ -113,10 +126,7 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     assert_eq!(report.stripes_scanned, total_stripes);
     assert_eq!(report.corruptions_healed, 1);
 
-    assert_eq!(
-        pool.read("tank", 0, (total_stripes - 2) * CHUNK_SIZE as u64).unwrap(),
-        payload
-    );
+    assert_eq!(pool.read("tank", 0, usable_stripes * CHUNK_SIZE as u64).unwrap(), payload);
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -137,9 +147,10 @@ fn pool_vdev_mut_allows_raid10_specific_resilver_not_yet_unified_in_the_vdev_tra
     let mut pool = Pool::new(vdev, total_stripes);
 
     pool.create_dataset("tank").unwrap();
-    pool.grow_dataset("tank", (total_stripes - 2) * CHUNK_SIZE as u64).unwrap();
+    let usable_stripes = pool.usage().free_stripes - 1;
+    pool.grow_dataset("tank", usable_stripes * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..(total_stripes - 2) * CHUNK_SIZE as u64)
+    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64)
         .map(|i| (i * 7 % 251) as u8)
         .collect();
     pool.write("tank", 0, &payload).unwrap();
@@ -149,10 +160,7 @@ fn pool_vdev_mut_allows_raid10_specific_resilver_not_yet_unified_in_the_vdev_tra
     pool.vdev_mut().group_devices_mut(1)[0].failed = false; // 交換直後、中身は信用しない
     pool.vdev_mut().resilver(1, 0, NUM_STRIPES).unwrap();
 
-    assert_eq!(
-        pool.read("tank", 0, (total_stripes - 2) * CHUNK_SIZE as u64).unwrap(),
-        payload
-    );
+    assert_eq!(pool.read("tank", 0, usable_stripes * CHUNK_SIZE as u64).unwrap(), payload);
 
     std::fs::remove_dir_all(&dir).ok();
 }

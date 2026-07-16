@@ -101,7 +101,24 @@ pub fn compute_pq_accelerated(
                     }
                 }
             }
-            #[cfg(not(feature = "gpu"))]
+            // Windows以外(Linux/Mac/Android等)向け: `vulkan` featureが有効なら
+            // Vulkan Compute経由でディスパッチする(`gpu`はWindows専用APIの
+            // ため、`gpu`が無効なビルドではこちらが実運用経路になる)。
+            #[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz2_parity.spv"));
+                match compute_pq_vulkan(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Vulkanディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pq(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(any(feature = "gpu", feature = "vulkan")))]
             {
                 compute_pq(data_disks, gf)
             }
@@ -125,7 +142,23 @@ pub fn compute_pq_accelerated(
                     }
                 }
             }
-            #[cfg(not(feature = "gpu"))]
+            // NPU側もVulkan経路では現状GPU版と同一シェーダを使う(D3D12版と
+            // 同様の理由、`raidz_parity.rs`のXOR版と揃えた設計)。
+            #[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz2_parity.spv"));
+                match compute_pq_vulkan(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Vulkanディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pq(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(any(feature = "gpu", feature = "vulkan")))]
             {
                 compute_pq(data_disks, gf)
             }
@@ -162,6 +195,36 @@ fn compute_pq_gpu(
     Ok((p, q))
 }
 
+/// Windows以外(Linux/Mac/Android等)向け: Vulkan Compute経由のP/Qディスパッチ
+/// (`raidz2_parity.comp`由来のSPIR-V)。
+#[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+fn compute_pq_vulkan(
+    data_disks: &[&[u8]],
+    shader: &[u8],
+) -> crate::vulkan_compute::VulkanComputeResult<(Vec<u8>, Vec<u8>)> {
+    let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
+    assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");
+
+    let num_disks = data_disks.len();
+    let stripe_len_words = stripe_len / 4;
+    let mut input = Vec::with_capacity(num_disks * stripe_len_words);
+    for disk in data_disks {
+        input.extend_from_slice(&crate::vulkan_compute::bytes_to_words(disk));
+    }
+
+    let outputs = crate::vulkan_compute::dispatch_parity_shader_vulkan(
+        shader,
+        num_disks as u32,
+        stripe_len_words as u32,
+        &input,
+        2,
+    )?;
+
+    let p = crate::vulkan_compute::words_to_bytes(&outputs[0]);
+    let q = crate::vulkan_compute::words_to_bytes(&outputs[1]);
+    Ok((p, q))
+}
+
 /// RAID-Z3用P/Q/Rパリティ生成のGPU/NPUディスパッチ版。
 ///
 /// `shaders/raidz3_parity.hlsl`(ビルド時にDXILへ事前コンパイル済み)を
@@ -188,7 +251,21 @@ pub fn compute_pqr_accelerated(
                     }
                 }
             }
-            #[cfg(not(feature = "gpu"))]
+            #[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz3_parity.spv"));
+                match compute_pqr_vulkan(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Vulkanディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pqr(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(any(feature = "gpu", feature = "vulkan")))]
             {
                 compute_pqr(data_disks, gf)
             }
@@ -211,7 +288,21 @@ pub fn compute_pqr_accelerated(
                     }
                 }
             }
-            #[cfg(not(feature = "gpu"))]
+            #[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+            {
+                let shader = include_bytes!(concat!(env!("OUT_DIR"), "/raidz3_parity.spv"));
+                match compute_pqr_vulkan(data_disks, shader) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Vulkanディスパッチに失敗したため、CPU実装にフォールバックします (device={}, error={e})",
+                            device.adapter_description
+                        );
+                        compute_pqr(data_disks, gf)
+                    }
+                }
+            }
+            #[cfg(not(any(feature = "gpu", feature = "vulkan")))]
             {
                 compute_pqr(data_disks, gf)
             }
@@ -246,6 +337,37 @@ fn compute_pqr_gpu(
     let p = crate::compute::words_to_bytes(&outputs[0]);
     let q = crate::compute::words_to_bytes(&outputs[1]);
     let r = crate::compute::words_to_bytes(&outputs[2]);
+    Ok((p, q, r))
+}
+
+/// Windows以外(Linux/Mac/Android等)向け: Vulkan Compute経由のP/Q/Rディスパッチ
+/// (`raidz3_parity.comp`由来のSPIR-V)。
+#[cfg(all(feature = "vulkan", not(feature = "gpu")))]
+fn compute_pqr_vulkan(
+    data_disks: &[&[u8]],
+    shader: &[u8],
+) -> crate::vulkan_compute::VulkanComputeResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
+    assert_eq!(stripe_len % 4, 0, "GPUディスパッチは4バイト境界のストライプ長のみ対応");
+
+    let num_disks = data_disks.len();
+    let stripe_len_words = stripe_len / 4;
+    let mut input = Vec::with_capacity(num_disks * stripe_len_words);
+    for disk in data_disks {
+        input.extend_from_slice(&crate::vulkan_compute::bytes_to_words(disk));
+    }
+
+    let outputs = crate::vulkan_compute::dispatch_parity_shader_vulkan(
+        shader,
+        num_disks as u32,
+        stripe_len_words as u32,
+        &input,
+        3,
+    )?;
+
+    let p = crate::vulkan_compute::words_to_bytes(&outputs[0]);
+    let q = crate::vulkan_compute::words_to_bytes(&outputs[1]);
+    let r = crate::vulkan_compute::words_to_bytes(&outputs[2]);
     Ok((p, q, r))
 }
 

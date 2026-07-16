@@ -206,10 +206,16 @@ pub(crate) fn dispatch_parity_shader(
 ) -> ComputeResult<Vec<Vec<u32>>> {
     let (_accel, device) = create_best_device()?;
 
+    // 優先度をNORMAL(既定値0)ではなくHIGH(100)にすることで、同じGPU上で
+    // 動く他の通常優先度プロセス(ブラウザの動画再生・他アプリの描画等)より
+    // 先にこのRAID-Zパリティ計算がスケジューリングされやすくする
+    // (`GLOBAL_REALTIME`は管理者権限相当・システム全体への影響が大きい
+    // ため意図的に避けている。HIGHはアプリケーション単位で安全に使える
+    // 範囲の優先度)。詳細は`crate::priority`モジュールのドキュメント参照。
     let queue: ID3D12CommandQueue = unsafe {
         device.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC {
             Type: D3D12_COMMAND_LIST_TYPE_COMPUTE,
-            Priority: 0,
+            Priority: D3D12_COMMAND_QUEUE_PRIORITY_HIGH.0,
             Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
             NodeMask: 0,
         })?

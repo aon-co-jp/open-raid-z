@@ -134,9 +134,11 @@ fn write_fails_cleanly_when_pool_has_no_free_stripe_for_cow() {
     let sb = stripe_bytes();
 
     pool.create_dataset("ds").unwrap();
-    // NUM_STRIPESのうち1ストライプはメタデータ用に予約されているため、
-    // 実際に確保可能な容量は(NUM_STRIPES - 1)ストライプぶん。
-    pool.grow_dataset("ds", (NUM_STRIPES - 1) * sb).unwrap(); // プール容量を使い切る
+    // メタデータ用に予約されるストライプ数は`total_stripes`に応じて動的に
+    // 決まる(`pool.rs`の`superblock_stripe_count`参照)ため、ハードコードせず
+    // 実際の空き容量を問い合わせてからそれを使い切る。
+    let usable_stripes = pool.usage().free_stripes;
+    pool.grow_dataset("ds", usable_stripes * sb).unwrap(); // プール容量を使い切る
     assert_eq!(pool.usage().free_stripes, 0);
 
     let v = vec![0x42u8; sb as usize];
