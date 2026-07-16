@@ -84,5 +84,7 @@ fn main() {
         let glslc = find_glslc();
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
         compile_glsl_shader(&glslc, "shaders/raidz_parity.comp", &out_dir, "raidz_parity.spv");
+        compile_glsl_shader(&glslc, "shaders/raidz2_parity.comp", &out_dir, "raidz2_parity.spv");
+        compile_glsl_shader(&glslc, "shaders/raidz3_parity.comp", &out_dir, "raidz3_parity.spv");
     }
 }

@@ -10,7 +10,11 @@ use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;
-const NUM_STRIPES: u64 = 8;
+// メタデータ予約ストライプ数(`total_stripes`に応じて動的に決まる。
+// `pool.rs`の`superblock_stripe_count`参照)を差し引いても、alpha/beta
+// それぞれに3ストライプ+CoW書き込み用の余白1ストライプを確保できるよう、
+// 以前(予約1ストライプ前提)の8から12へ増やしてある。
+const NUM_STRIPES: u64 = 12;
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("open_runo_pool_it_{name}_{}", std::process::id()));
@@ -41,10 +45,11 @@ fn pool_carves_out_multiple_datasets_without_being_bound_to_a_single_disk() {
     let mut pool = build_pool(&dir);
     let stripe_bytes = data_disk_bytes_per_stripe();
 
-    // 1ストライプはメタデータ(スーパーブロック)用に予約されているため、
-    // 実際に使える空き容量は(NUM_STRIPES - 1)。
+    // メタデータ(スーパーブロック)用に予約されるストライプ数は`total_stripes`
+    // に応じて動的に決まる(`pool.rs`の`superblock_stripe_count`参照)ため、
+    // ハードコードせず、構築直後の実際の空き容量から`reserved`を逆算する。
     assert_eq!(pool.usage().total_stripes, NUM_STRIPES);
-    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - 1);
+    let reserved = NUM_STRIPES - pool.usage().free_stripes;
 
     pool.create_dataset("alpha").unwrap();
     pool.create_dataset("beta").unwrap();
@@ -56,9 +61,9 @@ fn pool_carves_out_multiple_datasets_without_being_bound_to_a_single_disk() {
 
     assert_eq!(pool.dataset_size("alpha").unwrap(), 3 * stripe_bytes);
     assert_eq!(pool.dataset_size("beta").unwrap(), 3 * stripe_bytes);
-    // 6 = alpha/betaが確保した分、+1 = メタデータ用の予約ストライプ。
-    assert_eq!(pool.usage().used_stripes, 6 + 1);
-    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - 1 - 6);
+    // 6 = alpha/betaが確保した分、+reserved = メタデータ用の予約ストライプ。
+    assert_eq!(pool.usage().used_stripes, 6 + reserved);
+    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - reserved - 6);
 
     // 各データセットへの書き込みは互いに独立している(混ざらない)
     let alpha_data: Vec<u8> = (0..3 * stripe_bytes).map(|i| (i % 256) as u8).collect();
@@ -78,16 +83,18 @@ fn growing_beyond_pool_capacity_fails_cleanly() {
     let mut pool = build_pool(&dir);
     let stripe_bytes = data_disk_bytes_per_stripe();
 
+    let reserved = NUM_STRIPES - pool.usage().free_stripes;
+
     pool.create_dataset("only").unwrap();
-    // プール容量(8ストライプ、うち1つはメタデータ用に予約)を超える割当は拒否されるはず
+    // プール容量(8ストライプ、うち一部はメタデータ用に予約)を超える割当は拒否されるはず
     let result = pool.grow_dataset("only", (NUM_STRIPES + 1) * stripe_bytes);
     assert!(result.is_err());
 
     // プールの状態は変化していない(部分的に確保されたりしない)。
     // used_stripesは「total_stripes - free_stripes」なので、メタデータ用の
-    // 予約ストライプぶん常に1が含まれる(データセットには何も割り当てていない)。
-    assert_eq!(pool.usage().used_stripes, 1);
-    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - 1);
+    // 予約ストライプぶんが常に含まれる(データセットには何も割り当てていない)。
+    assert_eq!(pool.usage().used_stripes, reserved);
+    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - reserved);
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -98,9 +105,11 @@ fn destroying_a_dataset_reclaims_capacity_for_others() {
     let mut pool = build_pool(&dir);
     let stripe_bytes = data_disk_bytes_per_stripe();
 
+    let reserved = NUM_STRIPES - pool.usage().free_stripes;
+
     pool.create_dataset("temp").unwrap();
-    // 1ストライプはメタデータ用に予約されているため、使い切れるのは(NUM_STRIPES - 1)ぶん。
-    pool.grow_dataset("temp", (NUM_STRIPES - 1) * stripe_bytes).unwrap(); // プール全容量を使い切る
+    // 一部のストライプはメタデータ用に予約されているため、使い切れるのは(NUM_STRIPES - reserved)ぶん。
+    pool.grow_dataset("temp", (NUM_STRIPES - reserved) * stripe_bytes).unwrap(); // プール全容量を使い切る
     assert_eq!(pool.usage().free_stripes, 0);
 
     // 容量を使い切っている状態では新規データセットへの割当はできない
@@ -109,7 +118,7 @@ fn destroying_a_dataset_reclaims_capacity_for_others() {
 
     // "temp"を破棄すると容量がプールへ返却される
     pool.destroy_dataset("temp").unwrap();
-    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - 1);
+    assert_eq!(pool.usage().free_stripes, NUM_STRIPES - reserved);
 
     // 返却された容量を別のデータセットが利用できる
     pool.grow_dataset("new", 2 * stripe_bytes).unwrap();
@@ -157,6 +166,81 @@ fn dataset_capacity_accounting_handles_sizes_far_beyond_4gib_without_truncation(
     let size = pool.dataset_size("huge").unwrap();
     assert!(size > FOUR_GIB, "4GiBを超える容量がu32境界で切り捨てられていないこと");
     assert_eq!(size, over_4gib_stripes * stripe_bytes);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// メタデータ容量バグの回帰テスト。
+///
+/// 修正前は、スーパーブロックが常に1ストライプぶんしか予約されず、
+/// `ref_counts`等のメタデータがストライプ数の増加に伴って肥大化すると、
+/// 現実的な`chunk_size=4096`でも約530ストライプを割り当てた時点で
+/// `bincode::serialize`後のバイト列が1ストライプに収まらなくなり、
+/// `CapacityExceeded`が誤って返っていた(実際にはプールにまだ十分な
+/// 空き容量があるにもかかわらず)。
+///
+/// 本テストは、その閾値(約530ストライプ)を大きく超える規模
+/// (`total_stripes`が1000超)でデータセットを確保・書き込みし、
+/// さらに`Pool::save`/`Pool::open`によるメタデータ永続化の往復まで
+/// 検証することで、動的スーパーブロック予約(`superblock_stripe_count`)
+/// が実運用規模で正しく機能することを保証する。
+#[test]
+fn metadata_capacity_bug_does_not_reproduce_at_realistic_scale_with_save_and_reopen() {
+    use open_raid_z_core::vdev::RaidZVdev;
+
+    const REALISTIC_CHUNK_SIZE: usize = 4096;
+    const TOTAL_STRIPES: u64 = 1200; // 旧バグの閾値(約530)を大きく超える規模
+
+    let dir = scratch_dir("metadata_capacity_regression");
+
+    let create_devices = || -> Vec<FileBackedDevice> {
+        (0..6)
+            .map(|i| {
+                let path = dir.join(format!("disk{i}.img"));
+                FileBackedDevice::create_fixed_size(&path, REALISTIC_CHUNK_SIZE as u64 * TOTAL_STRIPES)
+                    .unwrap()
+            })
+            .collect()
+    };
+
+    let payload;
+    let usable_stripes;
+    {
+        let vdev = RaidZVdev::new(create_devices(), RaidLevel::Z2, REALISTIC_CHUNK_SIZE);
+        let mut pool = Pool::new(vdev, TOTAL_STRIPES);
+
+        // CoW書き込み用に1ストライプぶんの余白を残しつつ、旧バグの閾値を
+        // 大きく超える数のストライプを実際に確保する。
+        usable_stripes = pool.usage().free_stripes - 1;
+        assert!(
+            usable_stripes > 530,
+            "旧バグの閾値(約530ストライプ)を超える規模で検証する必要がある"
+        );
+
+        pool.create_dataset("tank").unwrap();
+        let stripe_bytes = 4 * REALISTIC_CHUNK_SIZE as u64; // num_data(4) * chunk_size (Z2: 6台-2パリティ)
+        pool.grow_dataset("tank", usable_stripes * stripe_bytes).unwrap();
+
+        payload = (0..usable_stripes * stripe_bytes).map(|i| (i % 251) as u8).collect::<Vec<u8>>();
+        pool.write("tank", 0, &payload).unwrap();
+        assert_eq!(pool.read("tank", 0, usable_stripes * stripe_bytes).unwrap(), payload);
+
+        pool.save().unwrap();
+        // `pool`はここでスコープを抜けてdropされる(=プロセス終了に相当)。
+    }
+
+    // 同じディスクを開き直し、多ストライプに渡るスーパーブロックの
+    // 永続化(save)・復元(open)が正しく往復することを検証する。
+    let reopen_devices: Vec<FileBackedDevice> = (0..6)
+        .map(|i| FileBackedDevice::open(dir.join(format!("disk{i}.img"))).unwrap())
+        .collect();
+    let vdev = RaidZVdev::new(reopen_devices, RaidLevel::Z2, REALISTIC_CHUNK_SIZE);
+    let mut reopened = Pool::open(vdev, TOTAL_STRIPES).unwrap();
+
+    let stripe_bytes = 4 * REALISTIC_CHUNK_SIZE as u64;
+    assert_eq!(reopened.dataset_names(), vec!["tank".to_string()]);
+    assert_eq!(reopened.dataset_size("tank").unwrap(), usable_stripes * stripe_bytes);
+    assert_eq!(reopened.read("tank", 0, usable_stripes * stripe_bytes).unwrap(), payload);
 
     std::fs::remove_dir_all(&dir).ok();
 }

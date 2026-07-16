@@ -63,9 +63,41 @@ use crate::vdev::Vdev;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// メタデータ(スーパーブロック)を保存する予約ストライプの番号。
-/// このストライプは通常のデータ割当(`free_stripes`)には決して含めない。
+/// メタデータ(スーパーブロック)を保存する予約ストライプの先頭番号。
+/// `0..superblock_stripe_count(...)`の範囲は通常のデータ割当
+/// (`free_stripes`)には決して含めない。
+///
+/// 【重要な経緯】以前はここが固定で1ストライプ(`SUPERBLOCK_STRIPE = 0`の
+/// みを予約)だったが、`ref_counts`(ストライプごとの参照カウント、
+/// `HashMap<u64,u32>`)のエントリ数は実際に割り当てたストライプ数に比例して
+/// 増えるため、`--stripes`(総ストライプ数)の値に関わらず、メタデータが
+/// 固定1ストライプに収まらなくなる時点(chunk_size=4096・4ディスクZ2構成で
+/// 実測約530ストライプ)で`Pool::save`が`CapacityExceeded`を返すように
+/// なり、実質的な書き込み可能容量の上限バグになっていた
+/// (`CHAT_HANDOFF.md`追記21・26参照)。予約ストライプ数を`total_stripes`
+/// に応じて動的に(だが`Pool::new`/`Pool::open`の両方で同じ式から
+/// 決定論的に)計算するよう変更し、この上限を解消した。
 const SUPERBLOCK_STRIPE: u64 = 0;
+
+/// メタデータ用に予約すべきストライプ数を計算する。
+///
+/// `ref_counts`は最悪の場合`total_stripes`個のエントリを持ちうる
+/// (プール全体が1つの巨大なデータセットで占有された場合)。bincodeでの
+/// 1エントリあたりの実際のサイズは12バイト(`u64`キー8+`u32`値4)だが、
+/// ここでは16バイト/エントリという安全マージンを見込んだ上で、
+/// `datasets`/`snapshots`用の追加余白として同じ予算をそのまま流用する
+/// (データセット数・スナップショット数は通常`total_stripes`よりずっと
+/// 少ないため、この余白で十分足りる想定)。
+///
+/// `Pool::new`と`Pool::open`の両方が`total_stripes`(呼び出し時に既に
+/// 分かっている値)から同じ式で計算するため、予約ストライプ数自体を
+/// ディスクへ別途保存する必要はない。
+fn superblock_stripe_count(total_stripes: u64, chunk_bytes: u64) -> u64 {
+    const FIXED_OVERHEAD_BYTES: u64 = 256; // magic + total_stripesフィールド + 各HashMapの長さヘッダ等
+    const BYTES_PER_STRIPE_ENTRY: u64 = 24; // ref_counts 1エントリぶんの安全マージン(実測12バイトの2倍)
+    let needed_bytes = FIXED_OVERHEAD_BYTES + total_stripes.saturating_mul(BYTES_PER_STRIPE_ENTRY);
+    needed_bytes.div_ceil(chunk_bytes.max(1)).max(1)
+}
 /// オンディスク形式のバージョン識別子。フォーマットに互換性の無い変更を
 /// 加えた場合はこの値を上げ、`Pool::open`側で拒否できるようにする。
 const SUPERBLOCK_MAGIC: [u8; 8] = *b"ORZPOOL1";
@@ -137,7 +169,9 @@ impl<V: Vdev> Pool<V> {
     /// 作成する。[`SUPERBLOCK_STRIPE`]はメタデータ用に予約され、データ割当には
     /// 使われない。既存のプールを再度開く場合は[`Self::open`]を使うこと。
     pub fn new(vdev: V, total_stripes: u64) -> Self {
-        let free_stripes = (SUPERBLOCK_STRIPE + 1..total_stripes).rev().collect();
+        let chunk_bytes = (vdev.num_data_disks() * vdev.chunk_size()) as u64;
+        let reserved = superblock_stripe_count(total_stripes, chunk_bytes);
+        let free_stripes = (SUPERBLOCK_STRIPE + reserved..total_stripes).rev().collect();
         Self {
             vdev,
             total_stripes,
@@ -162,24 +196,42 @@ impl<V: Vdev> Pool<V> {
             datasets: self.datasets.clone(),
             snapshots: self.snapshots.clone(),
         };
-        let mut bytes = bincode::serialize(&metadata)
+        let bytes = bincode::serialize(&metadata)
             .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータのシリアライズに失敗しました: {e}"))))?;
-        let chunk_bytes = self.chunk_bytes() as usize;
-        if bytes.len() > chunk_bytes {
+        let chunk_bytes = self.chunk_bytes();
+        let reserved = superblock_stripe_count(self.total_stripes, chunk_bytes);
+        let capacity = reserved * chunk_bytes;
+        if bytes.len() as u64 > capacity {
+            // 通常は`superblock_stripe_count`の安全マージンにより起こらないはずだが、
+            // 極端に多いデータセット/スナップショット数のような想定外のケースの
+            // フェイルセーフとして残す。
             return Err(BridgeError::CapacityExceeded(format!(
-                "メタデータ({}バイト)がスーパーブロック用の1ストライプ({chunk_bytes}バイト)に収まりません(データセット数が多すぎます)",
+                "メタデータ({}バイト)がスーパーブロック用の予約領域({capacity}バイト、{reserved}ストライプ)に収まりません(データセット数が多すぎます)",
                 bytes.len()
             )));
         }
-        bytes.resize(chunk_bytes, 0);
-        self.vdev.write_stripe(SUPERBLOCK_STRIPE, &bytes)
+        for i in 0..reserved {
+            let start = (i * chunk_bytes) as usize;
+            let mut chunk = vec![0u8; chunk_bytes as usize];
+            let available = bytes.len().saturating_sub(start).min(chunk_bytes as usize);
+            if available > 0 {
+                chunk[..available].copy_from_slice(&bytes[start..start + available]);
+            }
+            self.vdev.write_stripe(SUPERBLOCK_STRIPE + i, &chunk)?;
+        }
+        Ok(())
     }
 
     /// [`Self::save`]で保存済みのメタデータを読み込み、既存のプールを復元する。
     /// `vdev`・`total_stripes`は保存時と同じ構成(ディスク構成・RAIDレベル・
     /// チャンクサイズ・ストライプ数)である必要がある(異なる場合はエラー)。
     pub fn open(mut vdev: V, total_stripes: u64) -> BridgeResult<Self> {
-        let bytes = vdev.read_stripe(SUPERBLOCK_STRIPE)?;
+        let chunk_bytes = (vdev.num_data_disks() * vdev.chunk_size()) as u64;
+        let reserved = superblock_stripe_count(total_stripes, chunk_bytes);
+        let mut bytes = Vec::with_capacity((reserved * chunk_bytes) as usize);
+        for i in 0..reserved {
+            bytes.extend_from_slice(&vdev.read_stripe(SUPERBLOCK_STRIPE + i)?);
+        }
         let metadata: PoolMetadata = bincode::deserialize(&bytes)
             .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータの復元に失敗しました: {e}"))))?;
         if metadata.magic != SUPERBLOCK_MAGIC {
@@ -196,7 +248,7 @@ impl<V: Vdev> Pool<V> {
 
         let occupied: std::collections::HashSet<u64> = metadata.ref_counts.keys().copied().collect();
         let free_stripes: Vec<u64> =
-            (SUPERBLOCK_STRIPE + 1..total_stripes).rev().filter(|s| !occupied.contains(s)).collect();
+            (SUPERBLOCK_STRIPE + reserved..total_stripes).rev().filter(|s| !occupied.contains(s)).collect();
 
         Ok(Self {
             vdev,

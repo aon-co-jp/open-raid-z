@@ -1,0 +1,48 @@
+;
+; orzflt.inf - open-raid-z 起動ドライバ スケルトン(テスト署名専用)
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+CatalogFile = orzflt.cat
+DriverVer   = ; stampinf が自動設定
+PnpLockDown = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%DeviceName% = Orzflt_Device, Root\Orzflt
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+orzflt.sys = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[Orzflt_Device.NT]
+CopyFiles = Drivers_Dir
+
+[Drivers_Dir]
+orzflt.sys
+
+[Orzflt_Device.NT.Services]
+AddService = orzflt,0x000001fa,Orzflt_Service_Inst
+
+[Orzflt_Service_Inst]
+DisplayName    = %ServiceName%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %12%\orzflt.sys
+
+[Strings]
+ManufacturerName = "aon-co-jp"
+DiskName = "open-raid-z orzflt Installation Disk"
+DeviceName = "open-raid-z orzflt (skeleton)"
+ServiceName = "orzflt"

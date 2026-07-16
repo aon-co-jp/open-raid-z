@@ -256,6 +256,24 @@ pub fn list_accelerators() -> Vec<AcceleratorInfo> {
         .collect()
 }
 
+/// NPU/GPU/CPUの実性能を計測した1件分の結果(UI表示・シリアライズ用)。
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchmarkEntry {
+    pub label: String,
+    pub throughput_mb_per_sec: f64,
+}
+
+/// このマシンで検出できるCPU/NPU/GPUそれぞれの実効スループットを計測する
+/// (RAID-Zパリティ計算を一定回数繰り返し、実測時間から算出)。単に
+/// 「検出できたから使う」のではなく、実際にCPUより速いかどうかを
+/// 数値で示すための機能(統合GPU等ではCPUの方が速い場合もある)。
+pub fn benchmark_accelerators() -> Vec<BenchmarkEntry> {
+    zfs_accel_hlsl::benchmark::benchmark_all_available()
+        .into_iter()
+        .map(|r| BenchmarkEntry { label: r.label, throughput_mb_per_sec: r.throughput_mb_per_sec })
+        .collect()
+}
+
 /// 現在実行中のOS名("Windows"/"macOS"/"Linux"/"Android"/"iOS"、
 /// それ以外は`std::env::consts::OS`の値そのまま)。
 pub fn current_os() -> &'static str {

@@ -1,0 +1,6 @@
+*.obj
+*.sys
+*.pdb
+*.exp
+*.lib
+*.cat
