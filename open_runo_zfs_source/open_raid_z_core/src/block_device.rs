@@ -4,10 +4,99 @@
 //! ファイルのどちらも同じ`BlockDevice`トレイトで扱えるようにし、上位のRAID-Z
 //! ストライピングロジックがバックエンドの違いを意識しなくて済むようにする。
 
-use crate::error::BridgeResult;
+use crate::error::{BridgeError, BridgeResult};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+
+/// 指定パス(通常ファイル、または生ブロックデバイス)の実容量をバイト単位で返す。
+///
+/// 通常ファイル(テスト用のfile-backed device)は`std::fs::metadata`で得られる
+/// ファイルサイズをそのまま使う。生ブロックデバイス(Linuxの`/dev/sdX`、
+/// Windowsの`\\.\PhysicalDriveN`等)は`metadata`ではサイズが取れない
+/// (Linuxではstat結果のst_sizeが0、Windowsではそもそもファイルとして
+/// 開けない)ため、OSごとの方法で問い合わせる。
+pub fn device_size_bytes(path: impl AsRef<Path>) -> BridgeResult<u64> {
+    let path = path.as_ref();
+    let metadata = std::fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    platform_device_size_bytes(path)
+}
+
+/// Linux: `/sys/class/block/<dev>/size`(512バイトセクタ単位)を読む。
+/// `ioctl(BLKGETSIZE64)`と異なり追加の依存クレートを要さず`std::fs`のみで
+/// 完結するため、こちらを優先する。
+#[cfg(target_os = "linux")]
+fn platform_device_size_bytes(path: &Path) -> BridgeResult<u64> {
+    let real_path = std::fs::canonicalize(path)?;
+    let dev_name = real_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        BridgeError::InvalidConfig(format!("デバイス名を取得できません: '{}'", real_path.display()))
+    })?;
+
+    let sysfs_path = format!("/sys/class/block/{dev_name}/size");
+    let sectors_raw = std::fs::read_to_string(&sysfs_path).map_err(|e| {
+        BridgeError::InvalidConfig(format!(
+            "'{}'の容量取得に失敗しました('{sysfs_path}'が読めません、通常ファイルでもブロック\
+            デバイスでもない可能性があります): {e}",
+            path.display()
+        ))
+    })?;
+    let sectors: u64 = sectors_raw.trim().parse().map_err(|_| {
+        BridgeError::InvalidConfig(format!(
+            "'{sysfs_path}'の内容が不正です(セクタ数として解釈できません): '{}'",
+            sectors_raw.trim()
+        ))
+    })?;
+    // sysfsの`size`は常に512バイトセクタ単位(実ブロックサイズがそれと
+    // 異なる4Kn等のディスクでも同様)。
+    Ok(sectors * 512)
+}
+
+/// Windows: `DeviceIoControl`の`IOCTL_DISK_GET_LENGTH_INFO`で問い合わせる。
+#[cfg(target_os = "windows")]
+fn platform_device_size_bytes(path: &Path) -> BridgeResult<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Ioctl::{GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO};
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open(path)
+        .map_err(|e| BridgeError::InvalidConfig(format!("'{}'を開けませんでした: {e}", path.display())))?;
+    let handle = HANDLE(file.as_raw_handle());
+
+    let mut info = GET_LENGTH_INFORMATION::default();
+    let mut bytes_returned: u32 = 0;
+    unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_DISK_GET_LENGTH_INFO,
+            None,
+            0,
+            Some(&mut info as *mut _ as *mut core::ffi::c_void),
+            std::mem::size_of::<GET_LENGTH_INFORMATION>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+        .map_err(|e| {
+            BridgeError::InvalidConfig(format!(
+                "'{}'の容量取得(IOCTL_DISK_GET_LENGTH_INFO)に失敗しました: {e}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(info.Length as u64)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn platform_device_size_bytes(_path: &Path) -> BridgeResult<u64> {
+    Err(BridgeError::NotImplemented(
+        "このOSでは生ブロックデバイスの容量自動検出に対応していません(通常ファイルのみ利用可能)",
+    ))
+}
 
 pub trait BlockDevice {
     fn read_at(&mut self, offset: u64, len: usize) -> BridgeResult<Vec<u8>>;
@@ -132,5 +221,23 @@ mod tests {
         assert_eq!(dev.read_at(0, 2).unwrap(), b"ok");
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn device_size_bytes_returns_regular_file_length() {
+        let path = scratch_path("size_regular_file");
+        FileBackedDevice::create_fixed_size(&path, 12345).unwrap();
+
+        assert_eq!(device_size_bytes(&path).unwrap(), 12345);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn device_size_bytes_fails_cleanly_for_missing_path() {
+        let path = scratch_path("size_does_not_exist");
+        std::fs::remove_file(&path).ok();
+
+        assert!(device_size_bytes(&path).is_err());
     }
 }

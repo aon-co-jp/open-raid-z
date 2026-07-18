@@ -115,6 +115,66 @@ fn read_unaligned_with_zero_length_returns_empty_without_touching_the_pool() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// 追記21/24で報告された「chunk_size=65536・RAID-Z2・4ディスクでの
+/// FUSEストリーミング書き込み時にストライプ境界付近でバイトが破損する」
+/// 疑いのある実バグを再現するための回帰テスト。
+///
+/// FUSEの典型的な書き込みバッファサイズ(128KiB=131072バイト)が、
+/// このchunk_size(65536)・data_disks=2構成での1ストライプぶんの
+/// 論理バイト数(131072バイト)とたまたま一致することが引き金になっている
+/// 疑いが報告されていたため、実際に131072バイト単位の`write_unaligned_growing`
+/// 呼び出しを何度も繰り返す(`cp`のストリーミング書き込みを模す)ことで
+/// 再現を試みる。総サイズはストライプ境界に揃っていない
+/// (最後の書き込みだけ半端なサイズ)、実際の`cp`と同じ状況にしている。
+#[test]
+fn streaming_writes_with_fuse_sized_buffer_are_byte_exact_across_stripe_boundaries() {
+    const REALISTIC_CHUNK_SIZE: usize = 65536;
+    const REALISTIC_NUM_STRIPES: u64 = 20;
+
+    let dir = scratch_dir("fuse_streaming_65536");
+    let devices: Vec<FileBackedDevice> = (0..4)
+        .map(|i| {
+            let path = dir.join(format!("disk{i}.img"));
+            FileBackedDevice::create_fixed_size(&path, REALISTIC_CHUNK_SIZE as u64 * REALISTIC_NUM_STRIPES).unwrap()
+        })
+        .collect();
+    let vdev = RaidZVdev::new(devices, RaidLevel::Z2, REALISTIC_CHUNK_SIZE);
+    let mut pool = Pool::new(vdev, REALISTIC_NUM_STRIPES);
+
+    pool.create_dataset("ds").unwrap();
+
+    // data_disks = 4 - 2(Z2) = 2 -> 1ストライプ = 65536 * 2 = 131072バイト。
+    let stripe_bytes = 2 * REALISTIC_CHUNK_SIZE as u64;
+    assert_eq!(stripe_bytes, 131_072);
+
+    // FUSEの典型的な書き込みバッファサイズと同じ131072バイト単位で
+    // ストリーミング書き込みする。最後だけ半端なサイズ(ストライプ境界に
+    // 揃っていない)にして、cpによる実際のファイルコピーの終端を模す。
+    let write_buffer_size = 131_072usize;
+    let total_len = write_buffer_size * 8 + 40_000; // 複数ストライプ+半端な残り
+
+    let payload: Vec<u8> = (0..total_len).map(|i| (i % 251) as u8).collect();
+
+    let mut offset = 0u64;
+    for chunk in payload.chunks(write_buffer_size) {
+        pool.write_unaligned_growing("ds", offset, chunk).unwrap();
+        offset += chunk.len() as u64;
+    }
+
+    let read_back = pool.read_unaligned("ds", 0, total_len as u64).unwrap();
+    for (i, (expected, actual)) in payload.iter().zip(read_back.iter()).enumerate() {
+        assert_eq!(
+            expected, actual,
+            "バイト位置{i}が不一致(ストライプ境界={}, ストライプ内オフセット={})",
+            i as u64 / stripe_bytes,
+            i as u64 % stripe_bytes
+        );
+    }
+    assert_eq!(payload.len(), read_back.len());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn write_unaligned_beyond_allocated_capacity_fails_cleanly_and_leaves_existing_data_untouched() {
     let dir = scratch_dir("overflow");
