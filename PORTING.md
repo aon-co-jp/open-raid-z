@@ -4,9 +4,10 @@
 > 導入・移設できます。
 >
 > 対象バージョン: `open_raid_z_core` 0.0.1 / `zfs_accel_hlsl` /
-> `open_runo_installer_core` 0.1.0(3クレート・166テスト、
-> `--no-default-features`のCPUフォールバック構成での実測値。
-> `foreign_fs`有効時はさらにext4統合テスト8件が加わる)
+> `open_runo_installer_core` 0.1.0(3クレート・166テスト
+> [104 + 32 + 30]、`--no-default-features`のCPUフォールバック構成での
+> 実測値。`foreign_fs`有効時はさらにext2/ext4読み取りブリッジの統合
+> テスト8件が加わり、Windows実測112、Linux(WSL2、`fuse_backend`込み)115)
 > 最終更新: 2026-07-20
 
 ---
@@ -53,7 +54,7 @@ open-raid-z/
 
 丸ごと移設する場合は`open_runo_zfs_source/`ごとコピーして、
 `open_raid_z_core`ディレクトリで`cargo test --no-default-features`が
-通れば移設成功(163テスト、下記4節参照)。ライブラリとして使う場合は
+通れば移設成功(104テスト、下記4節参照)。ライブラリとして使う場合は
 `open_raid_z_core`(+ 必要なら`zfs_accel_hlsl`)だけを取り出せます。
 
 ## 3. 依存の書き方(新プロジェクトの Cargo.toml)
@@ -158,7 +159,7 @@ open_runo_installer_core = { path = "../open-raid-z/open_runo_zfs_source/open_ru
 
 ```sh
 cd open_runo_zfs_source/open_raid_z_core
-cargo test --no-default-features   # 101テスト(2026-07-11実測)
+cargo test --no-default-features   # 104テスト(2026-07-20実測)
 
 cd ../zfs_accel_hlsl
 cargo test --no-default-features   # 32テスト(CPUフォールバック)
@@ -167,10 +168,12 @@ cd ../open_runo_installer_core
 cargo test                          # 30テスト
 ```
 
-3クレート合計 **163テストpassed、failed 0**(2026-07-11実測、
-WinFsp SDK/dxc/Windows SDK不要の構成)。`default`feature(実マウント+
-GPU高速化)を有効にした構成はWindows実機+WinFsp SDK+dxcが必要なため
-別途確認してください。
+3クレート合計 **166テストpassed、failed 0**(2026-07-20実測、
+WinFsp SDK/dxc/Windows SDK不要の構成)。`open_raid_z_core`に
+`--features foreign_fs`を加えるとext2/ext4読み取りブリッジの統合テストが
+加わり、Windows実測112、Linux(WSL2、`fuse_backend,foreign_fs`)で115に
+なる。`default`feature(実マウント+GPU高速化)を有効にした構成はWindows
+実機+WinFsp SDK+dxcが必要なため別途確認してください。
 
 ## 6. データのお引越し(既存環境から)
 

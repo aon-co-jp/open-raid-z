@@ -5,7 +5,7 @@
 依存やオンディスク互換性はなし。純Rust + オプションでGPU高速化)。
 
 [![License](https://img.shields.io/badge/license-MPL--2.0-blue)](open_runo_zfs_source/open_raid_z_core/Cargo.toml)
-![Tests](https://img.shields.io/badge/tests-163%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-166%20passed-brightgreen)
 
 📖 詳細: [日本語 README](README-Japan.md) / [English README](README-English.md) /
 [中文](README-Chinese.md) / [한국어](README-Korea.md) / [Español](README-Spain.md) /
@@ -77,11 +77,13 @@ cd open_runo_zfs_source/open_raid_z_core
 cargo test --no-default-features   # WinFsp SDK・dxc・Windows SDK不要のCPUフォールバック構成
 ```
 
-3クレート合計 **163テストがpass(failed 0)** — 内訳:
-`open_raid_z_core` 101・`zfs_accel_hlsl`(CPUフォールバック) 32・
-`open_runo_installer_core` 30(2026-07-11実測)。`default`feature
-(WinFsp実マウント+GPU高速化)はWindows実機+WinFsp SDK+dxcが必要なため
-別途確認が必要。
+3クレート合計 **166テストがpass(failed 0)** — 内訳:
+`open_raid_z_core` 104・`zfs_accel_hlsl`(CPUフォールバック) 32・
+`open_runo_installer_core` 30(2026-07-20実測)。`--features foreign_fs`を
+加えるとext2/ext4読み取りブリッジの統合テストが加わり、Windows実測で
+112テスト、Linux(WSL2、`fuse_backend,foreign_fs`)で115テストになる。
+`default`feature(WinFsp実マウント+GPU高速化)はWindows実機+WinFsp SDK+dxcが
+必要なため別途確認が必要。
 
 ## ドキュメント
 
