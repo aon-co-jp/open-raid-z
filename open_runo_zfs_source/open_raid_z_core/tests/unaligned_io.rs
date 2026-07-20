@@ -92,10 +92,7 @@ fn write_unaligned_preserves_untouched_bytes_around_the_written_region() {
     let whole = pool.read("ds", 0, stripe_bytes()).unwrap();
     // 上書きした範囲だけが変化し、それ以外はbaselineのまま。
     assert!(whole[..overwrite_offset as usize].iter().all(|&b| b == 0xAA));
-    assert_eq!(
-        &whole[overwrite_offset as usize..(overwrite_offset + 10) as usize],
-        overwrite.as_slice()
-    );
+    assert_eq!(&whole[overwrite_offset as usize..(overwrite_offset + 10) as usize], overwrite.as_slice());
     assert!(whole[(overwrite_offset + 10) as usize..].iter().all(|&b| b == 0xAA));
 
     std::fs::remove_dir_all(&dir).ok();
@@ -164,7 +161,8 @@ fn streaming_writes_with_fuse_sized_buffer_are_byte_exact_across_stripe_boundari
     let read_back = pool.read_unaligned("ds", 0, total_len as u64).unwrap();
     for (i, (expected, actual)) in payload.iter().zip(read_back.iter()).enumerate() {
         assert_eq!(
-            expected, actual,
+            expected,
+            actual,
             "バイト位置{i}が不一致(ストライプ境界={}, ストライプ内オフセット={})",
             i as u64 / stripe_bytes,
             i as u64 % stripe_bytes

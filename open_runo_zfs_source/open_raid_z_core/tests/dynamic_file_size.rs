@@ -9,8 +9,8 @@
 
 use open_raid_z_core::block_device::FileBackedDevice;
 use open_raid_z_core::pool::Pool;
-use open_raid_z_core::BridgeError;
 use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
+use open_raid_z_core::BridgeError;
 use std::path::PathBuf;
 
 const CHUNK_SIZE: usize = 64;
@@ -104,10 +104,7 @@ fn set_dataset_size_shrinks_and_reclaims_capacity_for_other_datasets() {
     pool.set_dataset_size("ds", stripe_bytes()).unwrap();
     assert_eq!(pool.dataset_size("ds").unwrap(), stripe_bytes());
     // 切り詰め後もその範囲のデータは無事読める。
-    assert_eq!(
-        pool.read_unaligned("ds", 0, stripe_bytes()).unwrap(),
-        vec![0x7Eu8; stripe_bytes() as usize]
-    );
+    assert_eq!(pool.read_unaligned("ds", 0, stripe_bytes()).unwrap(), vec![0x7Eu8; stripe_bytes() as usize]);
 
     // 解放されたはずの2ストライプ分を、別のデータセットが実際に使えることを確認する
     // (usage()の数値だけでなく、実際に確保・書き込みできることまで検証する)。

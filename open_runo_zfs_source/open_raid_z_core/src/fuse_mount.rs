@@ -26,9 +26,8 @@ use crate::error::BridgeError;
 use crate::pool::Pool;
 use crate::vdev::Vdev;
 use fuser::{
-    Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, MountOption,
-    ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs,
-    ReplyWrite, Request,
+    Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, Generation, INodeNo, MountOption, ReplyAttr,
+    ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request,
 };
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -74,12 +73,7 @@ struct PoolState<V: Vdev> {
 
 impl<V: Vdev> PoolState<V> {
     fn new(pool: Pool<V>) -> Self {
-        Self {
-            pool,
-            name_to_ino: HashMap::new(),
-            ino_to_name: HashMap::new(),
-            next_ino: ROOT_INO + 1,
-        }
+        Self { pool, name_to_ino: HashMap::new(), ino_to_name: HashMap::new(), next_ino: ROOT_INO + 1 }
     }
 
     /// 名前に対応するinode番号を返す(無ければ新規に払い出す)。

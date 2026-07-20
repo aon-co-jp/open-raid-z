@@ -202,13 +202,8 @@ mod tests {
 
     #[test]
     fn attribute_round_trip_preserves_all_flags() {
-        let attrs = ZfsFileAttributes {
-            read_only: true,
-            hidden: false,
-            system: true,
-            is_directory: false,
-            archive: true,
-        };
+        let attrs =
+            ZfsFileAttributes { read_only: true, hidden: false, system: true, is_directory: false, archive: true };
         let exfat = zfs_attrs_to_exfat(attrs);
         assert_eq!(exfat, ExFatAttributes::READ_ONLY | ExFatAttributes::SYSTEM | ExFatAttributes::ARCHIVE);
         assert_eq!(exfat_attrs_to_zfs(exfat), attrs);
@@ -288,12 +283,7 @@ mod tests {
 
     #[test]
     fn invalid_ten_ms_increment_is_rejected() {
-        let ts = ExFatTimestamp {
-            date: 0,
-            time: 0,
-            ten_ms_increment: 200,
-            utc_offset: 0,
-        };
+        let ts = ExFatTimestamp { date: 0, time: 0, ten_ms_increment: 200, utc_offset: 0 };
         assert!(exfat_timestamp_to_unix(&ts).is_err());
     }
 }

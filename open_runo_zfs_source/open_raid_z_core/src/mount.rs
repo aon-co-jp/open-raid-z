@@ -29,13 +29,12 @@ use crate::vdev::Vdev;
 use std::sync::Mutex;
 use widestring::{u16cstr, U16CStr};
 use windows::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_CANNOT_DELETE, STATUS_DATA_ERROR, STATUS_DISK_FULL,
-    STATUS_END_OF_FILE, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED,
-    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_CANNOT_DELETE, STATUS_DATA_ERROR, STATUS_DISK_FULL, STATUS_END_OF_FILE,
+    STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_NOT_IMPLEMENTED, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use winfsp::filesystem::{
-    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
-    VolumeInfo, WideNameInfo,
+    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo, WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, FileSystemParams, VolumeParams};
 use winfsp::{winfsp_init, FspError, FspInit, Result as FspResult};
@@ -70,19 +69,13 @@ pub struct PoolFileSystem<V: Vdev> {
 
 impl<V: Vdev> PoolFileSystem<V> {
     pub fn new(pool: Pool<V>) -> FspResult<Self> {
-        Ok(Self {
-            pool: Mutex::new(pool),
-            dir_buffer: DirBuffer::new(),
-        })
+        Ok(Self { pool: Mutex::new(pool), dir_buffer: DirBuffer::new() })
     }
 
     /// ファイル名として公開可能な(Windowsで不正な文字を含まない)
     /// データセット名だけを、ソート済みで返す。
     fn list_exposable_datasets(pool: &Pool<V>) -> Vec<String> {
-        pool.dataset_names()
-            .into_iter()
-            .filter(|name| !name.is_empty() && !name.contains(INVALID_NAME_CHARS))
-            .collect()
+        pool.dataset_names().into_iter().filter(|name| !name.is_empty() && !name.contains(INVALID_NAME_CHARS)).collect()
     }
 }
 
@@ -130,16 +123,12 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
     ) -> FspResult<FileSecurity> {
         let pool = self.pool.lock().expect("プールのロックに失敗しました");
         match self.classify(&pool, file_name) {
-            Some(FileHandle::Root) => Ok(FileSecurity {
-                reparse: false,
-                sz_security_descriptor: 0,
-                attributes: FILE_ATTRIBUTE_DIRECTORY,
-            }),
-            Some(FileHandle::DataFile(_)) => Ok(FileSecurity {
-                reparse: false,
-                sz_security_descriptor: 0,
-                attributes: FILE_ATTRIBUTE_NORMAL,
-            }),
+            Some(FileHandle::Root) => {
+                Ok(FileSecurity { reparse: false, sz_security_descriptor: 0, attributes: FILE_ATTRIBUTE_DIRECTORY })
+            }
+            Some(FileHandle::DataFile(_)) => {
+                Ok(FileSecurity { reparse: false, sz_security_descriptor: 0, attributes: FILE_ATTRIBUTE_NORMAL })
+            }
             None => Err(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0)),
         }
     }
@@ -152,9 +141,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         file_info: &mut OpenFileInfo,
     ) -> FspResult<Self::FileContext> {
         let pool = self.pool.lock().expect("プールのロックに失敗しました");
-        let handle = self
-            .classify(&pool, file_name)
-            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+        let handle = self.classify(&pool, file_name).ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
         self.fill_file_info(&pool, &handle, file_info.as_mut())?;
         Ok(handle)
     }
@@ -171,16 +158,13 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        let dataset_size = pool
-            .dataset_size(name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        let dataset_size = pool.dataset_size(name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         if offset >= dataset_size {
             return Err(FspError::NTSTATUS(STATUS_END_OF_FILE.0));
         }
         let len = buffer.len().min((dataset_size - offset) as usize) as u64;
-        let data = pool
-            .read_unaligned(name, offset, len)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        let data =
+            pool.read_unaligned(name, offset, len).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         buffer[..data.len()].copy_from_slice(&data);
         Ok(data.len() as u32)
     }
@@ -198,9 +182,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        let current_size = pool
-            .dataset_size(name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        let current_size = pool.dataset_size(name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         // write_to_eof: FILE_APPEND_DATAで開かれたハンドルからの書き込み。
         // 渡された`offset`は無視し、現在の末尾へ書き込む。
         let effective_offset = if write_to_eof { current_size } else { offset };
@@ -243,12 +225,11 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             // サブディレクトリの作成は未対応(モジュールドキュメント参照)。
             return Err(FspError::NTSTATUS(STATUS_NOT_IMPLEMENTED.0));
         }
-        let name = Self::parse_new_top_level_name(file_name)
-            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+        let name =
+            Self::parse_new_top_level_name(file_name).ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
 
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        pool.create_dataset(&name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.create_dataset(&name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         let handle = FileHandle::DataFile(name);
         self.fill_file_info(&pool, &handle, file_info.as_mut())?;
@@ -290,8 +271,7 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY.0));
         };
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
-        pool.set_dataset_size(name, new_size)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.set_dataset_size(name, new_size).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         self.fill_file_info(&pool, context, file_info)
     }
@@ -310,8 +290,8 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
         let FileHandle::DataFile(old_name) = context else {
             return Err(FspError::NTSTATUS(STATUS_ACCESS_DENIED.0));
         };
-        let new_name = Self::parse_new_top_level_name(new_file_name)
-            .ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
+        let new_name =
+            Self::parse_new_top_level_name(new_file_name).ok_or(FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND.0))?;
 
         let mut pool = self.pool.lock().expect("プールのロックに失敗しました");
         let target_exists = pool.dataset_names().iter().any(|d| d == &new_name);
@@ -320,12 +300,10 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
                 return Err(FspError::NTSTATUS(STATUS_OBJECT_NAME_COLLISION.0));
             }
             if new_name != *old_name {
-                pool.destroy_dataset(&new_name)
-                    .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+                pool.destroy_dataset(&new_name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
             }
         }
-        pool.rename_dataset(old_name, &new_name)
-            .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+        pool.rename_dataset(old_name, &new_name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
         pool.save().map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))
     }
 
@@ -377,21 +355,14 @@ impl<V: Vdev> FileSystemContext for PoolFileSystem<V> {
 }
 
 impl<V: Vdev> PoolFileSystem<V> {
-    fn fill_file_info(
-        &self,
-        pool: &Pool<V>,
-        handle: &FileHandle,
-        file_info: &mut FileInfo,
-    ) -> FspResult<()> {
+    fn fill_file_info(&self, pool: &Pool<V>, handle: &FileHandle, file_info: &mut FileInfo) -> FspResult<()> {
         *file_info = FileInfo::default();
         match handle {
             FileHandle::Root => {
                 file_info.file_attributes = FILE_ATTRIBUTE_DIRECTORY;
             }
             FileHandle::DataFile(name) => {
-                let size = pool
-                    .dataset_size(name)
-                    .map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
+                let size = pool.dataset_size(name).map_err(|e| FspError::NTSTATUS(status_from_bridge_error(&e)))?;
                 file_info.file_attributes = FILE_ATTRIBUTE_NORMAL;
                 file_info.file_size = size;
                 file_info.allocation_size = size;

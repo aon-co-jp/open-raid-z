@@ -16,8 +16,13 @@ fn main() {
 
     // 1. 32MiBの空exFATボリュームをフォーマットする。
     let size: u64 = 32 * 1024 * 1024;
-    let file =
-        OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&img_path).expect("イメージ作成に失敗");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&img_path)
+        .expect("イメージ作成に失敗");
     file.set_len(size).expect("サイズ設定に失敗");
     let options = ExFatFormatOptions::default().with_label("ORZTEST");
     format_exfat(file, size, &options).expect("フォーマットに失敗");

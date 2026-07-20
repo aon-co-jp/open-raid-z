@@ -38,7 +38,7 @@ impl<D: BlockDevice> Raid10Vdev<D> {
         if mirror_width < 2 {
             return Err(invalid_config("ミラー幅(mirror_width)は2台以上である必要があります"));
         }
-        if devices.is_empty() || devices.len() % mirror_width != 0 {
+        if devices.is_empty() || !devices.len().is_multiple_of(mirror_width) {
             return Err(invalid_config(&format!(
                 "デバイス数({})はミラー幅({mirror_width})の倍数である必要があります",
                 devices.len()
@@ -85,7 +85,12 @@ impl<D: BlockDevice> Raid10Vdev<D> {
     }
 
     /// 指定グループ内の指定ディスクをresilver(再構築)する。
-    pub fn resilver(&mut self, group_index: usize, disk_index_in_group: usize, num_stripes_in_group: u64) -> BridgeResult<()> {
+    pub fn resilver(
+        &mut self,
+        group_index: usize,
+        disk_index_in_group: usize,
+        num_stripes_in_group: u64,
+    ) -> BridgeResult<()> {
         self.groups[group_index].resilver(disk_index_in_group, num_stripes_in_group)
     }
 
@@ -212,7 +217,7 @@ mod tests {
         let devices: Vec<_> = (0..4).map(|i| scratch_disk(&format!("bothfail{i}"))).collect();
         let mut vdev = Raid10Vdev::new(devices, 2, CHUNK_SIZE).unwrap();
 
-        vdev.write_stripe(0, &vec![0xAAu8; CHUNK_SIZE]).unwrap(); // グループ0
+        vdev.write_stripe(0, &[0xAAu8; CHUNK_SIZE]).unwrap(); // グループ0
 
         vdev.group_devices_mut(0)[0].failed = true;
         vdev.group_devices_mut(0)[1].failed = true;

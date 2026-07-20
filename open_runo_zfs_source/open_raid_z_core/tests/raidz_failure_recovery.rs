@@ -17,10 +17,7 @@ const NUM_STRIPES: u64 = 8;
 
 /// テストごとに一意な一時ディレクトリを用意する(前回の残骸があれば削除)。
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "open_runo_raidz_it_{name}_{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("open_runo_raidz_it_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -35,10 +32,7 @@ fn expected_stripe_data(num_data: usize, stripe: u64) -> Vec<u8> {
     data
 }
 
-fn build_devices(
-    dir: &std::path::Path,
-    num_devices: usize,
-) -> Vec<FaultInjectableDevice<FileBackedDevice>> {
+fn build_devices(dir: &std::path::Path, num_devices: usize) -> Vec<FaultInjectableDevice<FileBackedDevice>> {
     (0..num_devices)
         .map(|i| {
             let path = dir.join(format!("disk{i}.img"));
@@ -68,19 +62,15 @@ fn assert_all_stripes_readable_and_correct<D: BlockDevice>(vdev: &mut RaidZVdev<
 /// 指定インデックスのディスクに、健全な状態で書かれているはずの生データが
 /// 実際に書き込まれているかを直接確認する(resilverが本当にディスクへ
 /// 正しい内容を書き戻したことの証明。read_stripeの復旧経路を経由しない)。
-fn assert_disk_directly_matches_healthy_content<D: BlockDevice>(
-    vdev: &mut RaidZVdev<D>,
-    disk_index: usize,
-) {
+fn assert_disk_directly_matches_healthy_content<D: BlockDevice>(vdev: &mut RaidZVdev<D>, disk_index: usize) {
     let chunk_size = vdev.chunk_size();
     let num_data = vdev.num_data_disks();
     let parity_count = vdev.num_total_disks() - num_data;
 
     for stripe in 0..NUM_STRIPES {
         let offset = stripe * chunk_size as u64;
-        let actual = vdev.devices_mut()[disk_index]
-            .read_at(offset, chunk_size)
-            .expect("resilver後のディスクは読めるはず");
+        let actual =
+            vdev.devices_mut()[disk_index].read_at(offset, chunk_size).expect("resilver後のディスクは読めるはず");
 
         if disk_index < num_data {
             let full = expected_stripe_data(num_data, stripe);

@@ -61,12 +61,7 @@ pub struct AlgorithmicIdMap {
 
 impl AlgorithmicIdMap {
     pub fn new(domain_sid_prefix: impl Into<String>, uid_base: u32, gid_base: u32, range: u32) -> Self {
-        Self {
-            domain_sid_prefix: domain_sid_prefix.into(),
-            uid_base,
-            gid_base,
-            range,
-        }
+        Self { domain_sid_prefix: domain_sid_prefix.into(), uid_base, gid_base, range }
     }
 
     fn rid_in_range(&self, sid: &str) -> Option<u32> {
@@ -224,47 +219,28 @@ mod tests {
 
     #[test]
     fn domain_prefix_of_sid_strips_only_the_rid() {
-        assert_eq!(
-            domain_prefix_of_sid("S-1-5-21-111-222-333-1000"),
-            Some("S-1-5-21-111-222-333")
-        );
+        assert_eq!(domain_prefix_of_sid("S-1-5-21-111-222-333-1000"), Some("S-1-5-21-111-222-333"));
         assert_eq!(domain_prefix_of_sid("nodashes"), None);
     }
 
     #[test]
     fn algorithmic_domain_derives_uid_and_gid_from_rid_without_explicit_registration() {
         let mut table = IdMappingTable::new();
-        table.add_algorithmic_domain(AlgorithmicIdMap::new(
-            "S-1-5-21-111-222-333",
-            10_000,
-            20_000,
-            1_000_000,
-        ));
+        table.add_algorithmic_domain(AlgorithmicIdMap::new("S-1-5-21-111-222-333", 10_000, 20_000, 1_000_000));
 
         // 個別登録なしでも、ドメイン内のRIDから一意にUID/GIDが決まる。
         assert_eq!(table.uid_for_sid("S-1-5-21-111-222-333-1001"), Some(11_001));
         assert_eq!(table.gid_for_sid("S-1-5-21-111-222-333-1001"), Some(21_001));
 
         // 逆方向(UID/GID -> SID)も一意に復元できる。
-        assert_eq!(
-            table.sid_for_uid(11_001).as_deref(),
-            Some("S-1-5-21-111-222-333-1001")
-        );
-        assert_eq!(
-            table.sid_for_gid(21_001).as_deref(),
-            Some("S-1-5-21-111-222-333-1001")
-        );
+        assert_eq!(table.sid_for_uid(11_001).as_deref(), Some("S-1-5-21-111-222-333-1001"));
+        assert_eq!(table.sid_for_gid(21_001).as_deref(), Some("S-1-5-21-111-222-333-1001"));
     }
 
     #[test]
     fn algorithmic_domain_ignores_sids_from_other_domains() {
         let mut table = IdMappingTable::new();
-        table.add_algorithmic_domain(AlgorithmicIdMap::new(
-            "S-1-5-21-111-222-333",
-            10_000,
-            20_000,
-            1_000_000,
-        ));
+        table.add_algorithmic_domain(AlgorithmicIdMap::new("S-1-5-21-111-222-333", 10_000, 20_000, 1_000_000));
 
         assert_eq!(table.uid_for_sid("S-1-5-21-999-888-777-1001"), None);
     }
@@ -272,12 +248,7 @@ mod tests {
     #[test]
     fn explicit_mapping_takes_priority_over_algorithmic_domain() {
         let mut table = IdMappingTable::new();
-        table.add_algorithmic_domain(AlgorithmicIdMap::new(
-            "S-1-5-21-111-222-333",
-            10_000,
-            20_000,
-            1_000_000,
-        ));
+        table.add_algorithmic_domain(AlgorithmicIdMap::new("S-1-5-21-111-222-333", 10_000, 20_000, 1_000_000));
         // このユーザだけ、アルゴリズム計算結果(10_500)とは異なるUIDへ固定で上書きする。
         table.map_user(1, "S-1-5-21-111-222-333-500");
 

@@ -35,7 +35,7 @@ pub enum ZfsPrincipal {
     Owner,
     Group,
     Everyone,
-    User(u32),  // UID
+    User(u32),   // UID
     Group_(u32), // GID
 }
 
@@ -71,15 +71,11 @@ pub fn zfs_ace_to_ntfs(ace: &ZfsAce, mapping: &IdMappingTable) -> BridgeResult<N
         ZfsPrincipal::Everyone => SID_EVERYONE.to_string(),
         ZfsPrincipal::User(uid) => mapping
             .sid_for_uid(*uid)
-            .ok_or_else(|| {
-                BridgeError::AclTranslationFailed(format!("UID {uid} に対応するSIDが未登録です"))
-            })?
+            .ok_or_else(|| BridgeError::AclTranslationFailed(format!("UID {uid} に対応するSIDが未登録です")))?
             .to_string(),
         ZfsPrincipal::Group_(gid) => mapping
             .sid_for_gid(*gid)
-            .ok_or_else(|| {
-                BridgeError::AclTranslationFailed(format!("GID {gid} に対応するSIDが未登録です"))
-            })?
+            .ok_or_else(|| BridgeError::AclTranslationFailed(format!("GID {gid} に対応するSIDが未登録です")))?
             .to_string(),
     };
 
@@ -132,9 +128,7 @@ pub fn ntfs_ace_to_zfs(ace: &NtfsAce, mapping: &IdMappingTable) -> BridgeResult<
             } else if let Some(gid) = mapping.gid_for_sid(sid) {
                 ZfsPrincipal::Group_(gid)
             } else {
-                return Err(BridgeError::AclTranslationFailed(format!(
-                    "SID {sid} に対応するUID/GIDが未登録です"
-                )));
+                return Err(BridgeError::AclTranslationFailed(format!("SID {sid} に対応するUID/GIDが未登録です")));
             }
         }
     };
@@ -209,10 +203,7 @@ mod tests {
             inherit_to_dirs: false,
         };
 
-        assert!(matches!(
-            zfs_ace_to_ntfs(&ace, &mapping),
-            Err(BridgeError::AclTranslationFailed(_))
-        ));
+        assert!(matches!(zfs_ace_to_ntfs(&ace, &mapping), Err(BridgeError::AclTranslationFailed(_))));
     }
 
     #[test]
@@ -221,9 +212,7 @@ mod tests {
         let original = ZfsAce {
             who: ZfsPrincipal::User(1000),
             allow: true,
-            permissions: ZfsPermissions::READ_DATA
-                | ZfsPermissions::WRITE_DATA
-                | ZfsPermissions::EXECUTE,
+            permissions: ZfsPermissions::READ_DATA | ZfsPermissions::WRITE_DATA | ZfsPermissions::EXECUTE,
             inherit_to_files: true,
             inherit_to_dirs: true,
         };
@@ -264,9 +253,6 @@ mod tests {
             inherit_to_dirs: false,
         };
 
-        assert!(matches!(
-            ntfs_ace_to_zfs(&ntfs, &mapping),
-            Err(BridgeError::AclTranslationFailed(_))
-        ));
+        assert!(matches!(ntfs_ace_to_zfs(&ntfs, &mapping), Err(BridgeError::AclTranslationFailed(_))));
     }
 }

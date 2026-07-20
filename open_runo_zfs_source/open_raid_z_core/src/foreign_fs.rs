@@ -42,11 +42,7 @@ impl ForeignFatVolume {
     /// (`/dev/sdX`、`\\.\PhysicalDriveN`等、パーティション自体を指す
     /// パスを想定)、またはループバックイメージファイルのいずれでもよい。
     pub fn open(path: impl AsRef<Path>) -> BridgeResult<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(BridgeError::Io)?;
+        let file = OpenOptions::new().read(true).write(true).open(path).map_err(BridgeError::Io)?;
         let backend = BufStream::new(file);
         let fs = fatfs::FileSystem::new(backend, fatfs::FsOptions::new())
             .map_err(|e| BridgeError::ForeignFsFailed(format!("FATボリュームとして開けませんでした: {e}")))?;
@@ -63,7 +59,8 @@ impl ForeignFatVolume {
         // 指定)は`root_dir()`をそのまま使う。
         if normalized.is_empty() {
             for entry in root.iter() {
-                let entry = entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
+                let entry =
+                    entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
                 entries.push(ForeignDirEntry {
                     name: entry.file_name(),
                     is_dir: entry.is_dir(),
@@ -182,7 +179,8 @@ impl ForeignExfatVolume {
         };
         let mut entries = Vec::new();
         for entry in dir.entries() {
-            let entry = entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e:?}")))?;
+            let entry =
+                entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e:?}")))?;
             entries.push(ForeignDirEntry {
                 name: entry.name.clone(),
                 is_dir: entry.is_directory(),
@@ -262,7 +260,9 @@ impl ForeignExfatVolume {
             .find(name)
             .map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を開けませんでした: {e:?}")))?
             .ok_or_else(|| BridgeError::ForeignFsFailed(format!("'{path}'が見つかりません")))?;
-        self.fs.delete(&entry).map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を削除できませんでした: {e:?}")))?;
+        self.fs
+            .delete(&entry)
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{path}'を削除できませんでした: {e:?}")))?;
         Ok(())
     }
 }
@@ -304,8 +304,7 @@ impl ForeignExt4Volume {
             .map_err(|e| BridgeError::ForeignFsFailed(format!("'{dir_path}'を開けませんでした: {e}")))?;
         let mut out = Vec::new();
         for entry in entries {
-            let entry =
-                entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
+            let entry = entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
             let name = String::from_utf8_lossy(entry.file_name().as_ref()).into_owned();
             if name == "." || name == ".." {
                 continue;
@@ -314,11 +313,7 @@ impl ForeignExt4Volume {
                 .file_type()
                 .map_err(|e| BridgeError::ForeignFsFailed(format!("'{name}'の種別取得に失敗: {e}")))?;
             let is_dir = file_type.is_dir();
-            let size_bytes = if is_dir {
-                0
-            } else {
-                entry.metadata().map(|m| m.len()).unwrap_or(0)
-            };
+            let size_bytes = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
             out.push(ForeignDirEntry { name, is_dir, size_bytes });
         }
         Ok(out)
@@ -349,4 +344,3 @@ impl ForeignExt4Volume {
         Err(BridgeError::ForeignFsFailed("ext4での削除は未対応です(読み取り専用)".to_string()))
     }
 }
-

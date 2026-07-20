@@ -13,10 +13,7 @@ const CHUNK_SIZE: usize = 64;
 const NUM_STRIPES: u64 = 8;
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "open_runo_checksum_it_{name}_{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("open_runo_checksum_it_{name}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -30,10 +27,7 @@ fn expected_stripe_data(num_data: usize, stripe: u64) -> Vec<u8> {
     data
 }
 
-fn build_devices(
-    dir: &std::path::Path,
-    num_devices: usize,
-) -> Vec<FaultInjectableDevice<FileBackedDevice>> {
+fn build_devices(dir: &std::path::Path, num_devices: usize) -> Vec<FaultInjectableDevice<FileBackedDevice>> {
     (0..num_devices)
         .map(|i| {
             let path = dir.join(format!("disk{i}.img"));
@@ -46,21 +40,13 @@ fn build_devices(
 
 /// `failed`フラグを立てずに、ディスクの中身だけを直接壊す
 /// (物理故障ではなく「ビットロット」のシミュレーション)。
-fn corrupt_disk_directly<D: BlockDevice>(
-    vdev: &mut RaidZVdev<D>,
-    disk_index: usize,
-    stripe: u64,
-) {
+fn corrupt_disk_directly<D: BlockDevice>(vdev: &mut RaidZVdev<D>, disk_index: usize, stripe: u64) {
     let offset = stripe * CHUNK_SIZE as u64;
-    let mut garbage = vdev.devices_mut()[disk_index]
-        .read_at(offset, CHUNK_SIZE)
-        .unwrap();
+    let mut garbage = vdev.devices_mut()[disk_index].read_at(offset, CHUNK_SIZE).unwrap();
     for b in garbage.iter_mut() {
         *b ^= 0xFF; // 全ビット反転で明確に壊す
     }
-    vdev.devices_mut()[disk_index]
-        .write_at(offset, &garbage)
-        .unwrap();
+    vdev.devices_mut()[disk_index].write_at(offset, &garbage).unwrap();
 }
 
 #[test]

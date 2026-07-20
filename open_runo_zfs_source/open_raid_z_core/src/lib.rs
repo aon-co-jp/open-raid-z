@@ -28,7 +28,11 @@ pub mod foreign_fs;
 // `foreign_fs`をLinux/macOS/Android上へ実際にマウント可能にする層。既存の
 // RAID-Zプール用`fuse_mount`と同じ`fuser`クレートを使うため、両方の
 // featureが有効な場合のみビルドする。
-#[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "android"), feature = "fuse_backend", feature = "foreign_fs"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos", target_os = "android"),
+    feature = "fuse_backend",
+    feature = "foreign_fs"
+))]
 pub mod foreign_fuse_mount;
 pub mod fs_ops;
 pub mod id_mapping;

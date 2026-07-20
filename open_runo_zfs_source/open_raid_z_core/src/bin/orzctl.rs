@@ -76,6 +76,11 @@ struct Args {
     chunk_size: usize,
     stripes: Option<u64>,
     dataset: Option<String>,
+    /// `mount`サブコマンド(winfsp_backend/fuse_backend有効時のみ実装が
+    /// コンパイルされる)専用。マウント系featureを一切含まないビルド
+    /// (CIの--no-default-features + foreign_fs等)ではどこからも読まれない
+    /// ため、dead_code警告をここだけ明示的に許可する。
+    #[allow(dead_code)]
     mountpoint: Option<String>,
     disks: Vec<String>,
 }
@@ -108,12 +113,17 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
                 i += 2;
             }
             "--chunk-size" => {
-                chunk_size =
-                    Some(raw.get(i + 1).ok_or("--chunk-sizeには値が必要です")?.parse().map_err(|_| "chunk-sizeが不正です")?);
+                chunk_size = Some(
+                    raw.get(i + 1)
+                        .ok_or("--chunk-sizeには値が必要です")?
+                        .parse()
+                        .map_err(|_| "chunk-sizeが不正です")?,
+                );
                 i += 2;
             }
             "--stripes" => {
-                stripes = Some(raw.get(i + 1).ok_or("--stripesには値が必要です")?.parse().map_err(|_| "stripesが不正です")?);
+                stripes =
+                    Some(raw.get(i + 1).ok_or("--stripesには値が必要です")?.parse().map_err(|_| "stripesが不正です")?);
                 i += 2;
             }
             "--dataset" => {
@@ -186,10 +196,13 @@ fn run_mount(args: Args) -> Result<(), String> {
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
     let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
-    let pool = Pool::open(vdev, stripes)
-        .map_err(|e| format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}"))?;
+    let pool = Pool::open(vdev, stripes).map_err(|e| {
+        format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
+    })?;
     let session = mount_pool(pool, &mountpoint).map_err(|e| format!("マウントに失敗しました: {e}"))?;
-    println!("'{mountpoint}'へマウントしました。別のターミナルから`fusermount3 -u {mountpoint}`するとアンマウントされます。");
+    println!(
+        "'{mountpoint}'へマウントしました。別のターミナルから`fusermount3 -u {mountpoint}`するとアンマウントされます。"
+    );
     session.join().map_err(|e| format!("マウントセッションの終了処理に失敗: {e}"))?;
     Ok(())
 }
@@ -201,8 +214,9 @@ fn run_mount(args: Args) -> Result<(), String> {
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
     let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
-    let pool = Pool::open(vdev, stripes)
-        .map_err(|e| format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}"))?;
+    let pool = Pool::open(vdev, stripes).map_err(|e| {
+        format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
+    })?;
     let mut host = mount_pool(pool, &mountpoint).map_err(|e| format!("マウントに失敗しました: {e:?}"))?;
     println!("'{mountpoint}'へマウントしました。Enterキーを押すとアンマウントされます。");
     let mut buf = String::new();
@@ -216,12 +230,10 @@ fn run_mount(args: Args) -> Result<(), String> {
     all(target_os = "windows", feature = "winfsp_backend")
 )))]
 fn run_mount(_args: Args) -> Result<(), String> {
-    Err(
-        "このビルドには実マウント機能が含まれていません(Linuxでは`fuse_backend`、\
+    Err("このビルドには実マウント機能が含まれていません(Linuxでは`fuse_backend`、\
         Windowsでは`winfsp_backend` featureを有効にしてビルドしてください)。\
         `create`(プール作成)自体はこのビルドでも使えます。"
-            .to_string(),
-    )
+        .to_string())
 }
 
 const HELP_FOREIGN: &str = r#"orzctl foreign - open-raid-z以外の既存フォーマットを読み書きする
@@ -253,9 +265,7 @@ exFATはリネーム・サブディレクトリ書き込み未対応)。ext4はe
 
 #[cfg(feature = "foreign_fs")]
 fn run_foreign(args: &[String]) -> Result<(), String> {
-    use open_raid_z_core::foreign_fs::{
-        ForeignDirEntry, ForeignExfatVolume, ForeignExt4Volume, ForeignFatVolume,
-    };
+    use open_raid_z_core::foreign_fs::{ForeignDirEntry, ForeignExfatVolume, ForeignExt4Volume, ForeignFatVolume};
 
     // `--format <FMT>`はどこに現れても解釈し、残りを位置引数として使う。
     let mut format = "fat32".to_string();
@@ -276,10 +286,14 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
     };
     let volume_path = rest.get(1).copied().ok_or_else(|| format!("<VOLUME>が必要です\n\n{HELP_FOREIGN}"))?;
 
+    // 各ボリューム型はファイルシステムのメタデータを値として抱えるため
+    // サイズが大きく、かつ型ごとの差も大きい(`ForeignFatVolume`は720バイト超)。
+    // 全バリアントをBox化してenum本体を小さく保つ
+    // (clippy::large_enum_variant対策)。
     enum Volume {
-        Fat(ForeignFatVolume),
-        Exfat(ForeignExfatVolume),
-        Ext4(ForeignExt4Volume),
+        Fat(Box<ForeignFatVolume>),
+        Exfat(Box<ForeignExfatVolume>),
+        Ext4(Box<ForeignExt4Volume>),
     }
     impl Volume {
         fn list_dir(&self, dir: &str) -> Result<Vec<ForeignDirEntry>, open_raid_z_core::BridgeError> {
@@ -306,15 +320,15 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
     }
 
     let volume = match format.as_str() {
-        "fat32" | "fat16" | "fat" => Volume::Fat(
+        "fat32" | "fat16" | "fat" => Volume::Fat(Box::new(
             ForeignFatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
-        ),
-        "exfat" => Volume::Exfat(
+        )),
+        "exfat" => Volume::Exfat(Box::new(
             ForeignExfatVolume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
-        ),
-        "ext4" | "ext2" | "ext3" => Volume::Ext4(
+        )),
+        "ext4" | "ext2" | "ext3" => Volume::Ext4(Box::new(
             ForeignExt4Volume::open(volume_path).map_err(|e| format!("'{volume_path}'を開けませんでした: {e}"))?,
-        ),
+        )),
         other => return Err(format!("未知の--format値です: '{other}'(fat32 | exfat | ext4)")),
     };
 
@@ -361,7 +375,11 @@ fn run_foreign(args: &[String]) -> Result<(), String> {
 /// `orzctl foreign [--format <FMT>] mount <VOLUME> <MOUNTPOINT>`。
 /// 実際にLinux/macOS上へマウントし、他ターミナルから`fusermount3 -u`
 /// (macOSは`umount`)されるまでフォアグラウンドで待機する。
-#[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "android"), feature = "fuse_backend", feature = "foreign_fs"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos", target_os = "android"),
+    feature = "fuse_backend",
+    feature = "foreign_fs"
+))]
 fn run_foreign_mount(format: &str, volume_path: &str, mountpoint: &str) -> Result<(), String> {
     use open_raid_z_core::foreign_fs::{ForeignExfatVolume, ForeignExt4Volume, ForeignFatVolume};
     use open_raid_z_core::foreign_fuse_mount::{mount_foreign_volume, ForeignVolume};
@@ -385,7 +403,11 @@ fn run_foreign_mount(format: &str, volume_path: &str, mountpoint: &str) -> Resul
     Ok(())
 }
 
-#[cfg(not(all(any(target_os = "linux", target_os = "macos", target_os = "android"), feature = "fuse_backend", feature = "foreign_fs")))]
+#[cfg(not(all(
+    any(target_os = "linux", target_os = "macos", target_os = "android"),
+    feature = "fuse_backend",
+    feature = "foreign_fs"
+)))]
 fn run_foreign_mount(_format: &str, _volume_path: &str, _mountpoint: &str) -> Result<(), String> {
     Err("このビルドには既存フォーマットの実マウント機能が含まれていません(Linux/macOS上で`fuse_backend`+`foreign_fs` featureを有効にしてビルドしてください)。".to_string())
 }
