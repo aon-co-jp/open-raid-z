@@ -24,7 +24,7 @@ pool." See [MIGRATION.md](MIGRATION.md) for the full procedure.
 
 | Component | Role / status |
 |---|---|
-| `open_raid_z_core` | Core library: RAID levels (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, see the `RaidLevel` enum in `vdev.rs`), sha2 checksums, copy-on-write, snapshots/clones, ACL emulation, FAT32/exFAT interop (`foreign_fs` feature, read+write), real mounting (WinFsp on Windows, FUSE on Linux/macOS/Android), and the `orzctl` CLI binary |
+| `open_raid_z_core` | Core library: RAID levels (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, see the `RaidLevel` enum in `vdev.rs`), sha2 checksums, copy-on-write, snapshots/clones, ACL emulation, FAT32/exFAT interop (`foreign_fs` feature, read+write) plus read-only ext2/ext4 access (same feature), real mounting (WinFsp on Windows, FUSE on Linux/macOS/Android), and the `orzctl` CLI binary |
 | `zfs_accel_hlsl` | GPU-accelerates the Galois-field parity math for RAID-Z/Z2/Z3 via HLSL shaders + D3D12/DirectML. With the `gpu_accel` feature disabled it falls back to a pure-Rust CPU implementation only (useful for CI without WinFsp/dxc) |
 | `open_runo_installer_core` | OS-independent disk-detection / zpool-advisor / preview logic, deliberately split out as a Tauri-independent crate so it isn't caught by Tauri's edition2024 constraints |
 | `open_runo_installer` (Tauri GUI) | A Tauri 2 + TypeScript desktop app that uses `installer_core`. **This is the one place in the whole ecosystem that depends directly on the Tauri package** (separate from the web-ecosystem repos' policy of reimplementing Tauri from scratch) |
@@ -45,6 +45,10 @@ orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tan
 # read/write an existing FAT32/exFAT volume (migration helper)
 orzctl foreign ls /dev/sdb1
 orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# read an existing ext2/ext4 volume (read-only)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 ```
 
 Supported RAID levels: `Raid0` / `Raid1` (mirror) / `Raid5` / `Raid6`

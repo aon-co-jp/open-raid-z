@@ -239,17 +239,12 @@ mod imp {
     }
 }
 
-#[cfg(not(feature = "gpu"))]
-mod imp {
-    use super::{AccelDevice, DeviceError};
-
-    /// CPU専用ビルド(`gpu` feature無効)ではD3D12を一切呼び出さず、
-    /// 常に「デバイス無し」を返す。呼び出し側の[`super::detect_best_accelerator`]が
-    /// これを[`super::AccelKind::CpuFallback`]へ変換する。
-    pub fn create_best_device() -> Result<(AccelDevice, ()), DeviceError> {
-        Err(DeviceError::NoD3D12Device)
-    }
-}
+// NOTE: 以前はここに`#[cfg(not(feature = "gpu"))] mod imp`(常に
+// `NoD3D12Device`を返すスタブ)があったが、`detect_best_accelerator`が
+// `gpu` feature有効時にしか`imp::create_best_device`を呼ばない構造に
+// なった時点でどこからも参照されない死コードになっていた(CPU専用ビルドの
+// dead_code警告の原因)ため削除した。CPUフォールバックへの分岐は
+// `detect_best_accelerator`本体のcfg分岐が直接担う。
 
 #[cfg(test)]
 mod tests {

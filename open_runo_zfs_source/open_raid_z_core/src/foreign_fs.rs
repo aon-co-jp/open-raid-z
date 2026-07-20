@@ -267,3 +267,86 @@ impl ForeignExfatVolume {
     }
 }
 
+/// 既存のext2/ext4ボリューム(実デバイスまたはイメージファイル)への
+/// **読み取り専用**ハンドル。
+///
+/// 上流の`ext4-view`クレート(純Rust・読み取り専用)をラップする。
+/// FAT32/exFATと異なり書き込みには対応しない(2026-07時点で書き込み対応の
+/// 成熟した純Rust ext4実装が存在しないため。書き込みが必要な場合は
+/// Linux上でカーネルのext4ドライバを使うこと)。読み取り専用である旨は
+/// 各書き込み系APIが常にエラーを返すことで明示する。
+pub struct ForeignExt4Volume {
+    fs: ext4_view::Ext4,
+}
+
+impl ForeignExt4Volume {
+    /// 既存のext2/ext4ボリュームを開く。`path`は実デバイス(パーティションを
+    /// 指すパス)またはループバックイメージファイルのいずれでもよい。
+    pub fn open(path: impl AsRef<Path>) -> BridgeResult<Self> {
+        let fs = ext4_view::Ext4::load_from_path(path.as_ref())
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("ext4ボリュームとして開けませんでした: {e}")))?;
+        Ok(Self { fs })
+    }
+
+    /// `ext4-view`はパスを`/`始まりの絶対パスとして解釈する。FAT32/exFAT側の
+    /// `normalize`(先頭`/`を剥がす)とは逆に、こちらは先頭`/`を保証する。
+    fn absolutize(path: &str) -> String {
+        let trimmed = path.trim_start_matches(['/', '\\']);
+        format!("/{trimmed}")
+    }
+
+    /// ボリューム内のディレクトリ(`"/"`がルート)の内容を一覧する。
+    pub fn list_dir(&self, dir_path: &str) -> BridgeResult<Vec<ForeignDirEntry>> {
+        let abs = Self::absolutize(dir_path);
+        let entries = self
+            .fs
+            .read_dir(abs.as_str())
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{dir_path}'を開けませんでした: {e}")))?;
+        let mut out = Vec::new();
+        for entry in entries {
+            let entry =
+                entry.map_err(|e| BridgeError::ForeignFsFailed(format!("ディレクトリ読み取りに失敗: {e}")))?;
+            let name = String::from_utf8_lossy(entry.file_name().as_ref()).into_owned();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let file_type = entry
+                .file_type()
+                .map_err(|e| BridgeError::ForeignFsFailed(format!("'{name}'の種別取得に失敗: {e}")))?;
+            let is_dir = file_type.is_dir();
+            let size_bytes = if is_dir {
+                0
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            out.push(ForeignDirEntry { name, is_dir, size_bytes });
+        }
+        Ok(out)
+    }
+
+    /// ボリューム内のファイルを丸ごと読み取る。
+    pub fn read_file(&self, file_path: &str) -> BridgeResult<Vec<u8>> {
+        let abs = Self::absolutize(file_path);
+        self.fs
+            .read(abs.as_str())
+            .map_err(|e| BridgeError::ForeignFsFailed(format!("'{file_path}'の読み取りに失敗: {e}")))
+    }
+
+    /// ext4は読み取り専用のため、書き込みは常にエラーを返す。
+    pub fn write_file(&self, _file_path: &str, _data: &[u8]) -> BridgeResult<()> {
+        Err(BridgeError::ForeignFsFailed(
+            "ext4への書き込みは未対応です(読み取り専用。書き込み対応の成熟した純Rust実装が無いため)".to_string(),
+        ))
+    }
+
+    /// ext4は読み取り専用のため、ディレクトリ作成は常にエラーを返す。
+    pub fn create_dir(&self, _dir_path: &str) -> BridgeResult<()> {
+        Err(BridgeError::ForeignFsFailed("ext4へのディレクトリ作成は未対応です(読み取り専用)".to_string()))
+    }
+
+    /// ext4は読み取り専用のため、削除は常にエラーを返す。
+    pub fn remove(&self, _path: &str) -> BridgeResult<()> {
+        Err(BridgeError::ForeignFsFailed("ext4での削除は未対応です(読み取り専用)".to_string()))
+    }
+}
+

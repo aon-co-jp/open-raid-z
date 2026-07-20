@@ -65,8 +65,19 @@ WinFsp/FUSE経由でマウントもできるようにするが、まずはCLIで
 
 ## 現状の実装状況
 
-- FAT32読み取り(`orzctl foreign ls`/`cat`相当): **このセッションで着手**。
-  `foreign_fs.rs`参照。
+- FAT32/FAT16読み書き(`orzctl foreign ls`/`cat`/`put`/`mount`): 実装済み。
+  `foreign_fs.rs`(`ForeignFatVolume`)・`foreign_fuse_mount.rs`参照。
+- exFAT読み書き(リネーム・サブディレクトリ書き込みは上流`hadris-fat`の
+  制約により未対応): 実装済み。`foreign_fs.rs`(`ForeignExfatVolume`)参照。
+- **ext2/ext4読み取り(2026-07-20実装)**: 純Rustの`ext4-view`クレートを
+  ラップした読み取り専用ブリッジ`ForeignExt4Volume`を実装
+  (`orzctl foreign --format ext4 ls`/`cat`/`mount`。mountは
+  `MountOption::RO`の読み取り専用マウント)。書き込みは、書き込み対応の
+  成熟した純Rust ext4実装が2026-07時点で存在しないため未対応
+  (各書き込みAPIは明示的にエラーを返す)。実`mkfs.ext4`(e2fsprogs
+  1.47系)製イメージをフィクスチャとする統合テスト
+  `tests/foreign_ext4.rs`(8テスト)で検証済み。
+- NTFS読み取り(`ntfs`クレート想定)・APFS: 未着手(次の増分候補)。
 
 ## 追記: Mac対応の型レベル検証成功、Android対応の具体的な障害を特定(2026-07-10)
 

@@ -21,9 +21,12 @@
 //! - exFAT: 読み取り・ルート直下への書き込み/ディレクトリ作成・削除は対応。
 //!   リネームは上流クレート(`hadris-fat`)が未対応のため`ENOSYS`を返す。
 //!   サブディレクトリへの書き込みも上流の制約により未対応。
+//! - ext2/ext4: 読み取りのみ対応(上流`ext4-view`が読み取り専用のため)。
+//!   マウント自体を読み取り専用(`MountOption::RO`)で行い、書き込み系の
+//!   FUSE操作はカーネル側で拒否される。
 
 use crate::error::BridgeError;
-use crate::foreign_fs::{ForeignDirEntry, ForeignExfatVolume, ForeignFatVolume};
+use crate::foreign_fs::{ForeignDirEntry, ForeignExfatVolume, ForeignExt4Volume, ForeignFatVolume};
 use fuser::{
     Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, MountOption, ReplyAttr,
     ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
@@ -44,50 +47,66 @@ fn errno_from_bridge_error(e: &BridgeError) -> Errno {
     }
 }
 
-/// `ForeignFatVolume`(FAT32/FAT16)と`ForeignExfatVolume`(exFAT)を、
-/// 共通のパスベースAPIとして扱うためのラッパー。
+/// `ForeignFatVolume`(FAT32/FAT16)・`ForeignExfatVolume`(exFAT)・
+/// `ForeignExt4Volume`(ext2/ext4、読み取り専用)を、共通のパスベースAPIと
+/// して扱うためのラッパー。
 pub enum ForeignVolume {
     Fat(ForeignFatVolume),
     Exfat(ForeignExfatVolume),
+    Ext4(ForeignExt4Volume),
 }
 
 impl ForeignVolume {
+    /// 読み取り専用ボリューム(ext4)かどうか。マウントオプション(`RO`)の
+    /// 決定に使う。
+    pub fn is_read_only(&self) -> bool {
+        matches!(self, ForeignVolume::Ext4(_))
+    }
     fn list_dir(&self, path: &str) -> Result<Vec<ForeignDirEntry>, BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.list_dir(path),
             ForeignVolume::Exfat(v) => v.list_dir(path),
+            ForeignVolume::Ext4(v) => v.list_dir(path),
         }
     }
     fn read_file(&self, path: &str) -> Result<Vec<u8>, BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.read_file(path),
             ForeignVolume::Exfat(v) => v.read_file(path),
+            ForeignVolume::Ext4(v) => v.read_file(path),
         }
     }
     fn write_file(&self, path: &str, data: &[u8]) -> Result<(), BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.write_file(path, data),
             ForeignVolume::Exfat(v) => v.write_file(path, data),
+            ForeignVolume::Ext4(v) => v.write_file(path, data),
         }
     }
     fn create_dir(&self, path: &str) -> Result<(), BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.create_dir(path),
             ForeignVolume::Exfat(v) => v.create_dir(path),
+            ForeignVolume::Ext4(v) => v.create_dir(path),
         }
     }
     fn remove(&self, path: &str) -> Result<(), BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.remove(path),
             ForeignVolume::Exfat(v) => v.remove(path),
+            ForeignVolume::Ext4(v) => v.remove(path),
         }
     }
     /// exFATは上流クレートがrenameに対応していないため`NotImplemented`を返す。
+    /// ext4は読み取り専用のため同様にエラーを返す。
     fn rename(&self, src: &str, dst: &str) -> Result<(), BridgeError> {
         match self {
             ForeignVolume::Fat(v) => v.rename(src, dst),
             ForeignVolume::Exfat(_) => {
                 Err(BridgeError::ForeignFsFailed("exFATのリネームは未対応です(上流クレートの制約)".to_string()))
+            }
+            ForeignVolume::Ext4(_) => {
+                Err(BridgeError::ForeignFsFailed("ext4のリネームは未対応です(読み取り専用)".to_string()))
             }
         }
     }
@@ -237,9 +256,12 @@ impl ForeignFuseFilesystem {
 /// `crate::fuse_mount::mount_pool`と同じ運用形: 戻り値の`BackgroundSession`を
 /// `.join()`(または drop)することでマウントを解除できる。
 pub fn mount_foreign_volume(volume: ForeignVolume, mount_point: &str) -> std::io::Result<fuser::BackgroundSession> {
+    // ext4(読み取り専用ボリューム)はカーネル側でも書き込みを拒否できるよう
+    // `RO`でマウントする(FAT32/exFATは従来どおり`RW`)。
+    let access = if volume.is_read_only() { MountOption::RO } else { MountOption::RW };
     let fs = ForeignFuseFilesystem::new(volume);
     let mut config = fuser::Config::default();
-    config.mount_options = vec![MountOption::FSName("open_raid_z_foreign".to_string()), MountOption::RW];
+    config.mount_options = vec![MountOption::FSName("open_raid_z_foreign".to_string()), access];
     fuser::spawn_mount2(fs, mount_point, &config)
 }
 

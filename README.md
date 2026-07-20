@@ -39,7 +39,7 @@ FUSE)。
 
 | クレート/ディレクトリ | 役割 |
 |---|---|
-| `open_runo_zfs_source/open_raid_z_core` | 中核ライブラリ: RAIDレベル(Raid0/Raid1/Raid5/Raid6/Z2/Z3)・チェックサム(sha2)・CoW・スナップショット/クローン・ACLエミュレーション・FAT32/exFAT相互運用(`foreign_fs`)・実マウント(WinFsp/FUSE)・`orzctl`バイナリ |
+| `open_runo_zfs_source/open_raid_z_core` | 中核ライブラリ: RAIDレベル(Raid0/Raid1/Raid5/Raid6/Z2/Z3)・チェックサム(sha2)・CoW・スナップショット/クローン・ACLエミュレーション・FAT32/exFAT読み書き+ext2/ext4読み取り相互運用(`foreign_fs`)・実マウント(WinFsp/FUSE)・`orzctl`バイナリ |
 | `open_runo_zfs_source/zfs_accel_hlsl` | RAID-Z/Z2/Z3のガロア体(GF)パリティ計算をD3D12/DirectML/HLSLシェーダでGPU高速化するクレート(`gpu_accel` feature、無効時はCPUフォールバックのみで動作) |
 | `open_runo_zfs_source/open_runo_installer_core` | ディスク検出・zpool構成助言・プレビューのOS非依存ロジック(Tauri非依存の独立クレート。Tauri本体のedition2024要求に巻き込まれず`cargo test`できるよう意図的に分離) |
 | `open_runo_zfs_source/open_runo_installer` | 上記`installer_core`を利用するTauri 2 + TypeScriptデスクトップGUI(**エコシステム内で唯一Tauriへ直接依存する箇所**。Web系リポジトリ群がTauriを自前再実装する方針とは別に、この単独インストーラGUIはTauriパッケージをそのまま使う) |
@@ -60,6 +60,10 @@ orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tan
 # 既存FAT32/exFATボリュームの読み書き(既存USBメモリ/SDカード等)
 orzctl foreign ls /dev/sdb1
 orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# 既存ext2/ext4ボリュームの読み取り(読み取り専用、2026-07-20追加)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 ```
 
 対応RAIDレベル: `Raid0` / `Raid1`(ミラー) / `Raid5` / `Raid6`(`Z2`と同義) /
