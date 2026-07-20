@@ -28,8 +28,8 @@
 use crate::error::BridgeError;
 use crate::foreign_fs::{ForeignDirEntry, ForeignExfatVolume, ForeignExt4Volume, ForeignFatVolume};
 use fuser::{
-    Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, MountOption, ReplyAttr,
-    ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
+    Errno, FileAttr, FileHandle, FileType, Filesystem, Generation, INodeNo, MountOption, ReplyAttr, ReplyCreate,
+    ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -249,7 +249,6 @@ impl ForeignFuseFilesystem {
             flags: 0,
         }
     }
-
 }
 
 /// `volume`を`mount_point`(既存の空ディレクトリ)へ実際にマウントする。
@@ -290,8 +289,7 @@ impl Filesystem for ForeignFuseFilesystem {
             return;
         };
         let ino = state.ino_for_path(&child_path);
-        let attr =
-            if entry.is_dir { Self::dir_attr(ino) } else { Self::file_attr(ino, entry.size_bytes) };
+        let attr = if entry.is_dir { Self::dir_attr(ino) } else { Self::file_attr(ino, entry.size_bytes) };
         reply.entry(&ATTR_TTL, &attr, Generation(0));
     }
 
@@ -310,11 +308,8 @@ impl Filesystem for ForeignFuseFilesystem {
         match state.volume.list_dir(&parent) {
             Ok(entries) => match entries.iter().find(|e| e.name == base) {
                 Some(entry) => {
-                    let attr = if entry.is_dir {
-                        Self::dir_attr(ino.0)
-                    } else {
-                        Self::file_attr(ino.0, entry.size_bytes)
-                    };
+                    let attr =
+                        if entry.is_dir { Self::dir_attr(ino.0) } else { Self::file_attr(ino.0, entry.size_bytes) };
                     reply.attr(&ATTR_TTL, &attr);
                 }
                 None => reply.error(Errno::ENOENT),
@@ -337,10 +332,8 @@ impl Filesystem for ForeignFuseFilesystem {
             }
         };
 
-        let mut all: Vec<(u64, FileType, String)> = vec![
-            (ROOT_INO, FileType::Directory, ".".to_string()),
-            (ROOT_INO, FileType::Directory, "..".to_string()),
-        ];
+        let mut all: Vec<(u64, FileType, String)> =
+            vec![(ROOT_INO, FileType::Directory, ".".to_string()), (ROOT_INO, FileType::Directory, "..".to_string())];
         for entry in &entries {
             let child_path = ForeignFuseState::join(&path, &entry.name);
             let child_ino = state.ino_for_path(&child_path);

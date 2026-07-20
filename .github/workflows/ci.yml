@@ -8,8 +8,11 @@ on:
 
 # open_raid_z_core は既定で winfsp_backend / gpu_accel を有効にしているため
 # (Windows SDK・WinFspヘッダ・dxcが必要)、Linux runner では
-# --no-default-features + foreign_fs_fat/foreign_fs_exfat のみを有効にして
-# ビルド・テストする(CLAUDE.md §運用ルール参照)。
+# --no-default-features + foreign_fs のみを有効にしてビルド・テストする
+# (CLAUDE.md §運用ルール参照)。
+# 【経緯】かつてここに存在しないfeature名(foreign_fs_fat/foreign_fs_exfat)が
+# 指定されておりCIが恒常的に失敗していた(2026-07-20修正)。feature名を
+# 変更する際はこのファイルも必ず追従させること。
 
 jobs:
   build-and-test:
@@ -33,10 +36,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo check (no-default-features + foreign_fs)
-        run: cargo check --no-default-features --features foreign_fs_fat,foreign_fs_exfat
+        run: cargo check --no-default-features --features foreign_fs
 
       - name: cargo test (no-default-features + foreign_fs)
-        run: cargo test --no-default-features --features foreign_fs_fat,foreign_fs_exfat
+        run: cargo test --no-default-features --features foreign_fs
 
   fmt-and-clippy:
     runs-on: ubuntu-latest
@@ -55,4 +58,4 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy (no-default-features + foreign_fs)
-        run: cargo clippy --no-default-features --features foreign_fs_fat,foreign_fs_exfat -- -D warnings
+        run: cargo clippy --no-default-features --features foreign_fs -- -D warnings

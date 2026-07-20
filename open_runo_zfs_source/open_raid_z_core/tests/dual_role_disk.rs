@@ -46,9 +46,8 @@ fn one_disk_serves_a_mirror_and_a_raid6_array_simultaneously_via_partitioning() 
     let mut mirror_vdev = RaidZVdev::new(vec![mirror_partition, mirror_partner], RaidLevel::Raid1, CHUNK_SIZE);
 
     // --- RAID6/Z2: 共有ディスクのパーティションB + 専用ディスク3台 ---
-    let raid6_disks: Vec<_> = (0..3)
-        .map(|i| whole_disk_as_partition(dir.join(format!("raid6_disk{i}.img")), partition_size))
-        .collect();
+    let raid6_disks: Vec<_> =
+        (0..3).map(|i| whole_disk_as_partition(dir.join(format!("raid6_disk{i}.img")), partition_size)).collect();
     let mut raid6_devices = vec![raid6_partition];
     raid6_devices.extend(raid6_disks);
     let mut raid6_vdev = RaidZVdev::new(raid6_devices, RaidLevel::Raid6, CHUNK_SIZE);

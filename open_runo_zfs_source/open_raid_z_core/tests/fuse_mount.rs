@@ -49,10 +49,8 @@ fn mounted_pool_supports_a_full_create_write_read_rename_delete_cycle() {
     assert_eq!(read_back, b"hello from fuse");
 
     // 一覧に出てくることの確認。
-    let names: Vec<String> = std::fs::read_dir(&mount_dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
+    let names: Vec<String> =
+        std::fs::read_dir(&mount_dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert!(names.contains(&"hello.txt".to_string()), "readdirにファイルが出てこない: {names:?}");
 
     // リネーム。
@@ -98,9 +96,8 @@ fn a_file_created_through_the_mount_survives_a_real_unmount_and_remount() {
 
     // 同じディスクイメージから、新しい`Pool`インスタンス(`Pool::open`)を
     // 使って改めてマウントし直す(=プロセス再起動を経た再マウントに相当)。
-    let devices: Vec<FileBackedDevice> = (0..6)
-        .map(|i| FileBackedDevice::open(disk_dir.join(format!("disk{i}.img"))).unwrap())
-        .collect();
+    let devices: Vec<FileBackedDevice> =
+        (0..6).map(|i| FileBackedDevice::open(disk_dir.join(format!("disk{i}.img"))).unwrap()).collect();
     let vdev = RaidZVdev::new(devices, RaidLevel::Z2, CHUNK_SIZE);
     let pool = Pool::open(vdev, NUM_STRIPES).expect("保存されたメタデータの復元(Pool::open)に失敗しました");
 

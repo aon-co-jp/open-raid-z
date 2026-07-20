@@ -59,10 +59,7 @@ fn operations_on_a_missing_dataset_return_dataset_not_found() {
         Err(BridgeError::DatasetNotFound(name)) if name == "ghost"
     ));
     assert!(matches!(pool.destroy_dataset("ghost"), Err(BridgeError::DatasetNotFound(_))));
-    assert!(matches!(
-        pool.grow_dataset("ghost", stripe_bytes()),
-        Err(BridgeError::DatasetNotFound(_))
-    ));
+    assert!(matches!(pool.grow_dataset("ghost", stripe_bytes()), Err(BridgeError::DatasetNotFound(_))));
     assert!(matches!(
         pool.write("ghost", 0, &vec![0u8; stripe_bytes() as usize]),
         Err(BridgeError::DatasetNotFound(_))
@@ -82,10 +79,7 @@ fn creating_a_duplicate_dataset_or_snapshot_returns_already_exists() {
 
     pool.grow_dataset("tank", stripe_bytes()).unwrap();
     pool.create_snapshot("tank", "snap1").unwrap();
-    assert!(matches!(
-        pool.create_snapshot("tank", "snap1"),
-        Err(BridgeError::AlreadyExists(_))
-    ));
+    assert!(matches!(pool.create_snapshot("tank", "snap1"), Err(BridgeError::AlreadyExists(_))));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -97,22 +91,10 @@ fn operations_on_a_missing_snapshot_return_snapshot_not_found() {
     pool.create_dataset("tank").unwrap();
     pool.grow_dataset("tank", stripe_bytes()).unwrap();
 
-    assert!(matches!(
-        pool.destroy_snapshot("tank", "ghost"),
-        Err(BridgeError::SnapshotNotFound(_))
-    ));
-    assert!(matches!(
-        pool.snapshot_size("tank", "ghost"),
-        Err(BridgeError::SnapshotNotFound(_))
-    ));
-    assert!(matches!(
-        pool.read_snapshot("tank", "ghost", 0, stripe_bytes()),
-        Err(BridgeError::SnapshotNotFound(_))
-    ));
-    assert!(matches!(
-        pool.create_clone("tank", "ghost", "clone1"),
-        Err(BridgeError::SnapshotNotFound(_))
-    ));
+    assert!(matches!(pool.destroy_snapshot("tank", "ghost"), Err(BridgeError::SnapshotNotFound(_))));
+    assert!(matches!(pool.snapshot_size("tank", "ghost"), Err(BridgeError::SnapshotNotFound(_))));
+    assert!(matches!(pool.read_snapshot("tank", "ghost", 0, stripe_bytes()), Err(BridgeError::SnapshotNotFound(_))));
+    assert!(matches!(pool.create_clone("tank", "ghost", "clone1"), Err(BridgeError::SnapshotNotFound(_))));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -135,10 +117,7 @@ fn exceeding_pool_or_dataset_capacity_returns_capacity_exceeded() {
         pool.write("tank", 0, &vec![0u8; 2 * stripe_bytes() as usize]),
         Err(BridgeError::CapacityExceeded(_))
     ));
-    assert!(matches!(
-        pool.read("tank", 0, 2 * stripe_bytes()),
-        Err(BridgeError::CapacityExceeded(_))
-    ));
+    assert!(matches!(pool.read("tank", 0, 2 * stripe_bytes()), Err(BridgeError::CapacityExceeded(_))));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -154,10 +133,7 @@ fn raid10_with_a_bad_mirror_width_returns_invalid_config() {
         .collect();
 
     // ミラー幅1台は不正(最低2台必要)。
-    assert!(matches!(
-        Raid10Vdev::new(devices, 1, CHUNK_SIZE),
-        Err(BridgeError::InvalidConfig(_))
-    ));
+    assert!(matches!(Raid10Vdev::new(devices, 1, CHUNK_SIZE), Err(BridgeError::InvalidConfig(_))));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -168,7 +144,9 @@ fn losing_more_disks_than_parity_allows_returns_unrecoverable() {
     let devices: Vec<FaultInjectableDevice<FileBackedDevice>> = (0..6)
         .map(|i| {
             let path = dir.join(format!("disk{i}.img"));
-            FaultInjectableDevice::new(FileBackedDevice::create_fixed_size(&path, CHUNK_SIZE as u64 * NUM_STRIPES).unwrap())
+            FaultInjectableDevice::new(
+                FileBackedDevice::create_fixed_size(&path, CHUNK_SIZE as u64 * NUM_STRIPES).unwrap(),
+            )
         })
         .collect();
     let mut vdev = RaidZVdev::new(devices, RaidLevel::Z2, CHUNK_SIZE); // パリティ2台まで許容

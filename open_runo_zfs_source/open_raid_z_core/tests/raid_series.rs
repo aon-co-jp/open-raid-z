@@ -63,10 +63,7 @@ fn raid0_has_no_redundancy_and_any_single_failure_is_unrecoverable() {
     assert_all_stripes_readable_and_correct(&mut vdev);
 
     vdev.devices_mut()[1].failed = true;
-    assert!(
-        vdev.read_stripe(0).is_err(),
-        "RAID0は冗長性が無いため1台の故障でも復旧不能なはず"
-    );
+    assert!(vdev.read_stripe(0).is_err(), "RAID0は冗長性が無いため1台の故障でも復旧不能なはず");
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -129,10 +126,7 @@ fn raid5_survives_single_disk_failure_but_not_two() {
     assert_all_stripes_readable_and_correct(&mut vdev);
 
     vdev.devices_mut()[1].failed = true;
-    assert!(
-        vdev.read_stripe(0).is_err(),
-        "RAID5は単一パリティのため2台同時故障は復旧不能なはず"
-    );
+    assert!(vdev.read_stripe(0).is_err(), "RAID5は単一パリティのため2台同時故障は復旧不能なはず");
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -151,10 +145,7 @@ fn raid6_survives_two_disk_failure_but_not_three() {
     assert_all_stripes_readable_and_correct(&mut vdev);
 
     vdev.devices_mut()[3].failed = true;
-    assert!(
-        vdev.read_stripe(0).is_err(),
-        "RAID6は二重パリティのため3台同時故障は復旧不能なはず"
-    );
+    assert!(vdev.read_stripe(0).is_err(), "RAID6は二重パリティのため3台同時故障は復旧不能なはず");
 
     std::fs::remove_dir_all(&dir).ok();
 }

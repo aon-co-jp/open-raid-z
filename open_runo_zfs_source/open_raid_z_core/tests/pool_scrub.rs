@@ -102,9 +102,7 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     let usable_stripes = pool.usage().free_stripes - 1;
     pool.grow_dataset("tank", usable_stripes * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64)
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64).map(|i| (i % 251) as u8).collect();
     pool.write("tank", 0, &payload).unwrap();
 
     // グループ0の2台目のミラーメンバー(グローバルストライプ2、内部ストライプ1)を
@@ -113,8 +111,7 @@ fn pool_scrub_works_on_a_raid10_backed_pool_via_the_shared_vdev_trait() {
     // あり、実際に書き込み済みの範囲(先頭から`usable_stripes`ぶん)に
     // グローバルストライプ2が含まれることに変わりは無い。
     let inner_stripe_offset = CHUNK_SIZE as u64; // グローバルストライプ2 = グループ0の内部ストライプ1
-    let mut garbage =
-        pool.vdev_mut().group_devices_mut(0)[1].read_at(inner_stripe_offset, CHUNK_SIZE).unwrap();
+    let mut garbage = pool.vdev_mut().group_devices_mut(0)[1].read_at(inner_stripe_offset, CHUNK_SIZE).unwrap();
     for b in garbage.iter_mut() {
         *b ^= 0xFF;
     }
@@ -150,9 +147,7 @@ fn pool_vdev_mut_allows_raid10_specific_resilver_not_yet_unified_in_the_vdev_tra
     let usable_stripes = pool.usage().free_stripes - 1;
     pool.grow_dataset("tank", usable_stripes * CHUNK_SIZE as u64).unwrap();
 
-    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64)
-        .map(|i| (i * 7 % 251) as u8)
-        .collect();
+    let payload: Vec<u8> = (0..usable_stripes * CHUNK_SIZE as u64).map(|i| (i * 7 % 251) as u8).collect();
     pool.write("tank", 0, &payload).unwrap();
 
     // グループ1の1台目のディスクを物理故障扱いにし、resilverで再構築する。

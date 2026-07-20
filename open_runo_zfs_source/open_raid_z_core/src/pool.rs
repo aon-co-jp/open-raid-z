@@ -196,8 +196,9 @@ impl<V: Vdev> Pool<V> {
             datasets: self.datasets.clone(),
             snapshots: self.snapshots.clone(),
         };
-        let bytes = bincode::serialize(&metadata)
-            .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータのシリアライズに失敗しました: {e}"))))?;
+        let bytes = bincode::serialize(&metadata).map_err(|e| {
+            BridgeError::Io(std::io::Error::other(format!("メタデータのシリアライズに失敗しました: {e}")))
+        })?;
         let chunk_bytes = self.chunk_bytes();
         let reserved = superblock_stripe_count(self.total_stripes, chunk_bytes);
         let capacity = reserved * chunk_bytes;
@@ -236,7 +237,8 @@ impl<V: Vdev> Pool<V> {
             .map_err(|e| BridgeError::Io(std::io::Error::other(format!("メタデータの復元に失敗しました: {e}"))))?;
         if metadata.magic != SUPERBLOCK_MAGIC {
             return Err(BridgeError::InvalidConfig(
-                "スーパーブロックの形式が不正です(open-raid-zで作成されたプールではないか、非対応バージョンです)".to_string(),
+                "スーパーブロックの形式が不正です(open-raid-zで作成されたプールではないか、非対応バージョンです)"
+                    .to_string(),
             ));
         }
         if metadata.total_stripes != total_stripes {
@@ -373,16 +375,8 @@ impl<V: Vdev> Pool<V> {
     /// 一切変更しない。
     pub fn write(&mut self, name: &str, logical_offset: u64, data: &[u8]) -> BridgeResult<()> {
         let chunk_bytes = self.chunk_bytes();
-        assert_eq!(
-            logical_offset % chunk_bytes,
-            0,
-            "現状の実装ではストライプ境界への書き込みのみサポート"
-        );
-        assert_eq!(
-            data.len() as u64 % chunk_bytes,
-            0,
-            "書き込みサイズはストライプ境界の倍数である必要があります"
-        );
+        assert_eq!(logical_offset % chunk_bytes, 0, "現状の実装ではストライプ境界への書き込みのみサポート");
+        assert_eq!(data.len() as u64 % chunk_bytes, 0, "書き込みサイズはストライプ境界の倍数である必要があります");
 
         let start = (logical_offset / chunk_bytes) as usize;
         let count = (data.len() as u64 / chunk_bytes) as usize;
@@ -440,12 +434,7 @@ impl<V: Vdev> Pool<V> {
         if self.snapshots.contains_key(&key) {
             return Err(BridgeError::AlreadyExists(format!("スナップショット'{key}'")));
         }
-        let stripes = self
-            .datasets
-            .get(dataset_name)
-            .ok_or_else(|| not_found(dataset_name))?
-            .stripes
-            .clone();
+        let stripes = self.datasets.get(dataset_name).ok_or_else(|| not_found(dataset_name))?.stripes.clone();
 
         for &stripe in &stripes {
             self.retain_stripe(stripe);
@@ -467,12 +456,8 @@ impl<V: Vdev> Pool<V> {
 
     pub fn snapshot_names(&self, dataset_name: &str) -> Vec<String> {
         let prefix = format!("{dataset_name}@");
-        let mut names: Vec<String> = self
-            .snapshots
-            .keys()
-            .filter(|k| k.starts_with(&prefix))
-            .map(|k| k[prefix.len()..].to_string())
-            .collect();
+        let mut names: Vec<String> =
+            self.snapshots.keys().filter(|k| k.starts_with(&prefix)).map(|k| k[prefix.len()..].to_string()).collect();
         names.sort();
         names
     }
@@ -504,9 +489,7 @@ impl<V: Vdev> Pool<V> {
         let physical_stripes: Vec<u64> = {
             let snapshot = self.snapshots.get(&key).ok_or_else(|| snapshot_not_found(&key))?;
             if start + count > snapshot.stripes.len() {
-                return Err(BridgeError::CapacityExceeded(
-                    "スナップショットの容量を超える読み込みです".to_string(),
-                ));
+                return Err(BridgeError::CapacityExceeded("スナップショットの容量を超える読み込みです".to_string()));
             }
             snapshot.stripes[start..start + count].to_vec()
         };
@@ -534,12 +517,7 @@ impl<V: Vdev> Pool<V> {
             return Err(BridgeError::AlreadyExists(format!("データセット'{new_dataset_name}'")));
         }
         let key = Self::snapshot_key(dataset_name, snapshot_name);
-        let stripes = self
-            .snapshots
-            .get(&key)
-            .ok_or_else(|| snapshot_not_found(&key))?
-            .stripes
-            .clone();
+        let stripes = self.snapshots.get(&key).ok_or_else(|| snapshot_not_found(&key))?.stripes.clone();
 
         for &stripe in &stripes {
             self.retain_stripe(stripe);
@@ -547,8 +525,7 @@ impl<V: Vdev> Pool<V> {
         // スナップショット自体は論理サイズを別途持たないため、クローン直後の
         // 論理サイズは(元データセットと同様)割当ストライプ数からの計算値を使う。
         let logical_size = stripes.len() as u64 * self.chunk_bytes();
-        self.datasets
-            .insert(new_dataset_name.to_string(), Dataset { stripes, logical_size });
+        self.datasets.insert(new_dataset_name.to_string(), Dataset { stripes, logical_size });
         Ok(())
     }
 
@@ -562,29 +539,16 @@ impl<V: Vdev> Pool<V> {
     /// (CoWの検証・デバッグ用)。
     pub fn physical_stripe_for(&self, name: &str, logical_stripe: u64) -> BridgeResult<u64> {
         let ds = self.datasets.get(name).ok_or_else(|| not_found(name))?;
-        ds.stripes
-            .get(logical_stripe as usize)
-            .copied()
-            .ok_or_else(|| {
-                BridgeError::CapacityExceeded(format!(
-                    "データセット'{name}'の論理ストライプ{logical_stripe}は未割当です"
-                ))
-            })
+        ds.stripes.get(logical_stripe as usize).copied().ok_or_else(|| {
+            BridgeError::CapacityExceeded(format!("データセット'{name}'の論理ストライプ{logical_stripe}は未割当です"))
+        })
     }
 
     /// データセットからストライプ境界単位で読み込む。
     pub fn read(&mut self, name: &str, logical_offset: u64, len: u64) -> BridgeResult<Vec<u8>> {
         let chunk_bytes = self.chunk_bytes();
-        assert_eq!(
-            logical_offset % chunk_bytes,
-            0,
-            "現状の実装ではストライプ境界への読み込みのみサポート"
-        );
-        assert_eq!(
-            len % chunk_bytes,
-            0,
-            "読み込みサイズはストライプ境界の倍数である必要があります"
-        );
+        assert_eq!(logical_offset % chunk_bytes, 0, "現状の実装ではストライプ境界への読み込みのみサポート");
+        assert_eq!(len % chunk_bytes, 0, "読み込みサイズはストライプ境界の倍数である必要があります");
 
         let start = (logical_offset / chunk_bytes) as usize;
         let count = (len / chunk_bytes) as usize;

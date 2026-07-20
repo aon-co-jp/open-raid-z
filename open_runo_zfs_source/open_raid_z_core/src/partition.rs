@@ -51,9 +51,9 @@ impl<D: BlockDevice> PartitionedDevice<D> {
     }
 
     fn lock_inner(&self) -> BridgeResult<std::sync::MutexGuard<'_, D>> {
-        self.inner
-            .lock()
-            .map_err(|_| out_of_bounds("パーティション共有元デバイスのロックが破損しています(他スレッドがパニックしました)"))
+        self.inner.lock().map_err(|_| {
+            out_of_bounds("パーティション共有元デバイスのロックが破損しています(他スレッドがパニックしました)")
+        })
     }
 }
 
@@ -82,11 +82,7 @@ pub fn partition_device<D: BlockDevice>(device: D, sizes: &[u64]) -> Vec<Partiti
     let mut partitions = Vec::with_capacity(sizes.len());
     let mut offset = 0u64;
     for &size in sizes {
-        partitions.push(PartitionedDevice {
-            inner: Arc::clone(&shared),
-            start_offset: offset,
-            size,
-        });
+        partitions.push(PartitionedDevice { inner: Arc::clone(&shared), start_offset: offset, size });
         offset += size;
     }
     partitions

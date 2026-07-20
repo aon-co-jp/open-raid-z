@@ -95,18 +95,8 @@ pub struct RaidZVdev<D: BlockDevice> {
 impl<D: BlockDevice> RaidZVdev<D> {
     pub fn new(devices: Vec<D>, level: RaidLevel, chunk_size: usize) -> Self {
         let parity_count = level.parity_count(devices.len());
-        assert!(
-            devices.len() > parity_count,
-            "データディスクが最低1台は必要です(devices.len() > parity_count)"
-        );
-        Self {
-            devices,
-            parity_count,
-            chunk_size,
-            gf: GaloisTables::new(),
-            checksums: HashMap::new(),
-            accel: None,
-        }
+        assert!(devices.len() > parity_count, "データディスクが最低1台は必要です(devices.len() > parity_count)");
+        Self { devices, parity_count, chunk_size, gf: GaloisTables::new(), checksums: HashMap::new(), accel: None }
     }
 
     /// GPU/NPUアクセラレータを設定する(RAID-Z2のP/Q、RAID-Z3のP/Q/R計算が対象)。
@@ -155,9 +145,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
                 };
                 vec![p, q, r]
             }
-            other => unreachable!(
-                "parity_count={other}はミラー(データディスク1台)以外では未対応です"
-            ),
+            other => unreachable!("parity_count={other}はミラー(データディスク1台)以外では未対応です"),
         }
     }
 
@@ -165,11 +153,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
     /// 書き込んだ各チャンク(データ・パリティ双方)のチェックサムも記録する。
     pub fn write_stripe(&mut self, stripe_index: u64, data: &[u8]) -> BridgeResult<()> {
         let num_data = self.num_data_disks();
-        assert_eq!(
-            data.len(),
-            num_data * self.chunk_size,
-            "書き込みデータ長がストライプ幅と一致しません"
-        );
+        assert_eq!(data.len(), num_data * self.chunk_size, "書き込みデータ長がストライプ幅と一致しません");
 
         let chunks: Vec<&[u8]> = data.chunks(self.chunk_size).collect();
         let parity = self.compute_parity(&chunks);
@@ -197,10 +181,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
 
     /// [`Self::read_stripe`]と同じだが、実際に検知・修復した破損ディスクの
     /// インデックス一覧も返す([`Self::scrub`]用)。
-    pub fn read_stripe_with_report(
-        &mut self,
-        stripe_index: u64,
-    ) -> BridgeResult<(Vec<u8>, Vec<usize>)> {
+    pub fn read_stripe_with_report(&mut self, stripe_index: u64) -> BridgeResult<(Vec<u8>, Vec<usize>)> {
         self.read_stripe_forcing_missing(stripe_index, &[])
     }
 
@@ -228,13 +209,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
             .devices
             .iter_mut()
             .enumerate()
-            .map(|(i, dev)| {
-                if force_missing.contains(&i) {
-                    None
-                } else {
-                    dev.read_at(offset, chunk_size).ok()
-                }
-            })
+            .map(|(i, dev)| if force_missing.contains(&i) { None } else { dev.read_at(offset, chunk_size).ok() })
             .collect();
 
         // チェックサム検証: 読めたチャンクでも、記録済みチェックサムと
@@ -251,12 +226,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
             }
         }
 
-        let missing: Vec<usize> = reads
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.is_none())
-            .map(|(i, _)| i)
-            .collect();
+        let missing: Vec<usize> = reads.iter().enumerate().filter(|(_, r)| r.is_none()).map(|(i, _)| i).collect();
 
         if missing.is_empty() {
             let mut out = Vec::with_capacity(num_data * chunk_size);
@@ -286,11 +256,8 @@ impl<D: BlockDevice> RaidZVdev<D> {
         // 生き残っているパリティを(種別: 0=P,1=Q,2=R, データ)のペアとして集める。
         // Pが故障していてもQ・Rが生きていれば復旧できるよう、固定でPを要求せず
         // 「生きている分」だけを渡す(`reconstruct_missing_data_generic`参照)。
-        let available_parity: Vec<(u8, &[u8])> = reads[num_data..]
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| r.as_deref().map(|d| (i as u8, d)))
-            .collect();
+        let available_parity: Vec<(u8, &[u8])> =
+            reads[num_data..].iter().enumerate().filter_map(|(i, r)| r.as_deref().map(|d| (i as u8, d))).collect();
 
         if available_parity.len() < missing_data.len() {
             return Err(BridgeError::Unrecoverable(
@@ -312,12 +279,9 @@ impl<D: BlockDevice> RaidZVdev<D> {
                 &available_parity,
                 &self.gf,
             ),
-            None => raidz23_parity::reconstruct_missing_data_generic(
-                &known,
-                &missing_data,
-                &available_parity,
-                &self.gf,
-            ),
+            None => {
+                raidz23_parity::reconstruct_missing_data_generic(&known, &missing_data, &available_parity, &self.gf)
+            }
         };
 
         let mut full: Vec<Vec<u8>> = vec![Vec::new(); num_data];
@@ -335,18 +299,12 @@ impl<D: BlockDevice> RaidZVdev<D> {
         // ディスクは(復旧済みの)全データから改めて計算し直して書き戻す。
         let mut healed: Vec<usize> = Vec::new();
         for (i, data) in &recovered {
-            if corrupted.contains(i) {
-                if self.devices[*i].write_at(offset, data).is_ok() {
-                    self.checksums.insert((*i, stripe_index), compute_checksum(data));
-                    healed.push(*i);
-                }
+            if corrupted.contains(i) && self.devices[*i].write_at(offset, data).is_ok() {
+                self.checksums.insert((*i, stripe_index), compute_checksum(data));
+                healed.push(*i);
             }
         }
-        let corrupted_parity: Vec<usize> = corrupted
-            .iter()
-            .copied()
-            .filter(|&i| i >= num_data)
-            .collect();
+        let corrupted_parity: Vec<usize> = corrupted.iter().copied().filter(|&i| i >= num_data).collect();
         if !corrupted_parity.is_empty() {
             let full_refs: Vec<&[u8]> = full.iter().map(|c| c.as_slice()).collect();
             let recomputed_parity = self.compute_parity(&full_refs);
@@ -389,8 +347,7 @@ impl<D: BlockDevice> RaidZVdev<D> {
                 let parity = self.compute_parity(&chunks);
                 let parity_idx = target_index - num_data;
                 self.devices[target_index].write_at(offset, &parity[parity_idx])?;
-                self.checksums
-                    .insert((target_index, stripe), compute_checksum(&parity[parity_idx]));
+                self.checksums.insert((target_index, stripe), compute_checksum(&parity[parity_idx]));
             }
         }
         Ok(())
@@ -478,13 +435,8 @@ mod accel_tests {
             }
         };
 
-        let devices = vec![
-            scratch_disk("d0"),
-            scratch_disk("d1"),
-            scratch_disk("d2"),
-            scratch_disk("p"),
-            scratch_disk("q"),
-        ];
+        let devices =
+            vec![scratch_disk("d0"), scratch_disk("d1"), scratch_disk("d2"), scratch_disk("p"), scratch_disk("q")];
         let mut vdev = RaidZVdev::new(devices, RaidLevel::Z2, 4).with_accelerator(accel);
 
         let data = vec![0xAAu8, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];

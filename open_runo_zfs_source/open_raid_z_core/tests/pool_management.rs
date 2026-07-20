@@ -197,8 +197,7 @@ fn metadata_capacity_bug_does_not_reproduce_at_realistic_scale_with_save_and_reo
         (0..6)
             .map(|i| {
                 let path = dir.join(format!("disk{i}.img"));
-                FileBackedDevice::create_fixed_size(&path, REALISTIC_CHUNK_SIZE as u64 * TOTAL_STRIPES)
-                    .unwrap()
+                FileBackedDevice::create_fixed_size(&path, REALISTIC_CHUNK_SIZE as u64 * TOTAL_STRIPES).unwrap()
             })
             .collect()
     };
@@ -212,10 +211,7 @@ fn metadata_capacity_bug_does_not_reproduce_at_realistic_scale_with_save_and_reo
         // CoW書き込み用に1ストライプぶんの余白を残しつつ、旧バグの閾値を
         // 大きく超える数のストライプを実際に確保する。
         usable_stripes = pool.usage().free_stripes - 1;
-        assert!(
-            usable_stripes > 530,
-            "旧バグの閾値(約530ストライプ)を超える規模で検証する必要がある"
-        );
+        assert!(usable_stripes > 530, "旧バグの閾値(約530ストライプ)を超える規模で検証する必要がある");
 
         pool.create_dataset("tank").unwrap();
         let stripe_bytes = 4 * REALISTIC_CHUNK_SIZE as u64; // num_data(4) * chunk_size (Z2: 6台-2パリティ)
@@ -231,9 +227,8 @@ fn metadata_capacity_bug_does_not_reproduce_at_realistic_scale_with_save_and_reo
 
     // 同じディスクを開き直し、多ストライプに渡るスーパーブロックの
     // 永続化(save)・復元(open)が正しく往復することを検証する。
-    let reopen_devices: Vec<FileBackedDevice> = (0..6)
-        .map(|i| FileBackedDevice::open(dir.join(format!("disk{i}.img"))).unwrap())
-        .collect();
+    let reopen_devices: Vec<FileBackedDevice> =
+        (0..6).map(|i| FileBackedDevice::open(dir.join(format!("disk{i}.img"))).unwrap()).collect();
     let vdev = RaidZVdev::new(reopen_devices, RaidLevel::Z2, REALISTIC_CHUNK_SIZE);
     let mut reopened = Pool::open(vdev, TOTAL_STRIPES).unwrap();
 

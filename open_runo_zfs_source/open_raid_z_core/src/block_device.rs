@@ -31,9 +31,10 @@ pub fn device_size_bytes(path: impl AsRef<Path>) -> BridgeResult<u64> {
 #[cfg(target_os = "linux")]
 fn platform_device_size_bytes(path: &Path) -> BridgeResult<u64> {
     let real_path = std::fs::canonicalize(path)?;
-    let dev_name = real_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-        BridgeError::InvalidConfig(format!("デバイス名を取得できません: '{}'", real_path.display()))
-    })?;
+    let dev_name = real_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| BridgeError::InvalidConfig(format!("デバイス名を取得できません: '{}'", real_path.display())))?;
 
     let sysfs_path = format!("/sys/class/block/{dev_name}/size");
     let sectors_raw = std::fs::read_to_string(&sysfs_path).map_err(|e| {
@@ -120,12 +121,7 @@ impl FileBackedDevice {
 
     /// テスト用: 指定サイズの新規ファイルを作成して開く。
     pub fn create_fixed_size(path: impl AsRef<Path>, size_bytes: u64) -> BridgeResult<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
         file.set_len(size_bytes)?;
         Ok(Self { file })
     }
@@ -155,10 +151,7 @@ pub struct FaultInjectableDevice<D: BlockDevice> {
 
 impl<D: BlockDevice> FaultInjectableDevice<D> {
     pub fn new(inner: D) -> Self {
-        Self {
-            inner,
-            failed: false,
-        }
+        Self { inner, failed: false }
     }
 
     pub fn inner_mut(&mut self) -> &mut D {

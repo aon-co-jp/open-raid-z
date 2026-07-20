@@ -92,10 +92,7 @@ fn old_physical_stripe_is_untouched_until_the_reference_switch_completes() {
     // (write完了後は空き領域に戻っているが、中身自体はまだv1が残っている
     // ことをもって「上書きされていない」ことを確認する)
     let old_phys_raw = pool.read_physical_stripe(old_phys).unwrap();
-    assert_eq!(
-        old_phys_raw, v1,
-        "旧物理ストライプの中身は新データ書き込みによって変更されてはいけない"
-    );
+    assert_eq!(old_phys_raw, v1, "旧物理ストライプの中身は新データ書き込みによって変更されてはいけない");
 
     std::fs::remove_dir_all(&dir).ok();
 }

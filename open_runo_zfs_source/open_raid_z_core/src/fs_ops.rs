@@ -36,8 +36,5 @@ pub fn handle_get_security(
     mapping: &IdMappingTable,
 ) -> BridgeResult<Vec<NtfsAce>> {
     let zfs_aces = backend.get_acl(handle, path)?;
-    zfs_aces
-        .iter()
-        .map(|ace| crate::acl_emulation::zfs_ace_to_ntfs(ace, mapping))
-        .collect()
+    zfs_aces.iter().map(|ace| crate::acl_emulation::zfs_ace_to_ntfs(ace, mapping)).collect()
 }

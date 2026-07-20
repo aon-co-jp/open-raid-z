@@ -178,9 +178,8 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> BridgeResul
         if file_type.is_dir() {
             collect_files(root, &path, out)?;
         } else if file_type.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|e| BridgeError::Io(std::io::Error::other(e.to_string())))?;
+            let relative =
+                path.strip_prefix(root).map_err(|e| BridgeError::Io(std::io::Error::other(e.to_string())))?;
             out.push(relative.to_path_buf());
         }
         // シンボリックリンク等(is_file()もis_dir()もfalse)は対象外として自然にスキップされる。
@@ -267,7 +266,10 @@ mod tests {
         let after = std::fs::read(source_dir.join("readme.txt")).unwrap();
         let after_modified = std::fs::metadata(source_dir.join("readme.txt")).unwrap().modified().unwrap();
         assert_eq!(before, after, "コピー元のファイル内容が変化してはいけない");
-        assert_eq!(before_modified, after_modified, "コピー元の更新日時が変化してはいけない(=書き込みが一切発生していない)");
+        assert_eq!(
+            before_modified, after_modified,
+            "コピー元の更新日時が変化してはいけない(=書き込みが一切発生していない)"
+        );
 
         std::fs::remove_dir_all(&pool_dir).ok();
         std::fs::remove_dir_all(&source_dir).ok();
