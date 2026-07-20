@@ -26,7 +26,7 @@ Voir [MIGRATION.md](MIGRATION.md).
 
 | Composant | Rôle / statut |
 |---|---|
-| `open_raid_z_core` | Bibliothèque principale : niveaux RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, enum `RaidLevel` dans `vdev.rs`), checksums sha2, copy-on-write, snapshots/clones, émulation d'ACL, interopérabilité FAT32/exFAT (`foreign_fs`, lecture+écriture), montage réel (WinFsp sous Windows, FUSE sous Linux/macOS/Android) et le binaire CLI `orzctl` |
+| `open_raid_z_core` | Bibliothèque principale : niveaux RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, enum `RaidLevel` dans `vdev.rs`), checksums sha2, copy-on-write, snapshots/clones, émulation d'ACL, interopérabilité FAT32/exFAT (`foreign_fs`, lecture+écriture) et accès en lecture seule à ext2/ext4 (même feature), montage réel (WinFsp sous Windows, FUSE sous Linux/macOS/Android) et le binaire CLI `orzctl` |
 | `zfs_accel_hlsl` | Accélère par GPU le calcul de parité en corps de Galois pour RAID-Z/Z2/Z3 via des shaders HLSL + D3D12/DirectML. Avec la feature `gpu_accel` désactivée, retombe sur une implémentation CPU en Rust pur (utile en CI sans WinFsp/dxc) |
 | `open_runo_installer_core` | Logique indépendante de l'OS pour la détection des disques, le conseil de configuration zpool et l'aperçu ; volontairement séparée en crate indépendante de Tauri pour ne pas être affectée par les contraintes edition2024 de Tauri |
 | `open_runo_installer` (GUI Tauri) | Une application de bureau Tauri 2 + TypeScript utilisant `installer_core`. **C'est le seul endroit de tout l'écosystème qui dépend directement du paquet Tauri** (à part la politique des dépôts de l'écosystème web de réimplémenter Tauri de zéro) |
@@ -47,6 +47,10 @@ orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tan
 # lire/écrire un volume FAT32/exFAT existant (aide à la migration)
 orzctl foreign ls /dev/sdb1
 orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# lire un volume ext2/ext4 existant (lecture seule)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 ```
 
 Niveaux RAID pris en charge : `Raid0` / `Raid1` (miroir) / `Raid5` /

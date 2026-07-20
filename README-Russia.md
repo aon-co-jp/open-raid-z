@@ -25,7 +25,7 @@ uberblock, нет ZIL и т.д.). Миграция с существующего
 
 | Компонент | Роль / статус |
 |---|---|
-| `open_raid_z_core` | Основная библиотека: уровни RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, перечисление `RaidLevel` в `vdev.rs`), контрольные суммы sha2, copy-on-write, снапшоты/клоны, эмуляция ACL, взаимодействие с FAT32/exFAT (`foreign_fs`, чтение+запись), реальное монтирование (WinFsp в Windows, FUSE в Linux/macOS/Android) и бинарник CLI `orzctl` |
+| `open_raid_z_core` | Основная библиотека: уровни RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, перечисление `RaidLevel` в `vdev.rs`), контрольные суммы sha2, copy-on-write, снапшоты/клоны, эмуляция ACL, взаимодействие с FAT32/exFAT (`foreign_fs`, чтение+запись) и доступ только для чтения к ext2/ext4 (та же feature), реальное монтирование (WinFsp в Windows, FUSE в Linux/macOS/Android) и бинарник CLI `orzctl` |
 | `zfs_accel_hlsl` | Ускоряет на GPU вычисление чётности в поле Галуа для RAID-Z/Z2/Z3 через HLSL-шейдеры + D3D12/DirectML. При отключённой фиче `gpu_accel` откатывается на чистую реализацию на CPU (Rust), что удобно для CI без WinFsp/dxc |
 | `open_runo_installer_core` | ОС-независимая логика обнаружения дисков, советов по конфигурации zpool и предпросмотра; намеренно выделена в отдельный крейт, не зависящий от Tauri, чтобы не попадать под ограничения edition2024 у Tauri |
 | `open_runo_installer` (GUI на Tauri) | Десктопное приложение на Tauri 2 + TypeScript, использующее `installer_core`. **Единственное место во всей экосистеме, напрямую зависящее от пакета Tauri** (отдельно от политики репозиториев веб-экосистемы переписывать Tauri с нуля) |
@@ -46,6 +46,10 @@ orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tan
 # чтение/запись существующего тома FAT32/exFAT (помощь при миграции)
 orzctl foreign ls /dev/sdb1
 orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# чтение существующего тома ext2/ext4 (только чтение)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 ```
 
 Поддерживаемые уровни RAID: `Raid0` / `Raid1` (зеркало) / `Raid5` /

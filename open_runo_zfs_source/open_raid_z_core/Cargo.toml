@@ -39,6 +39,13 @@ fscommon = { version = "0.1", optional = true }
 # (foreign_fs.rs参照)。旧`exfat-fs`(0.1系、読み取り専用)から、書き込みに
 # 対応した`hadris-fat`(`write`+`exfat` feature)へ移行した。
 hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
+# ext2/ext4(読み取り専用)。純Rust・no_std対応の読み取り実装
+# (foreign_fs.rs参照)。書き込みに対応した成熟済みの純Rustクレートは
+# 2026-07時点で存在しないため、ext4は読み取り専用ブリッジとして提供する
+# (MULTIPLATFORM_ROADMAP.md 目標②の「ext4: 読み取り」に対応)。
+# `std` featureは`Ext4::load_from_path`(std::fs::Fileからの読み込み)に必要
+# (既定はno_stdでこの関数が存在しない)。
+ext4-view = { version = "0.9", optional = true, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
@@ -101,9 +108,9 @@ gpu_accel = ["zfs_accel_hlsl/gpu"]
 # 同様、明示的に有効化する)。Linux以外のターゲットでは`fuser`クレート自体が
 # 依存関係として存在しないため、他OSでこのfeatureを有効化することはできない。
 fuse_backend = ["dep:fuser", "dep:fuser_android"]
-# 既存OSの既存フォーマット(FAT32等)を読み書きするブリッジ機能。
-# ネイティブライブラリを要さないため全OSで有効化できる。
-foreign_fs = ["dep:fatfs", "dep:fscommon", "dep:hadris-fat"]
+# 既存OSの既存フォーマット(FAT32/exFAT読み書き、ext4読み取り)を扱う
+# ブリッジ機能。ネイティブライブラリを要さないため全OSで有効化できる。
+foreign_fs = ["dep:fatfs", "dep:fscommon", "dep:hadris-fat", "dep:ext4-view"]
 
 [lib]
 name = "open_raid_z_core"
@@ -126,4 +133,10 @@ required-features = ["foreign_fs"]
 
 [[example]]
 name = "format_exfat_image"
+required-features = ["foreign_fs"]
+
+# ext4読み取りブリッジの統合テスト(実mkfs.ext4製フィクスチャ使用)。
+# examplesと同じ理由で、foreign_fs無効時のビルドを壊さないよう明示する。
+[[test]]
+name = "foreign_ext4"
 required-features = ["foreign_fs"]

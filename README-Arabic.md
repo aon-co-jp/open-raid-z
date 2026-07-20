@@ -25,7 +25,7 @@ open-raid-z". راجع [MIGRATION.md](MIGRATION.md).
 
 | المكوّن | الدور / الحالة |
 |---|---|
-| `open_raid_z_core` | المكتبة الأساسية: مستويات RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`، التعداد `RaidLevel` في `vdev.rs`)، مجاميع اختبارية sha2، النسخ عند الكتابة، اللقطات/الاستنساخ، محاكاة ACL، التشغيل البيني مع FAT32/exFAT (`foreign_fs`، قراءة وكتابة)، التركيب الفعلي (WinFsp على Windows، FUSE على Linux/macOS/Android)، وملف `orzctl` التنفيذي لسطر الأوامر |
+| `open_raid_z_core` | المكتبة الأساسية: مستويات RAID (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`، التعداد `RaidLevel` في `vdev.rs`)، مجاميع اختبارية sha2، النسخ عند الكتابة، اللقطات/الاستنساخ، محاكاة ACL، التشغيل البيني مع FAT32/exFAT (`foreign_fs`، قراءة وكتابة) مع وصول للقراءة فقط إلى ext2/ext4 (نفس الميزة)، التركيب الفعلي (WinFsp على Windows، FUSE على Linux/macOS/Android)، وملف `orzctl` التنفيذي لسطر الأوامر |
 | `zfs_accel_hlsl` | يسرّع عبر GPU حساب التعادلية في حقل غالوا لـ RAID-Z/Z2/Z3 باستخدام تظليل HLSL + D3D12/DirectML. عند تعطيل ميزة `gpu_accel`، يتراجع إلى تنفيذ CPU خالص بلغة Rust (مفيد لبيئات CI بدون WinFsp/dxc) |
 | `open_runo_installer_core` | منطق مستقل عن نظام التشغيل لاكتشاف الأقراص وتقديم مشورة تكوين zpool والمعاينة؛ فُصل عمدًا كحزمة مستقلة عن Tauri لتجنّب قيود edition2024 التي قد يفرضها Tauri |
 | `open_runo_installer` (واجهة Tauri الرسومية) | تطبيق سطح مكتب مبني بـ Tauri 2 + TypeScript يستخدم `installer_core`. **هذا هو المكان الوحيد في كامل هذا النظام البيئي الذي يعتمد مباشرة على حزمة Tauri** (بمعزل عن سياسة مستودعات النظام البيئي للويب القاضية بإعادة تنفيذ Tauri من الصفر) |
@@ -46,6 +46,10 @@ orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tan
 # قراءة/كتابة وحدة تخزين FAT32/exFAT موجودة (مساعدة للترحيل)
 orzctl foreign ls /dev/sdb1
 orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# قراءة وحدة تخزين ext2/ext4 موجودة (قراءة فقط)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 ```
 
 مستويات RAID المدعومة: `Raid0` / `Raid1` (مرآة) / `Raid5` / `Raid6`
