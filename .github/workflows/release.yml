@@ -27,7 +27,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
       - name: Build
         working-directory: ${{ env.CRATE_DIR }}
-        run: cargo build --release --bin orzctl
+        # gpu_accelは既定featureだがdxc(DirectX Shader Compiler)がCIに
+        # 無いため無効化。fuse_backendを明示有効化(Linux実マウント)。
+        run: cargo build --release --bin orzctl --no-default-features --features fuse_backend,foreign_fs
       - name: Package
         run: |
           mkdir -p dist
@@ -46,7 +48,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         working-directory: ${{ env.CRATE_DIR }}
-        run: cargo build --release --bin orzctl
+        # gpu_accelは既定featureだがdxc(DirectX Shader Compiler)がCIに
+        # 無いため無効化(CPUフォールバックのみになるが、配布バイナリの
+        # 実マウント機能=winfsp_backendには影響しない)。
+        run: cargo build --release --bin orzctl --no-default-features --features winfsp_backend,foreign_fs
       - name: Package
         shell: pwsh
         run: |

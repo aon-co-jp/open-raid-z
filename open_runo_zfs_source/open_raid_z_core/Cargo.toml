@@ -11,15 +11,6 @@ license = "MPL-2.0"
 # WinFsp の実Rustバインディング。実際にWindows上へマウント可能なファイル
 # システムを構築するために使用する(mount.rs参照)。
 winfsp = { version = "0.13", optional = true }
-widestring = { version = "1", optional = true }
-windows = { version = "0.58", features = [
-    "Win32_Storage_FileSystem",
-    "Win32_Security",
-    "Win32_Foundation",
-    # デバイスサイズ取得(`IOCTL_DISK_GET_LENGTH_INFO`、block_device.rs参照)に使用。
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-] }
 thiserror = "1.0"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -46,6 +37,31 @@ hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
 # `std` featureは`Ext4::load_from_path`(std::fs::Fileからの読み込み)に必要
 # (既定はno_stdでこの関数が存在しない)。
 ext4-view = { version = "0.9", optional = true, features = ["std"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# 2026-07-23修正: 以前はこの2つが上の`[dependencies]`(全OS共通)に
+# 置かれており、`use windows::...`自体は`#[cfg(target_os = "windows")]`
+# でガードされていたにもかかわらず、Cargo.tomlの依存宣言自体が
+# ターゲット非依存だったため、Linux/CIビルドでも`windows`crateが
+# コンパイル対象になり、crates.io上の`windows`0.58系→`windows-future`
+# 0.2.1の推移的バージョン不整合(`windows_core::imp::IMarshal`等が
+# 見つからない)で実際にビルド不能になっていた(v0.1.0タグのリリースCI、
+# `.github/workflows/release.yml`のLinuxジョブで実際に発覚)。
+# `fuser`/`fuser_android`と同じ`[target.'cfg(...)'.dependencies]`パターンへ
+# 揃えて解消。
+# `windows`crate自体は`block_device.rs`のWindows専用パス(feature非依存、
+# 常時コンパイル対象)で使うため、`winfsp`とは異なり`optional`にはしない
+# (optionalにすると`winfsp_backend`feature off時にリンクエラーになる)。
+# ターゲットをWindows限定にするだけでLinux/CIビルドから除外される。
+widestring = { version = "1", optional = true }
+windows = { version = "0.58", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Foundation",
+    # デバイスサイズ取得(`IOCTL_DISK_GET_LENGTH_INFO`、block_device.rs参照)に使用。
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
