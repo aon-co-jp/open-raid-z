@@ -1,0 +1,73 @@
+name: Release binaries
+
+# タグ(例: v0.1.0)をpushすると、Linux(x86_64-unknown-linux-gnu)・
+# Windows(x86_64)向けに`orzctl`をビルドし、GitHub Releasesへ添付する。
+# 実体は open_runo_zfs_source/open_raid_z_core 配下(ネストしたcrate)。
+# open-web-server/RPoem/aruaru-dbで確立したパターンをそのまま踏襲。
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  CRATE_DIR: open_runo_zfs_source/open_raid_z_core
+
+jobs:
+  build-linux:
+    name: Linux (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FUSE headers (fuser crate build-dep)
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
+      - name: Build
+        working-directory: ${{ env.CRATE_DIR }}
+        run: cargo build --release --bin orzctl
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp "${CRATE_DIR}/target/release/orzctl" dist/orzctl
+          cp install.sh dist/install.sh
+          tar -czf open-raid-z-linux-x86_64.tar.gz -C dist orzctl install.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-raid-z-linux-x86_64
+          path: open-raid-z-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Windows (x86_64、WinFsp前提)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: ${{ env.CRATE_DIR }}
+        run: cargo build --release --bin orzctl
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "$env:CRATE_DIR/target/release/orzctl.exe" dist/
+          Copy-Item install.ps1 dist/
+          Compress-Archive -Path dist/* -DestinationPath open-raid-z-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-raid-z-windows-x86_64
+          path: open-raid-z-windows-x86_64.zip
+
+  release:
+    name: GitHub Releaseへ添付
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            open-raid-z-linux-x86_64/open-raid-z-linux-x86_64.tar.gz
+            open-raid-z-windows-x86_64/open-raid-z-windows-x86_64.zip
