@@ -838,3 +838,41 @@ open-web-serverがApache＋Nginxのハイブリッド仕様のWebサーバーと
 ミッションクリティカルな用途向けに、24時間365日ノンストップの
 サーバー対応WEBサイト開発を全面的にバックアップするフレームワーク・
 ミドルウェアとして機能することを目指す。
+
+### Apache/Tomcat互換性の目標(ユーザー指示、2026-07-23、原文のまま記録)
+
+> RPoemのPoemとの互換性の向上や、open-web-serverのApacheとNginxなどと
+> 互換性でApacheの様にWEBサーバーとして間違いなく動作するようにしたい。
+>
+> open-web-serverをJAVAのApacheの様に使える様にしたい。
+>
+> そして
+>
+> 連携でApacheのTOMCATの様にRPoemをJavaからでもRustとPoemやRPoemからでも
+> Rubyからでも、Ruby on Railsからでも、PHPやPHPとLARABELからでもPython
+> からでも、PythonとFastAPIからなど汎用性を持たせ互換性を高めたいです。
+
+**現状の到達点(2026-07-23調査済み)**: `open-web-server`の`app_proxy`/
+`tenant_router`は既にプレーンHTTPで転送する設計のため、**言語を問わず
+HTTPで応答する任意のアプリケーションサーバーを同じ仕組みで指せる**
+(2026-07-14実装、`open-web-server`側CLAUDE.md HANDOFF明記)。Java
+(Spring Boot等)・Ruby on Rails(`rails server`)・PHP/Laravel
+(`php artisan serve`/php-fpm)・Python/FastAPI(`uvicorn`)いずれも、
+単体のHTTPサーバーとして起動し`POST /admin/tenants`へ登録するだけで
+Apache+Tomcat的な連携が動く。
+
+**残る具体的なギャップ**:
+1. RPoem側`open-runo-appserver::tenant_bridge`(型非依存の橋渡し関数、
+   実装・テスト済み)と`open-web-server`側`TenantRegistry`の実際の
+   クロスリポジトリ配線——設計上は`open-easy-web`(ドメイン登録UI)が
+   両方の管理API(`POST /admin/tenants`・`POST /admin/appserver-tenants`)
+   を呼ぶ形で完成させる想定だが、この配線自体はまだ未接続。
+2. PHP-FPM/FastCGIのような本番グレードの直結経路が`open-web-server`に
+   無く、現状は開発用`php -S`のみ(Ruby/Python/Java側もFPM相当の
+   常駐プロセス管理は無く、都度`rails server`等を手動起動する前提)。
+3. RPoem(Poem本体)側のパリティは`docs/poem-parity.md`によれば
+   ほぼ完成しているが、gRPC対応範囲拡大・brotli圧縮・poem-openapi相当の
+   マクロ自動生成が残課題(詳細はRPoem側`docs/poem-parity.md`参照)。
+
+次回この方針に着手する際は、上記3点を優先順位付きで進めること
+(1が最も価値が高い——3つ目のリポジトリ`open-easy-web`をまたぐ作業)。
