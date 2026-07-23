@@ -8,7 +8,24 @@
 > [104 + 32 + 30]、`--no-default-features`のCPUフォールバック構成での
 > 実測値。`foreign_fs`有効時はさらにext2/ext4読み取りブリッジの統合
 > テスト8件が加わり、Windows実測112、Linux(WSL2、`fuse_backend`込み)115)
-> 最終更新: 2026-07-20
+> 最終更新: 2026-07-23
+
+---
+
+## 0. 配布インストーラー(2026-07-23追加)
+
+`install.sh`(Linux、systemdは対象外——プールごとにディスク構成が異なる
+ため、`orzctl`バイナリの`/usr/local/bin`配置のみ)/`install.ps1`
+(Windows、WinFsp前提)/`.github/workflows/release.yml`(タグpushで
+Linux x86_64・Windows x86_64向け`orzctl`を自動ビルドしGitHub Releasesへ
+添付)を追加。**移植時の注意**: `open_raid_z_core`はワークスペール
+ルート直下ではなく`open_runo_zfs_source/open_raid_z_core`という
+ネストした位置にあるため、CI等でビルドする際は`working-directory`を
+明示すること。また既定feature`gpu_accel`はdxc(DirectX Shader Compiler)
+を要求するため、dxcの無い環境(多くのCI含む)では
+`--no-default-features --features winfsp_backend,foreign_fs`
+(Windows)/`fuse_backend,foreign_fs`(Linux)のように明示的に除外する
+必要がある。
 
 ---
 

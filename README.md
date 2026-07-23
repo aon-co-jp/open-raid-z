@@ -13,6 +13,15 @@
 [Русский](README-Russia.md) / [العربية](README-Arabic.md) —
 他プロジェクトへの導入は **[PORTING.md](PORTING.md)** 1枚で完結します。
 
+## インストール(v0.1.0〜、Linux/Windows)
+
+[GitHub Releases](https://github.com/aon-co-jp/open-raid-z/releases)から
+`orzctl`バイナリ入りのtar.gz(Linux)/zip(Windows)をダウンロードし、
+同梱の`install.sh`(Linux、`/usr/local/bin`へ配置)/`install.ps1`
+(Windows、要管理者権限)を実行してください。Windows版は事前に
+[WinFsp](https://winfsp.dev/)の導入が必要です。詳細は
+[install.sh](install.sh)/[install.ps1](install.ps1)冒頭のコメント参照。
+
 > 旧来の10ヶ国語版は [`README/`](README/README-Japan.md) フォルダにも
 > 残っていますが(言語セットが異なる: UK/US English・Ukraine・
 > Iran(Persian)を含む旧版)、上記のルート直下 `README-<言語>.md` が
