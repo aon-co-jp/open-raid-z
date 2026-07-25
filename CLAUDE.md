@@ -696,6 +696,63 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
      テストが走ったかを毎回確認し、「0件で成功」を「検証した」と
      混同しないこと。
 
+### 2026-07-25セッション末尾チェックポイント(リミット接近のため記録)
+
+**このセッションで完了したこと**:
+
+1. **`open-directx`**: シェーダー拡張(乗算・境界チェック付き減算、
+   コミット`93bf231`)完了・実機検証済み。続けてDXIL実パース+D3D11
+   グラフィックスパイプライン(頂点/ピクセルシェーダー)へ着手
+   ——**セッション終了時点で完了報告は未受領**、`triangle_ps/vs.hlsl`・
+   `vector_add.dxil`・`dump_dxil.rs`まで進捗確認済み(次回`git status`で
+   確認)。DXILの次はD3D12パイプラインが自然な流れ(DXBC↔D3D11、
+   DXIL↔D3D12のペアリング、ユーザーとの合意事項)。
+
+2. **`open-cuda`**: `opencuda-llm`にGPT-2 124M実重みローダー実装・
+   実際の英語生成を確認済み(コミット`d1eca7d`)。続けてcuBLAS実装
+   (NVIDIA専用、実機GT730で検証)に着手——CUDA Toolkit 11.4.4+VS
+   Build Toolsのインストールを開始、**セッション終了時点で完了報告は
+   未受領**(次回`nvcc --version`で導入完了を確認してから続行)。
+
+3. **`aruaru-llm`**: `opencuda-llm`のGPT-2を統合し`POST /v1/generate`
+   新設、実HTTPリクエストで実際の生成確認済み(コミット`9b1825c`、
+   完了)。
+
+4. **自動同期バックアップシステム**(`open-easy-web`/`open-web-server`/
+   `open-raid-z`/`aruaru-db`横断): `open-web-server`側に
+   `open-web-server-crossbackup`クレート・`crossrepo_backup.rs`を
+   実装中。**セッション終了時点で完了報告は未受領**——次回`git status`
+   で進捗確認・再開が必要。既存バックアップ機構(`aruaru-backup`・
+   `open-web-server-ledger`のマルチリージョン/監査ログ・`open-raid-z`
+   スナップショット)を横断連携させる設計。
+
+5. **リポジトリ改名完了**(前回チェックポイントの継続):
+   `open-cosmo`(旧`open-runo`、広範囲)→`open-runo`、`RCosmo`(狭範囲)
+   →`open-cosmo`。GitHub description・ローカル・VPS(`/root`)とも更新
+   済み。`open-runo`→RPoemへの実装救済調査完了(救済不要と判明、
+   RPoem側が既に上位互換)。**`open-runo`(旧open-cosmo)側の内部
+   ドキュメントは未着手のまま**(自称が古い可能性)。
+
+6. **Android版(open-web-server)完成**: 実エミュレータで`GET /healthz`
+   →`200`実証済み。3電源プロファイル(省電力/通常/常時電源接続)・
+   タブレット対応・open-easy-web連携ボタンも実装済み(コミット
+   `6fa57ef`/`fed4995`)。物理実機検証・APK署名配布は未実施。
+
+7. **open-easy-web/RS-Redレスポンシブ+英日併記UI**: 完了・push済み
+   (コミット`a27cb03`/`2b4ef20`)。
+
+**次回セッション開始時に最優先で確認すべきこと**:
+1. `open-directx`(DXIL/D3D11の完了状況)・`open-cuda`(cuBLAS/CUDA
+   Toolkit導入状況)・自動同期バックアップの3タスクを`git status`/
+   `git log`で確認し、未完了なら再開する。
+2. **教訓**: サブエージェントが「別エージェントに委任しました」とだけ
+   報告して実際には何も変更していないケースが複数回発生した。再開
+   させる際は毎回`git status`で実ファイル変更の有無を確認してから
+   判断すること(委任だけで終わっていれば「自分で直接実装するように」
+   と明示的に指示し直す)。
+3. `open-runo`(旧open-cosmo)側の内部ドキュメントの自称表記確認
+   (未着手のまま)。
+
 ### 2026-07-24セッション末尾チェックポイント(リミット接近のため記録)
 
 **このセッションで完了したこと**:
