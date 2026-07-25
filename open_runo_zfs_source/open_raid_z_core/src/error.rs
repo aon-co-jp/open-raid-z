@@ -50,6 +50,16 @@ pub enum BridgeError {
 
     #[error("I/Oエラー: {0}")]
     Io(#[from] std::io::Error),
+
+    /// 切断耐性ジャーナル([`crate::journal`])関連の失敗
+    /// (ジャーナルディレクトリの作成・エントリ書き込み・リプレイ等)。
+    #[error("切断耐性ジャーナルの操作に失敗しました: {0}")]
+    JournalFailed(String),
+
+    /// 一時退避先([`crate::offsite_backup`])への送信・取得・初期セットアップの失敗。
+    /// 単体では致命的ではなく、フォールバック(ローカル緊急退避)が別途動く前提。
+    #[error("一時退避先の操作に失敗しました: {0}")]
+    OffsiteBackupFailed(String),
 }
 
 pub type BridgeResult<T> = Result<T, BridgeError>;

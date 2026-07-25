@@ -106,6 +106,8 @@ fn status_from_bridge_error(e: &crate::error::BridgeError) -> i32 {
         | BridgeError::AclTranslationFailed(_)
         | BridgeError::ExFatConversionFailed(_)
         | BridgeError::ForeignFsFailed(_)
+        | BridgeError::JournalFailed(_)
+        | BridgeError::OffsiteBackupFailed(_)
         | BridgeError::Io(_) => {
             0xC00000E9u32 as i32 // STATUS_UNEXPECTED_IO_ERROR
         }

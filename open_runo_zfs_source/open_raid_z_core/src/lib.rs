@@ -18,9 +18,13 @@
 #[cfg(all(target_os = "android", feature = "fuse_backend"))]
 extern crate fuser_android as fuser;
 
+#[cfg(feature = "offsite_backup")]
+pub mod accel;
 pub mod acl_emulation;
 pub mod block_device;
 pub mod checksum;
+#[cfg(feature = "offsite_backup")]
+pub mod disaster_recovery;
 pub mod error;
 pub mod exfat_emulation;
 #[cfg(feature = "foreign_fs")]
@@ -36,7 +40,10 @@ pub mod foreign_fs;
 pub mod foreign_fuse_mount;
 pub mod fs_ops;
 pub mod id_mapping;
+pub mod journal;
 pub mod migrate;
+#[cfg(feature = "offsite_backup")]
+pub mod offsite_backup;
 #[cfg(feature = "winfsp_backend")]
 pub mod mount;
 // Linux・macOS(macFUSE/FUSE-T経由)・Android(パッチ済み`fuser`フォーク
