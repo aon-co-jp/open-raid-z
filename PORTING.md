@@ -4,11 +4,13 @@
 > 導入・移設できます。
 >
 > 対象バージョン: `open_raid_z_core` 0.0.1 / `zfs_accel_hlsl` /
-> `open_runo_installer_core` 0.1.0(3クレート・166テスト
-> [104 + 32 + 30]、`--no-default-features`のCPUフォールバック構成での
+> `open_runo_installer_core` 0.1.0(3クレート・170テスト
+> [108 + 32 + 30]、`--no-default-features`のCPUフォールバック構成での
 > 実測値。`foreign_fs`有効時はさらにext2/ext4読み取りブリッジの統合
-> テスト8件が加わり、Windows実測112、Linux(WSL2、`fuse_backend`込み)115)
-> 最終更新: 2026-07-23
+> テスト8件が加わり、Windows実測112、Linux(WSL2、`fuse_backend`込み)115。
+> `offsite_backup`有効時はEmail/Googleドライブ/SFTPのモック結合テスト
+> 3件が加わり111)
+> 最終更新: 2026-07-25
 
 ---
 
@@ -51,6 +53,7 @@ poem-cosmo-tauri/open-runoのようなREST/GraphQL APIサーバーではなく�
 | 既存フォーマット連携 | FAT32/exFAT の読み書き+ext2/ext4 の読み取り相互運用(`foreign_fs` feature、純Rust実装でネイティブライブラリ不要) |
 | GPU高速化(任意) | RAID-Z/Z2/Z3のガロア体パリティ計算をHLSL+D3D12/DirectMLでGPUオフロード(`gpu_accel` feature) |
 | インストーラGUI | ディスク検出・zpool構成助言(`installer_core`、OS非依存ロジック) + Tauri 2 GUI(`open_runo_installer`) |
+| 切断耐性・オフサイト退避(任意) | 書き込みWrite-Aheadジャーナル(`journal.rs`)+再接続時の自動復旧(ライブI/O非ブロッキング、`disaster_recovery.rs`)+切断直前セグメントのEmail/Googleドライブ/SFTP退避(`offsite_backup` feature)+圧縮のCPU/GPU/NPU抽象化(`accel.rs`)。ストレージプール専用ではなく、任意のデータをバックアップしたい他アプリからもライブラリとして呼べる汎用設計 |
 
 ## 2. 持っていくもの(ファイル一覧)
 
@@ -172,11 +175,65 @@ Windows SDKいずれも不要になります(CI環境向け、下記5節の163�
 open_runo_installer_core = { path = "../open-raid-z/open_runo_zfs_source/open_runo_installer_core" }
 ```
 
+### 4.6 切断耐性ジャーナル・オフサイト退避・自動復帰だけを使う(他アプリからの利用も想定、2026-07-25追加)
+
+```toml
+open_raid_z_core = { path = "...", default-features = false, features = ["offsite_backup"] }
+```
+
+```rust
+use open_raid_z_core::offsite_backup::{
+    OffsiteBackupTarget, SftpBackupTarget, SftpBackupTargetConfig,
+};
+
+let target = SftpBackupTarget::new(SftpBackupTargetConfig {
+    host: "backup.example.com".to_string(),
+    port: 22,
+    username: "raidz".to_string(),
+    password_env: Some("RAIDZ_SFTP_PASSWORD".to_string()), // 値は環境変数から
+    remote_backup_dir: "backup".to_string(),
+});
+target.ensure_ready()?;                                  // 初回: リモートフォルダ確認/作成
+target.upload_segment("00000000000000000001.entry.gz", &journal_bytes)?; // 切断時
+// 再接続後の自動復帰:
+for label in target.list_segments()? {
+    let data = target.download_segment(&label)?;
+    // ローカルへ反映...
+    target.delete_segment(&label)?;
+}
+```
+
+`EmailBackupTarget`/`GoogleDriveBackupTarget`も同じ`OffsiteBackupTarget`
+トレイトを実装しているため差し替え可能(Emailは送信専用、
+`list_segments`/`download_segment`は非対応で`OffsiteBackupFailed`を返す
+設計——できないことを`NotImplemented`ではなく明示的なエラーで正直に返す)。
+**このリポジトリはストレージプール専用の機能として作っていない**——
+`journal.rs`/`disaster_recovery.rs`/`offsite_backup.rs`/`accel.rs`は
+`Pool`型に依存しない独立モジュールのため、`open-easy-web`のような
+他アプリが「切断に強いバックアップ機能」を個別実装せずこのクレートへの
+path依存だけで再利用できる(「分身の術」——1つの共有実装を複数アプリが
+個別インストール無しで呼び出す既存パターンと同じ思想)。
+
+**移植時の実装上の注意(実際に踏んだ罠)**:
+- `russh_sftp::client::SftpSession::write()`(高レベル便利関数)は内部で
+  `AsyncWriteExt::write_all`のみ呼び、書き込み確認応答の完了待ち・
+  SSH_FXP_CLOSE送信を行わずに返る。直後に同じファイルを再オープンして
+  読み取ると空データが返ることがある(実際にテストで再現・修正した罠)。
+  書き込み完了を保証したい場合は`open_with_flags`+`write_all`+
+  `AsyncWriteExt::shutdown`(flush+クローズの完了待ち)を明示的に呼ぶこと。
+- SMTPサーバーのモック実装で認証方式を限定的にしか実装していない場合、
+  `lettre`クレートは既定で`Mechanism::Plain`を`Mechanism::Login`より
+  優先して選ぶ(`DEFAULT_MECHANISMS = [Plain, Login]`)。サーバーが
+  EHLO応答でPLAIN/LOGIN両方を広告するとPLAINが選ばれ、LOGINしか
+  実装していないモックでは「unrecognized command」になる。テスト用
+  モックサーバーは実装済みのメカニズムだけを広告すること。
+
 ## 5. 動作確認
 
 ```sh
 cd open_runo_zfs_source/open_raid_z_core
-cargo test --no-default-features   # 104テスト(2026-07-20実測)
+cargo test --no-default-features                        # 108テスト(2026-07-25実測)
+cargo test --no-default-features --features offsite_backup  # 111テスト(オフサイト退避モック結合テスト込み)
 
 cd ../zfs_accel_hlsl
 cargo test --no-default-features   # 32テスト(CPUフォールバック)
@@ -185,12 +242,15 @@ cd ../open_runo_installer_core
 cargo test                          # 30テスト
 ```
 
-3クレート合計 **166テストpassed、failed 0**(2026-07-20実測、
+3クレート合計 **170テストpassed、failed 0**(2026-07-25実測、
 WinFsp SDK/dxc/Windows SDK不要の構成)。`open_raid_z_core`に
 `--features foreign_fs`を加えるとext2/ext4読み取りブリッジの統合テストが
 加わり、Windows実測112、Linux(WSL2、`fuse_backend,foreign_fs`)で115に
-なる。`default`feature(実マウント+GPU高速化)を有効にした構成はWindows
-実機+WinFsp SDK+dxcが必要なため別途確認してください。
+なる。`--features offsite_backup`を加えるとEmail/Googleドライブ/SFTPの
+モック結合テスト3件が加わり111になる(実クラウドアカウント・実SMTP・
+実VPSへは接続せず、ローカルの偽サーバーのみで検証)。`default`feature
+(実マウント+GPU高速化)を有効にした構成はWindows実機+WinFsp SDK+dxcが
+必要なため別途確認してください。
 
 ## 6. データのお引越し(既存環境から)
 

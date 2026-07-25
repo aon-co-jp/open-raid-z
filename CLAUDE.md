@@ -598,6 +598,79 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+- **2026-07-25 切断耐性/オフサイト退避機能(journal.rs/disaster_recovery.rs/
+  offsite_backup.rs/accel.rs)の未検証コミットを検証・実バグ2件を修正・
+  完了**: 前回セッションが未コミットのまま残していた「HDD読み書き中の
+  電源断・USB/SATA/LAN/WiFi切断耐性」機能一式(書き込みWrite-Ahead
+  ジャーナル`journal.rs`、再接続時自動復旧`disaster_recovery.rs`、
+  Email/Googleドライブ/SFTPへの切断時退避`offsite_backup.rs`、圧縮の
+  CPU/GPU/NPU抽象化`accel.rs`、`tests/offsite_backup_integration.rs`)を
+  引き継ぎ検証した。
+  1. **ビルドエラーの修正**: `src/mount.rs`の`status_from_bridge_error`が
+     新設した`BridgeError::JournalFailed`/`BridgeError::OffsiteBackupFailed`
+     の2バリアントを網羅しておらず`cargo build --tests`が失敗していた。
+     既存の`MountFailed`/`Io`等と同じcatch-all分岐(STATUS_UNEXPECTED_IO_ERROR
+     へマップ)に追加して解消。
+  2. **実バグ1: SFTPアップロード後の読み取りが空データを返す**——
+     `SftpBackupTarget::upload_segment`が`russh_sftp::client::SftpSession
+     ::write()`(高レベル便利関数)をそのまま使っていたが、このメソッドは
+     内部で`AsyncWriteExt::write_all`のみ呼び、書き込み確認応答(ack)の
+     完了待ちも`SSH_FXP_CLOSE`の送信も行わずに返る(`russh-sftp` 2.3.0の
+     `src/client/fs/file.rs`を精読して特定——`write_nowait`はoneshotの
+     保留キューに積むだけで`poll_write`は即座に`Ready`を返し、
+     `poll_flush`/`poll_shutdown`が呼ばれない限りackを待たない設計)。
+     テストの`sftp_backup_target_full_roundtrip_via_inprocess_russh_server`
+     が「write→reopen for read→read」の直後に空データ(`got_n=0`)を
+     受け取っていたのはこれが原因。**修正**: `open_with_flags(CREATE|
+     TRUNCATE|WRITE)`+`write_all`+`AsyncWriteExt::shutdown()`(flush＋
+     クローズの完了待ち)を明示的に呼ぶ実装へ変更(`src/offsite_backup.rs`
+     の`SftpBackupTarget::upload_segment`)。真の原因はテストのフェイク
+     SFTPサーバー側ではなく、本体コード側(`offsite_backup.rs`)の実装
+     不備だった。
+  3. **実バグ2: モックSMTPテストが「500 unrecognized command」で失敗**——
+     `email_backup_target_sends_journal_segment_via_mock_smtp`のフェイク
+     SMTPサーバーはEHLO応答で`AUTH LOGIN PLAIN`(両方式)を広告しつつ、
+     実装は`AUTH LOGIN`のチャレンジ方式しか処理していなかった。`lettre`
+     0.11の`DEFAULT_MECHANISMS = [Mechanism::Plain, Mechanism::Login]`
+     (`src/transport/smtp/authentication.rs`)により、サーバーがPLAINも
+     対応していると広告している場合、クライアントは**PLAINを優先して
+     選ぶ**(単一行の`AUTH PLAIN <base64>`コマンドを送る)。フェイク
+     サーバーはこのコマンド形式を認識できず「500 unrecognized command」
+     を返していた——本体コード(`offsite_backup.rs`のEmailBackupTarget)側
+     に問題は無く、**テストのフェイクサーバー実装が広告と実装を
+     一致させていなかった**のが原因。EHLO応答を`AUTH LOGIN`のみの広告に
+     修正し解消(`tests/offsite_backup_integration.rs`)。
+  4. **デバッグ用`eprintln!`の削除**: 前回セッションが原因調査のために
+     フェイクSFTPサーバーの`open`/`write`/`read`ハンドラへ残していた
+     デバッグ出力を、修正確認後に削除した(本文には残さない方針どおり)。
+  5. **検証結果(実際にテスト実行して確認、他リポジトリのCLAUDE.mdにも
+     倣い実測値を記録)**: `cargo build --tests`(デフォルトfeature)成功。
+     `cargo test --no-default-features`は108テスト全green(lib単体52
+     [journal関連追加込み]+統合56)。`cargo test --no-default-features
+     --features offsite_backup`は111テスト全green(上記108+
+     `offsite_backup_integration.rs`3件——Email/Googleドライブ/SFTPの
+     フルラウンドトリップがすべて実際にpassすることを確認)。
+  6. **正直な開示(未検証・既知の制約、このリポジトリの既存方針どおり
+     隠さず記録)**: 実クラウドアカウント・実SMTPサーバー・実VPSへは
+     一度も接続していない——検証は全てローカルの偽サーバー(手製の
+     ミニマムSMTPサーバー・`wiremock`・インプロセス`russh`/`russh-sftp`
+     サーバー)によるモック結合テストのみ(`tests/offsite_backup_integration.rs`
+     冒頭のドキュメントコメントに明記された既存の検証方針どおり)。
+     `accel.rs`のGPU/NPU圧縮は2026-0725時点で未実装で常にCPUへ
+     フォールバックする設計のまま(日英Web検索でもDirectX/クロス
+     ベンダー対応の圧縮GPUカーネルの流用先クレートは見つからなかった
+     ため、実装するとすれば独自HLSLカーネルの新規開発が必要——
+     今回のスコープ外)。SFTPのホスト鍵検証は`check_server_key`が常に
+     `Ok(true)`を返す設計のままで、既知ホスト鍵の永続的な検証は未実装
+     (`offsite_backup.rs`内のコメントに明記済み)。`GoogleDriveBackupTarget`の
+     OAuth2リフレッシュ実装自体は`wiremock`でHTTPレベルの検証は行ったが、
+     実Googleアカウントでの動作確認は行っていない。実際のディスク
+     切断・LAN切断シナリオでの`disaster_recovery.rs`自動復旧モードの
+     実機検証(VM/実ハードウェアでのケーブル抜線等)も今回は未実施
+     ——ユニットテストレベルの検証にとどまる。次回この機能に戻る際は、
+     上記の未検証項目(実クラウド接続・実機切断シナリオ・GPU圧縮
+     カーネル)から優先度をつけて着手すること。
+
 - **2026-07-23(続き) `open-easy-web`で発見したTOTPテストの実バグと
   ワークスペース構造の罠を、正本として記録(どのリポジトリからでも
   参照できるように)**:

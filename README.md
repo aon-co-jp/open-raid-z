@@ -5,7 +5,7 @@
 依存やオンディスク互換性はなし。純Rust + オプションでGPU高速化)。
 
 [![License](https://img.shields.io/badge/license-MPL--2.0-blue)](open_runo_zfs_source/open_raid_z_core/Cargo.toml)
-![Tests](https://img.shields.io/badge/tests-166%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-170%20passed-brightgreen)
 
 📖 詳細: [日本語 README](README-Japan.md) / [English README](README-English.md) /
 [中文](README-Chinese.md) / [한국어](README-Korea.md) / [Español](README-Spain.md) /
@@ -48,7 +48,7 @@ FUSE)。
 
 | クレート/ディレクトリ | 役割 |
 |---|---|
-| `open_runo_zfs_source/open_raid_z_core` | 中核ライブラリ: RAIDレベル(Raid0/Raid1/Raid5/Raid6/Z2/Z3)・チェックサム(sha2)・CoW・スナップショット/クローン・ACLエミュレーション・FAT32/exFAT読み書き+ext2/ext4読み取り相互運用(`foreign_fs`)・実マウント(WinFsp/FUSE)・`orzctl`バイナリ |
+| `open_runo_zfs_source/open_raid_z_core` | 中核ライブラリ: RAIDレベル(Raid0/Raid1/Raid5/Raid6/Z2/Z3)・チェックサム(sha2)・CoW・スナップショット/クローン・ACLエミュレーション・FAT32/exFAT読み書き+ext2/ext4読み取り相互運用(`foreign_fs`)・実マウント(WinFsp/FUSE)・書き込みジャーナル+切断時オフサイト退避+自動復帰(`offsite_backup`、下記参照)・`orzctl`バイナリ |
 | `open_runo_zfs_source/zfs_accel_hlsl` | RAID-Z/Z2/Z3のガロア体(GF)パリティ計算をD3D12/DirectML/HLSLシェーダでGPU高速化するクレート(`gpu_accel` feature、無効時はCPUフォールバックのみで動作) |
 | `open_runo_zfs_source/open_runo_installer_core` | ディスク検出・zpool構成助言・プレビューのOS非依存ロジック(Tauri非依存の独立クレート。Tauri本体のedition2024要求に巻き込まれず`cargo test`できるよう意図的に分離) |
 | `open_runo_zfs_source/open_runo_installer` | 上記`installer_core`を利用するTauri 2 + TypeScriptデスクトップGUI(**エコシステム内で唯一Tauriへ直接依存する箇所**。Web系リポジトリ群がTauriを自前再実装する方針とは別に、この単独インストーラGUIはTauriパッケージをそのまま使う) |
@@ -79,18 +79,52 @@ orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
 `Z2` / `Z3`(いずれも`RaidLevel` enum、`vdev.rs`参照)。RAID10は別途
 `raid10.rs`のミラーグループ束ねとして提供。
 
+## 切断耐性(ジャーナル)・オフサイト退避・自動復帰(2026-07-25追加)
+
+HDD読み書き中の電源断・USB/SATA/LAN/WiFi切断に備える3点セット。
+`open-web-server`が採用している「分身の術」(1インスタンスを複数
+テナント/アプリが個別インストール無しで共有する構成)と同じ思想で、
+ストレージプールに限らず**任意のデータ**を扱うAPI呼び出し元
+(`open-easy-web`等の他アプリ)からも利用できるライブラリ機能として
+設計している。
+
+- **`journal.rs`**: 書き込み前に「これから書く内容」をWrite-Ahead
+  Journalへ追記し、切断・電源断からの復旧後に未反映分だけをリプレイする。
+- **`disaster_recovery.rs`**: 再接続を検知すると自動復旧モードへ入り、
+  ジャーナル/退避先に残った未反映セグメントを取り込む。**ライブI/Oを
+  ブロックしない**設計(復旧処理と通常の読み書きが競合しないよう配慮)。
+- **`offsite_backup.rs`**(`offsite_backup` feature): 切断直前の
+  ジャーナルセグメントを、設定した退避先へ複製しておく。対応先は
+  Email(`lettre`、送信専用)・Google Drive(REST API v3、OAuth2認証は
+  ユーザー自身が発行済みのトークンを環境変数経由で渡すのみ)・SFTP
+  (`russh`/`russh-sftp`、任意のVPS/レンタルサーバー宛て)。いずれも
+  秘密情報は環境変数名だけを設定ファイルに書き、実値は実行時に環境変数
+  から読む。ローカルへの復旧が完了できない場合は退避先データをそのまま
+  残す(ローカルフォールバック)。
+- **`accel.rs`**: ジャーナルセグメントの圧縮/展開をCPU/GPU/NPUで切り替え
+  可能にするハードウェアアクセラレータ抽象化(`open-web-server-wire::accel`の
+  `AccelBackend`パターンを踏襲)。**正直な開示**: 2026-0725時点で圧縮
+  アルゴリズムのGPU/NPU実装自体は未実装で、GPU/NPU指定時は`tracing::warn!`
+  を出した上で常にCPU実装へフォールバックする(クラッシュ・データ破損を
+  避ける安全側の設計)。
+
 ## ビルド・テスト
 
 ```sh
 cd open_runo_zfs_source/open_raid_z_core
-cargo test --no-default-features   # WinFsp SDK・dxc・Windows SDK不要のCPUフォールバック構成
+cargo test --no-default-features                       # WinFsp SDK・dxc・Windows SDK不要のCPUフォールバック構成
+cargo test --no-default-features --features offsite_backup  # 上記+オフサイト退避のモック結合テスト
 ```
 
-3クレート合計 **166テストがpass(failed 0)** — 内訳:
-`open_raid_z_core` 104・`zfs_accel_hlsl`(CPUフォールバック) 32・
-`open_runo_installer_core` 30(2026-07-20実測)。`--features foreign_fs`を
-加えるとext2/ext4読み取りブリッジの統合テストが加わり、Windows実測で
-112テスト、Linux(WSL2、`fuse_backend,foreign_fs`)で115テストになる。
+3クレート合計 **170テストがpass(failed 0)** — 内訳:
+`open_raid_z_core` 108(2026-07-25実測、ジャーナル関連の単体テスト追加後)・
+`zfs_accel_hlsl`(CPUフォールバック) 32・`open_runo_installer_core` 30。
+`--features foreign_fs`を加えるとext2/ext4読み取りブリッジの統合テストが
+加わり、Windows実測で112テスト、Linux(WSL2、`fuse_backend,foreign_fs`)で
+115テストになる。`--features offsite_backup`を加えるとEmail/Googleドライブ/
+SFTPのモック結合テスト3件が加わり111テストになる(実クラウドアカウント・
+実SMTPサーバー・実VPSへは一切接続せず、ローカルの偽サーバー
+[モックSMTP・wiremock・インプロセスrussh SFTPサーバー]のみを使用)。
 `default`feature(WinFsp実マウント+GPU高速化)はWindows実機+WinFsp SDK+dxcが
 必要なため別途確認が必要。
 

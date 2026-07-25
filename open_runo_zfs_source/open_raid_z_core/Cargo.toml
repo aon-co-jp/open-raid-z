@@ -38,6 +38,40 @@ hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
 # (既定はno_stdでこの関数が存在しない)。
 ext4-view = { version = "0.9", optional = true, features = ["std"] }
 
+# --- 切断耐性・一時退避先(offsite_backup feature、任意有効化) ---
+# HDD読み書き中の電源断/USB切断/SATA切断/LAN切断/WiFi切断からの回避策
+# (WAL的ジャーナル+一時退避先バックアップ)を提供する。既存のWinFsp/FUSE
+# 実マウント同様、明示的にfeatureを有効化した場合のみビルド対象になる。
+# Email転送(SMTP)。実在し保守されている純RustクレートでTLS対応が
+# あるため採用(`lettre-rust smtp crate`で日英検索し確認)。
+lettre = { version = "0.11", optional = true, default-features = false, features = [
+    "smtp-transport",
+    "builder",
+    "hostname",
+    "rustls-tls",
+] }
+# 設定ファイル(TOML)の読み込み。
+toml = { version = "1", optional = true }
+# Googleドライブ REST API v3 呼び出し用の同期HTTPクライアント。
+# tokioを新たに要さない(SMTP/設定と同じ同期APIに揃えるため採用)。
+ureq = { version = "3", optional = true, default-features = false, features = ["rustls", "json"] }
+# 汎用SFTP(レンタルサーバー/VPSのバックアップフォルダ向け)。
+# open-web-server が組み込みSFTPサーバーとして採用済みの
+# russh/russh-sftp のクライアント版を流用する(エコシステム内の
+# 既存実績クレートを踏襲、`russh-sftp client rust`で日英検索し確認)。
+russh = { version = "0.62", optional = true, default-features = false, features = ["ring", "rsa"] }
+russh-sftp = { version = "2", optional = true }
+# russh(SSH)クライアントは非同期(tokio前提)。SMTP/HTTPは同期APIの
+# ままにしつつ、SFTP呼び出し部分だけ内部で使い捨てのtokioランタイムを
+# 起動して同期関数として外へ見せる(呼び出し側APIの一貫性のため)。
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "io-util", "time", "fs"] }
+serde_json = { version = "1", optional = true }
+async-trait = { version = "0.1", optional = true }
+# 一時退避先へ送るジャーナルセグメントのCPU圧縮(既定バックエンド、
+# `src/accel.rs`参照)。純Rust実装(miniz_oxideバックエンド)でネイティブ
+# ライブラリを要さない。
+flate2 = { version = "1", optional = true, default-features = false, features = ["rust_backend"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # 2026-07-23修正: 以前はこの2つが上の`[dependencies]`(全OS共通)に
 # 置かれており、`use windows::...`自体は`#[cfg(target_os = "windows")]`
@@ -127,6 +161,10 @@ fuse_backend = ["dep:fuser", "dep:fuser_android"]
 # 既存OSの既存フォーマット(FAT32/exFAT読み書き、ext4読み取り)を扱う
 # ブリッジ機能。ネイティブライブラリを要さないため全OSで有効化できる。
 foreign_fs = ["dep:fatfs", "dep:fscommon", "dep:hadris-fat", "dep:ext4-view"]
+# 切断耐性(電源断/USB/SATA/LAN/WiFi切断からの回避策)+ 一時退避先
+# (Email/Googleドライブ/SFTP)。詳細は`src/journal.rs`・
+# `src/offsite_backup.rs`・`src/disaster_recovery.rs`参照。
+offsite_backup = ["dep:lettre", "dep:toml", "dep:ureq", "dep:russh", "dep:russh-sftp", "dep:tokio", "dep:serde_json", "dep:async-trait", "dep:flate2"]
 
 [lib]
 name = "open_raid_z_core"
@@ -156,3 +194,16 @@ required-features = ["foreign_fs"]
 [[test]]
 name = "foreign_ext4"
 required-features = ["foreign_fs"]
+
+# 一時退避先(Email/Googleドライブ/SFTP)のモック結合テスト
+# (モックSMTPサーバー・wiremockによるモックHTTPサーバー・
+# インプロセスrussh SFTPサーバーを使用、実クラウド/実SMTPには接続しない)。
+[[test]]
+name = "offsite_backup_integration"
+required-features = ["offsite_backup"]
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+rand = "0.10"
+anyhow = "1"
