@@ -1,5 +1,13 @@
 # open-raid-z (English)
 
+> **Updated 2026-07-25**: The dev-policy file (`CLAUDE.md`) heading was
+> renamed from "Development Policy & Dev Environment Rules" to
+> "Design Philosophy & Development Policy & Dev Environment Rules",
+> to more clearly separate the project's design philosophy (what we
+> value), development policy (how we work), and dev environment rules
+> (concrete operational conventions). See `CLAUDE.md` for details.
+
+
 **A Rust implementation of a real, mountable RAID-Z/Z2/Z3 storage pool.**
 It reimplements ZFS/OpenZFS's design ideas — parity-distributed striping,
 self-healing checksums, copy-on-write, snapshots/clones — **from scratch in
