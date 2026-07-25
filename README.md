@@ -6,6 +6,14 @@
 > 開発方針(どう進めるか)・開発環境ルール(具体的な運用規約)を明確に
 > 区別して記載しています。詳細は`CLAUDE.md`を参照してください。
 
+> **2026-07-25(セッション末尾チェックポイント)**: open-easy-web/
+> open-web-server/open-raid-z/aruaru-dbの「SET」に、標準単独メール
+> ディザスタバックアップ機能(本リポジトリの`offsite_backup.rs`を
+> 各リポジトリが再利用)を実装完了。並行して`open-directx`が
+> DirectX D3D11(DXBC)/D3D12(DXIL)両方の実シェーダー→実Vulkan
+> ディスパッチ→CPU参照実装との数値一致を実機検証済み。詳細は
+> `CLAUDE.md`のHANDOFF節を参照してください。
+
 
 **Rust製の実マウント可能なRAID-Z/Z2/Z3ストレージプール実装**
 (ZFS「風」のCoW/チェックサム/スナップショット。ZFS自体・OpenZFSへの
