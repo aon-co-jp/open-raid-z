@@ -7,6 +7,15 @@
 > value), development policy (how we work), and dev environment rules
 > (concrete operational conventions). See `CLAUDE.md` for details.
 
+> **Session checkpoint, 2026-07-25**: the "SET" of open-easy-web /
+> open-web-server / open-raid-z / aruaru-db now all have a standalone
+> email disaster-backup capability (reusing this repo's own
+> `offsite_backup.rs`). In parallel, the sibling `open-directx` project
+> reached real-hardware-verified parity between DirectX D3D11 (DXBC)
+> and D3D12 (DXIL): a real compiled shader is translated to SPIR-V and
+> dispatched on real Vulkan hardware, matching a CPU reference exactly.
+> See `CLAUDE.md`'s HANDOFF section for the full detail.
+
 
 **A Rust implementation of a real, mountable RAID-Z/Z2/Z3 storage pool.**
 It reimplements ZFS/OpenZFS's design ideas — parity-distributed striping,

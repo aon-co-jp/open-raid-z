@@ -621,6 +621,44 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+- **2026-07-25(セッション末尾チェックポイント) SET全体の自動同期
+  バックアップ+DirectX D3D11/D3D12互換層+GPUベンダー統合、複数リポジトリ
+  横断の到達点まとめ(このopen-raid-zのCLAUDE.mdが正本、詳細は各リポジトリ
+  側CLAUDE.mdのHANDOFF参照)**:
+  1. **SET(open-easy-web/open-web-server/open-raid-z/aruaru-db)の
+     スタンドアロン・メール・ディザスタバックアップ、4リポジトリ全て完了**:
+     `open_raid_z_core::offsite_backup::EmailBackupTarget`(本リポジトリの
+     機能)を各リポジトリが再利用する形で、VPS分散同期の設定なしでも
+     単体で動くメールバックアップを実装。`aruaru-db`は実際のRaft
+     quorum障害時に自動でメール退避が発火するところまで配線完了
+     (`RaftWriter`経由、非ブロッキング、未設定時は既存動作を完全維持)。
+     `open-easy-web`は実際のサイトファイル書き込みをバックアップ経路へ
+     配線する作業が別セッションで進行中(詳細はopen-easy-web側CLAUDE.md)。
+  2. **open-directx: DirectX D3D11(DXBC)/D3D12(DXIL)の両方で、実
+     シェーダー→実SPIR-V生成→実Vulkanディスパッチ→CPU参照実装との数値
+     一致、を実機(NVIDIA GT 730)で検証済み**。D3D11側は加算/乗算/減算
+     (境界チェック付き)/除算の4シェーダー、D3D12/DXIL側はLLVM
+     bitstream解析(型テーブル・命令列・Call命令の完全disambiguate)を
+     経て同じvector_add形状で到達——両者がパリティに達した。汎用的な
+     SM5.0/DXIL全体のデコーダではなく、既知の狭いシェーダー形状のみに
+     絞った「狭いが実物」アプローチ(詳細はopen-directx側CLAUDE.md)。
+     PlayStation対応は法務リスクを理由に引き続き着手保留。
+  3. **open-cuda: GPUベンダー統合の実態を監査・拡張**。実機は
+     NVIDIA GT 730のみ(ROCm/oneAPIツールチェーン無し)と確認した上で、
+     `GpuVendor`にQualcomm Adreno/ARM Mali/Imagination PowerVRの実
+     ベンダーIDを追加。Vulkan Compute自体が既に実装レベルでベンダー
+     非依存(ディスパッチコードにベンダー分岐が無い)という統合の実態を
+     `OmniGPU-Design.md`に文書化。cuBLAS/rocBLAS/oneMKL専用パスは、
+     このマシンでは検証手段が無いため引き続き正直にスタブのまま
+     (無理に「完成」を主張しない)。
+  4. **aruaru-llm: `opencuda-llm`(実GPT-2 124M重み)を実サービスへ統合
+     済み**(`POST /v1/generate`で本格的な自己回帰テキスト生成、
+     既存の`opencuda-bert`埋め込み分類とは別エンドポイント)。
+  - 次にすべきこと: 各リポジトリ側CLAUDE.mdの「次にすべきこと」を参照。
+    特にopen-directxはDXBCデコーダの一般化(複数演算・複数一時レジスタ)
+    とDXILワークグループサイズの実メタデータ抽出(現状ハードコード)が
+    進行中。
+
 - **2026-07-25 切断耐性/オフサイト退避機能(journal.rs/disaster_recovery.rs/
   offsite_backup.rs/accel.rs)の未検証コミットを検証・実バグ2件を修正・
   完了**: 前回セッションが未コミットのまま残していた「HDD読み書き中の

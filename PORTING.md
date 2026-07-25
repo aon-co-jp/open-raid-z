@@ -5,6 +5,13 @@
 > (設計思想・開発方針・開発環境ルールを明確に区別)。移設先でも
 > `CLAUDE.md`の内容を必ず確認してください。
 
+> **2026-07-25(セッション末尾チェックポイント)**: 本リポジトリの
+> `offsite_backup.rs`(Email/Googleドライブ/SFTP退避)は、
+> open-easy-web/open-web-server/aruaru-dbの3リポジトリへ
+> path依存として移植・再利用済み(`default-features = false`、
+> `offsite_backup` feature)。同じ移植パターンを他プロジェクトへ
+> 適用する場合は、各リポジトリのCLAUDE.md HANDOFF内の実装例を参照。
+
 
 > このファイル1枚で、他プロジェクト/他マシンへ open-raid-z を
 > 導入・移設できます。
