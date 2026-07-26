@@ -621,6 +621,49 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+- **2026-07-26(シャットダウン前チェックポイント) RS-Red→open-redmine改名
+  +Redmine機能拡充+電源/省メモリプロファイルのライブ切替+open-directx
+  デコーダ一般化、複数リポジトリ横断の到達点まとめ**:
+  1. **RS-Red→open-redmine 全面改名完了**: GitHub(`aon-co-jp/RS-Red`→
+     既存の空プレースホルダ`aon-co-jp/open-redmine`へ内容移設)・
+     ローカルドライブ(`F:\runo\RS-Red`→`F:\runo\open-redmine`、Windows
+     側の長いパス+実行中プロセスによるファイルロックで難航したが
+     `taskkill`で解消)・VPS(ディレクトリ+systemdサービス名を
+     `open-redmine`へ統一、`systemctl is-active`で稼働確認済み)の
+     3箇所全て完了。旧GitHubリポジトリ`RS-Red`の削除はユーザー確認待ち。
+  2. **open-redmine: 実Redmine機能ギャップの一部を実装(コミット
+     `3a0711e`)**: 複数トラッカー種別(Bug/Feature/Support/Task)・
+     課題の関連(blocks/duplicates/precedes)・作業時間記録を追加。
+     66テスト全green(新規9件)。カバレッジ目安を「2〜3割」から
+     「3割程度」へ正直に更新(誇張なし)。詳細はopen-redmine側CLAUDE.md。
+  3. **省電力/省メモリプロファイルのセッション中ライブ切替
+     (open-web-server、コミット`6e08f2b`)**: Android側はポーリング
+     ループが起動時に一度だけプロファイルを読んでいた実バグを発見・
+     修正し、再起動無しで即座に反映されるよう修正。Windows/Linux
+     デスクトップ側は従来ゼロだったプロファイル概念を新設し、
+     管理API(`/admin/power-profile`)経由でDDNS等のポーリング間隔を
+     ライブ変更できることを実HTTPテストで確認。ハードウェアアクセラ
+     プロファイルの切替のみネイティブプロセス再起動が必要という正直な
+     制限を明記。
+  4. **aruaru-db: ディザスタバックアップの残り3ギャップを解消
+     (コミット`3c4eeec`)**: 真の低速SMTPシナリオでの非ブロッキング
+     実証・稼働中RaftWriterへの管理API経由の実注入・RaftNode迂回経路の
+     棚卸し(1件発見し配線、1件発見したが今回は未着手のまま正直に
+     記録——`aruaru-graphql`の`cluster_propose` resolverがRaftWriterを
+     経由しない、単一ノードでは実害小さいが複数ノードでは一貫性が
+     崩れる真のバグになり得ると明記)。
+  5. **open-directx: DXBCデコーダの一般化+DXILワークグループサイズの
+     実メタデータ抽出(コミット`214cb5d`)**: 複数演算・複数一時レジスタ
+     を扱う汎用パターンを追加(fxcの最適化—コンポーネント再利用・CSE—を
+     ハードコード無しで正しく処理できることを確認)。DXILの
+     `numthreads`をメタデータから実際に抽出するよう変更(従来の
+     ハードコード`(64,1,1)`を解消、回帰防止テスト付き)。全6件の
+     実Vulkanハードウェアテスト(NVIDIA GT 730)含め green、リグレッション
+     無し。
+  - 次にすべきこと: 各リポジトリ側CLAUDE.mdの「次にすべきこと」参照。
+    特にopen-redmineのWASM UI対応・aruaru-dbのGraphQL迂回経路配線・
+    RS-Red旧GitHubリポジトリの削除確認、が未着手のまま残っている。
+
 - **2026-07-25(セッション末尾チェックポイント) SET全体の自動同期
   バックアップ+DirectX D3D11/D3D12互換層+GPUベンダー統合、複数リポジトリ
   横断の到達点まとめ(このopen-raid-zのCLAUDE.mdが正本、詳細は各リポジトリ
