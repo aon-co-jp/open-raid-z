@@ -16,6 +16,14 @@
 > dispatched on real Vulkan hardware, matching a CPU reference exactly.
 > See `CLAUDE.md`'s HANDOFF section for the full detail.
 
+> **Checkpoint before shutdown, 2026-07-26**: `RS-Red` was fully renamed
+> to `open-redmine` (GitHub, local drive, and VPS all done). `aruaru-db`
+> closed its remaining disaster-backup gaps, `open-web-server` gained
+> live (no-restart) power/low-memory profile switching, and
+> `open-directx`'s DXBC decoder was generalized while its DXIL
+> workgroup-size extraction was fixed to read real metadata instead of
+> a hardcoded value. See `CLAUDE.md`'s HANDOFF section for details.
+
 
 **A Rust implementation of a real, mountable RAID-Z/Z2/Z3 storage pool.**
 It reimplements ZFS/OpenZFS's design ideas — parity-distributed striping,

@@ -12,6 +12,13 @@
 > `offsite_backup` feature)。同じ移植パターンを他プロジェクトへ
 > 適用する場合は、各リポジトリのCLAUDE.md HANDOFF内の実装例を参照。
 
+> **2026-07-26(シャットダウン前チェックポイント)**: `aruaru-db`側の
+> `RaftWriter`実装は、内部可変性(`parking_lot::Mutex<Option<Arc<..>>>`)
+> による「構築後の後付け注入」パターンへ更新済み——`Arc`共有後の
+> インスタンスへ`offsite_backup`系の設定を注入する必要がある他
+> プロジェクトは、この実装例を参照すると良い(詳細はaruaru-db側
+> CLAUDE.mdの2026-07-25(続き2)HANDOFF参照)。
+
 
 > このファイル1枚で、他プロジェクト/他マシンへ open-raid-z を
 > 導入・移設できます。
