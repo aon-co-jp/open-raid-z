@@ -468,6 +468,7 @@ fn sftp_backup_target_full_roundtrip_via_inprocess_russh_server() {
         username: "raidz".to_string(),
         password_env: Some("TEST_RAIDZ_SFTP_PASSWORD".to_string()),
         remote_backup_dir: "backup".to_string(),
+        known_hosts_path: None,
     });
 
     target.ensure_ready().unwrap();
@@ -482,4 +483,53 @@ fn sftp_backup_target_full_roundtrip_via_inprocess_russh_server() {
     target.delete_segment("00000000000000000001.entry.gz").unwrap();
     let labels_after_delete = target.list_segments().unwrap();
     assert!(!labels_after_delete.contains(&"00000000000000000001.entry.gz".to_string()));
+}
+
+#[test]
+fn sftp_host_key_tofu_trusts_first_connection_and_rejects_a_later_mismatched_key() {
+    // TOFU(Trust On First Use)方式のホスト鍵検証を実際のknown_hostsファイル
+    // (実ファイルシステム上)で検証する: (1) 初回接続は無条件で信頼し記録、
+    // (2) 記録済みの鍵と一致する再接続は成功、(3) known_hostsファイルの
+    // 記録が(鍵のすり替え等で)実際のサーバーの鍵と一致しなくなった場合は
+    // 接続そのものを拒否する、ことを実際のインプロセスSSHサーバーへの
+    // 接続で確認する(モックの呼び出し回数確認ではなく、実際の接続成否を見る)。
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("sftp-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let known_hosts_path = tmp.path().join("known_hosts.txt");
+
+    let port = rt.block_on(fake_sftp_server::spawn(root));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    std::env::set_var("TEST_RAIDZ_SFTP_TOFU_PASSWORD", "unit-test-password");
+    let make_target = || {
+        SftpBackupTarget::new(SftpBackupTargetConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "raidz".to_string(),
+            password_env: Some("TEST_RAIDZ_SFTP_TOFU_PASSWORD".to_string()),
+            remote_backup_dir: "backup".to_string(),
+            known_hosts_path: Some(known_hosts_path.clone()),
+        })
+    };
+
+    // (1) 初回接続: known_hostsが存在しない状態から、無条件で信頼して
+    // ファイルへ記録することを確認。
+    assert!(!known_hosts_path.exists());
+    make_target().ensure_ready().expect("first connection should be trusted and recorded (TOFU)");
+    let recorded = std::fs::read_to_string(&known_hosts_path).expect("known_hosts file should have been created");
+    assert!(recorded.contains(&format!("127.0.0.1:{port} ssh-")), "recorded entry should contain the host:port key and an OpenSSH-formatted public key, got: {recorded}");
+
+    // (2) 記録済みの鍵と一致する再接続は成功する。
+    make_target().ensure_ready().expect("reconnecting with the same server key should succeed");
+
+    // (3) known_hostsの記録を、実際のサーバー鍵とは異なる値へ意図的に
+    // 書き換える(鍵のすり替え・中間者攻撃の代替)。同じhost:port識別子で、
+    // 明らかに異なるダミーのOpenSSH公開鍵行に差し替える。
+    let tampered = format!("127.0.0.1:{port} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINTENTIONALLYWRONGKEYFORTOFUTEST0000000000000\n");
+    std::fs::write(&known_hosts_path, tampered).unwrap();
+
+    let result = make_target().ensure_ready();
+    assert!(result.is_err(), "connecting when the recorded host key no longer matches the server's actual key must be rejected");
 }

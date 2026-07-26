@@ -621,6 +621,58 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+- **2026-07-26 SFTP退避先(`offsite_backup::SftpBackupTarget`)のホスト鍵
+  検証をTOFU(Trust On First Use)方式で実装——`check_server_key`が常に
+  `Ok(true)`を返すだけだった既知の未検証項目(CLAUDE.mdに以前から正直に
+  記録されていた制約)を解消(ユーザー指示: runo.tokyo/open-directx/
+  open-cuda/aruaru-llm等7リポジトリの未着手・未完成事項の洗い出し→実装
+  継続、SETバックアップ系の実接続配線の一環として着手)**:
+  1. **`src/offsite_backup.rs`に`SftpBackupTargetConfig::known_hosts_path:
+     Option<PathBuf>`を新設**(`#[serde(default)]`、未設定なら従来どおり
+     検証しない後方互換)。`SftpPasswordAuthHandler`に`host_key`
+     (`"host:port"`)と`known_hosts_path`を持たせ、`check_server_key`を
+     実装: (a) 未設定なら無条件Trust(既存動作)、(b)
+     `russh::keys::PublicKey::to_openssh()`でOpenSSH形式へエンコードし、
+     独自の簡易known_hostsファイル(`mod known_hosts`、
+     `"host:port <openssh鍵>"`を1行ずつ記録するテキスト形式)を検索、
+     (c) 未記録なら無条件で信頼して追記(TOFU)、(d) 記録済みかつ一致なら
+     許可、(e) 記録済みだが不一致なら`Ok(false)`で接続そのものを拒否
+     (中間者攻撃・DNSスプーフィング対策、`tracing::error!`で警告ログ)。
+  2. **呼び出し側3箇所を新フィールドに対応**: `open-raid-z`自身の
+     `tests/offsite_backup_integration.rs`、`open-easy-web/server/src/
+     dist_sync.rs`の`build_manager`/`sftp_target_configs`(こちらは
+     `.values()`から`.iter()`へ変更し、分散同期先のUUID(`id`)ごとに
+     `journal_dir/dist-sync-known-hosts/<id>.txt`という独立した
+     known_hostsファイルを持たせた——複数VPS間で鍵を混同しないため)。
+     `aruaru-db`側は`SftpBackupTargetConfig`の直接構築箇所が無いことを
+     `grep`で確認済み(影響なし)。
+  3. **新規テスト`sftp_host_key_tofu_trusts_first_connection_and_rejects_a_later_mismatched_key`
+     を追加**(`tests/offsite_backup_integration.rs`、実インプロセスrussh
+     SFTPサーバーへの実接続で検証、モックの呼び出し回数確認に留めない):
+     (1) known_hosts未作成の状態から初回接続が成功し、実際にファイルへ
+     `"127.0.0.1:<port> ssh-..."`形式で記録されることを`std::fs::read_to_string`
+     で確認、(2) 記録済みの鍵と一致する再接続が成功することを確認、
+     (3) known_hostsファイルの記録を意図的に無関係のダミー鍵へ書き換えた
+     状態で接続を試み、**実際に接続が拒否される(`Err`が返る)**ことを確認。
+  4. **検証(実測)**: `open_raid_z_core`側`cargo test --features
+     offsite_backup`が**60(lib)+新規1件を含む既存4件(offsite_backup_integration)
+     +他の統合テスト群、全green**(実行結果に`FAILED`無し、新規追加分
+     `sftp_host_key_tofu_...`/`sftp_backup_target_full_roundtrip_...`共に
+     `ok`)。この変更を利用する`open-easy-web/server`側も`cargo test`
+     59件全green(既存の`dist_sync`関連テスト含め回帰なし)。
+  5. **正直な開示**: (1) known_hostsファイル自体の破損・並行書き込み時の
+     排他制御は今回実装していない(単純な追記/全文読み込みのみ、複数
+     プロセスからの同時書き込みは非対応)。(2) 実際のDNSスプーフィング・
+     中間者攻撃環境での実地検証は行っていない(ユニットテストでの
+     人工的な鍵すり替えシミュレーションのみ)。(3) OpenSSH標準の
+     `~/.ssh/known_hosts`形式(ホスト名のハッシュ化等)とは異なる独自簡易
+     フォーマットであり、既存のOpenSSHツール(`ssh-keygen -R`等)とは
+     互換性が無い。
+  - 次にすべきこと: (1) 実SMTPサーバー/実Googleドライブアカウントでの
+    E2Eディザスタ退避検証、(2) known_hostsファイルへの排他制御
+    (ファイルロック)の追加、(3) 複数プロセス/複数VPS運用時の
+    known_hosts管理UIの検討(現状はファイル直接編集のみ)。
+
 - **2026-07-26(お引越し前・緊急チェックポイント) VPS上で実際に発生した
   障害と復旧状況——次回セッション開始時に必ず最初に確認すること**:
   1. **`karu.tokyo`は現在HTTPS証明書が無い状態(復旧目安:
