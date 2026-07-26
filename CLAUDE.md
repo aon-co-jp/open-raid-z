@@ -621,6 +621,73 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+- **2026-07-26(お引越し前・緊急チェックポイント) VPS上で実際に発生した
+  障害と復旧状況——次回セッション開始時に必ず最初に確認すること**:
+  1. **`karu.tokyo`は現在HTTPS証明書が無い状態(復旧目安:
+     2026-07-27 00:17:48 UTC頃)**。原因: `open-web-server`のTLS証明書は
+     `TenantCertResolver`(`crates/open-web-server-gateway/src/tls.rs`)
+     内の`RwLock<HashMap<String, Arc<CertifiedKey>>>`に**メモリ上のみ**
+     保持され、ディスクへ永続化されていなかった(今回の調査で判明した
+     重大な既知バグ)。本セッション中に`open-web-server`を2回再起動した
+     結果、全ドメイン(約20件)のTLS証明書がメモリから消失し、
+     `runo.tokyo`含む全ドメインが一時的にHTTPS応答不能になった。
+     `/admin/tenants/:host/tls/acme`経由で証明書を再取得し19/20ドメインは
+     復旧させたが、`karu.tokyo`だけはLet's Encryptの
+     「同一ドメイン集合への証明書発行は168時間に5件まで」という実際の
+     レート制限(`too many certificates (5) already issued...`)に
+     引っかかり、**次回セッション開始時点でまだ復旧していない可能性が
+     高い**。まず`curl -s -o /dev/null -w '%{http_code}' https://karu.tokyo/`
+     で確認し、まだ000/エラーなら現在時刻がレート制限解除時刻
+     (上記UTC時刻)を過ぎているか確認した上で、
+     `POST /admin/tenants/karu.tokyo/tls/acme`(`x-admin-token`ヘッダ、
+     ボディ`{"directory_url":"https://acme-v02.api.letsencrypt.org/directory","contact_email":"norukia.jp@gmail.com"}`)
+     を1回だけ叩いて復旧させること(解除前に何度も試すと制限がさらに
+     延びるため厳禁)。
+  2. **重要な運用上の教訓(次回以降、絶対に守ること)**: 上記バグが
+     修正される(下記3参照、現在バックグラウンドで実装中)までは、
+     **`open-web-server`サービスを安易に再起動しないこと**。設定ファイル
+     (`domains.toml`/`web_vhosts.toml`)の変更を反映させたい場合でも、
+     再起動は全ドメインのTLS証明書を道連れにする実害があることを
+     忘れないこと。真に必要な場合のみ、再起動直後に全ドメイン分の
+     証明書再取得を1回で済むよう用意してから実行すること(Let's Encrypt
+     レート制限に達したドメインが1つでもあると、それだけ長時間の
+     ダウンタイムになる)。
+  3. **恒久修正が進行中**: `open-web-server`リポジトリに、証明書を
+     ディスクへ永続化し起動時に読み戻す修正をバックグラウンドエージェント
+     (`OPEN_WEB_SERVER_TLS_CERT_DIR`環境変数、再起動シミュレーションの
+     回帰テスト付き)へ依頼済み。次回セッション開始時、
+     `open-web-server`側CLAUDE.mdのHANDOFFを確認し、完了していれば
+     VPSへデプロイ(この際も、デプロイ後の再起動1回分のみ証明書再取得が
+     必要になる点に注意)。
+  4. **`runo.tokyo`のTOPページが一時的に`open-web-server`自身の
+     紹介ページにすり替わっていたバグを修正済み**:
+     `web_vhosts.toml`の`host = "runo.tokyo"`向け`[[webvhost]]`エントリ
+     (`docroot = "/root/open-web-server/site"`)が、`domains.toml`の
+     `tenant_router`登録(`127.0.0.1:3000`、実際のruno-tokyoアプリ)より
+     優先されて表示されてしまっていた——過去に一度修正されたのと同じ
+     既知のバグパターンの再発。`web_vhosts.toml`から該当エントリを削除し
+     (VPS上のファイルをバックアップの上で編集)、再起動して修正確認済み
+     (`https://runo.tokyo/`が正しくruno-tokyoアプリの内容を返すことを
+     確認)。**ローカルリポジトリ側(`F:\runo\open-web-server`)の
+     `web_vhosts.toml`相当の設定ファイルには反映していない**——VPS上の
+     運用設定ファイルのみの変更のため、次回同様の再発防止策を検討する
+     場合は、VPS上のこのファイル自体をgit管理下に置く等の恒久対応も
+     視野に入れること。
+  5. **`https://runo.tokyo/open-redmine`のルーティングを新規追加**:
+     `domains.toml`の`path_prefix = "/RS-Red"`エントリを
+     `path_prefix = "/open-redmine"`へ変更(バックエンドは同じ
+     `127.0.0.1:8100`、open-redmineの実サービス)。動作確認済み。
+  6. **ユーザーから受けたが未着手のフォローアップ依頼**:
+     (a) `https://runo.tokyo/`のホームページ本文(あきる野市紹介+
+     プロダクト紹介)に`open-redmine`へのリンクを追加してほしい
+     (runo.tokyoリポジトリの`src/lib.rs`/`src/meta_index.rs`を編集する
+     作業、まだ未着手)、
+     (b) `open-web-server`のAndroid版(ARM64/x86_64両対応、電源プロファイル
+     省メモリ/省電力/通常/常時電源接続の4種)について、「省メモリ版+
+     省電力版」のように**複数プロファイルを組み合わせて選択できる
+     ようにしてほしい**という要望(現状は4択から1つを選ぶ排他的設計、
+     組み合わせ可能にする設計変更が必要、まだ未着手)。
+
 - **2026-07-26(シャットダウン前チェックポイント) RS-Red→open-redmine改名
   +Redmine機能拡充+電源/省メモリプロファイルのライブ切替+open-directx
   デコーダ一般化、複数リポジトリ横断の到達点まとめ**:
