@@ -1,5 +1,13 @@
 # open-raid-z (English)
 
+> ⚠️ **Urgent, 2026-07-26**: `karu.tokyo` currently has NO valid HTTPS
+> certificate (Let's Encrypt rate-limited; expected recovery ~2026-07-27
+> 00:17:48 UTC). Whoever resumes work next MUST read `CLAUDE.md`'s latest
+> HANDOFF entry ("pre-relocation emergency checkpoint") first. Do NOT
+> casually restart `open-web-server` — its TLS certs are memory-only (not
+> yet persisted to disk), so a restart wipes HTTPS for every domain it
+> serves; a permanent fix is in progress in the `open-web-server` repo.
+
 > **Updated 2026-07-25**: The dev-policy file (`CLAUDE.md`) heading was
 > renamed from "Development Policy & Dev Environment Rules" to
 > "Design Philosophy & Development Policy & Dev Environment Rules",
