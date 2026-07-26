@@ -466,23 +466,86 @@ pub struct SftpBackupTargetConfig {
     /// リモートのバックアップ先ディレクトリ(無ければ`ensure_ready`で
     /// 作成する)。
     pub remote_backup_dir: String,
+    /// TOFU(Trust On First Use)方式のホスト鍵検証に使うknown_hostsファイル
+    /// (OpenSSHの`~/.ssh/known_hosts`と同様の役割、独自の簡易フォーマット
+    /// `"host:port <openssh形式の公開鍵>"`を1行ずつ記録する)。
+    /// 未設定(`None`)の場合は検証を行わない(2026-07時点の既存動作、
+    /// 後方互換のためデフォルトは無効)。設定した場合、(1)
+    /// 初回接続時はホスト鍵を無条件で信頼してこのファイルへ記録し、
+    /// (2) 2回目以降の接続では記録済みの鍵と一致するかを検証し、
+    /// 不一致なら接続を拒否する(中間者攻撃・DNSスプーフィング対策)。
+    #[serde(default)]
+    pub known_hosts_path: Option<std::path::PathBuf>,
 }
 
 pub struct SftpBackupTarget {
     config: SftpBackupTargetConfig,
 }
 
-struct SftpPasswordAuthHandler;
+struct SftpPasswordAuthHandler {
+    /// known_hostsファイル内でのホスト識別キー(`"host:port"`)。
+    host_key: String,
+    known_hosts_path: Option<std::path::PathBuf>,
+}
 
 impl russh::client::Handler for SftpPasswordAuthHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, _server_public_key: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
-        // このリポジトリのSFTPターゲットは「ユーザー自身が設定したホスト」
-        // への一時退避専用であり、既知ホスト鍵の永続的な検証は
-        // 今回のスコープ外(2026-07時点で未検証の項目としてCLAUDE.md
-        // HANDOFFに正直に記録する)。
-        Ok(true)
+    async fn check_server_key(&mut self, server_public_key: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
+        let Some(path) = &self.known_hosts_path else {
+            // known_hosts_path未設定なら検証しない(既存動作、後方互換)。
+            return Ok(true);
+        };
+        let Ok(encoded) = server_public_key.to_openssh() else {
+            tracing::warn!(host = %self.host_key, "SFTPホスト鍵のOpenSSH形式へのエンコードに失敗したため、検証をスキップします");
+            return Ok(true);
+        };
+        match known_hosts::lookup(path, &self.host_key) {
+            Some(known) if known == encoded => Ok(true),
+            Some(_mismatched) => {
+                tracing::error!(
+                    host = %self.host_key,
+                    "SFTPホスト鍵が記録済みの鍵と一致しません(ホスト側の鍵変更、または中間者攻撃の可能性)。\
+                     安全のため接続を拒否します。正当な鍵変更の場合は{path:?}から該当行を削除して再接続してください。"
+                );
+                Ok(false)
+            }
+            None => {
+                if let Err(e) = known_hosts::append(path, &self.host_key, &encoded) {
+                    tracing::warn!(host = %self.host_key, error = %e, "known_hostsへの新規ホスト鍵の記録に失敗しました(今回の接続は許可しますが、次回以降のなりすまし検知はできません)");
+                } else {
+                    tracing::info!(host = %self.host_key, "初回接続のためSFTPホスト鍵を信頼し、known_hostsへ記録しました(TOFU)");
+                }
+                Ok(true)
+            }
+        }
+    }
+}
+
+/// 独自の簡易known_hostsファイル(`"host:port <openssh形式の公開鍵>"`を
+/// 1行ずつ記録する、OpenSSHの`~/.ssh/known_hosts`より単純なテキスト形式)。
+mod known_hosts {
+    use std::io::Write as _;
+    use std::path::Path;
+
+    pub fn lookup(path: &Path, host_key: &str) -> Option<String> {
+        let content = std::fs::read_to_string(path).ok()?;
+        for line in content.lines() {
+            if let Some((h, key)) = line.split_once(' ') {
+                if h == host_key {
+                    return Some(key.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    pub fn append(path: &Path, host_key: &str, encoded_key: &str) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        writeln!(f, "{host_key} {encoded_key}")
     }
 }
 
@@ -514,7 +577,10 @@ impl SftpBackupTarget {
         };
 
         let config = russh::client::Config::default();
-        let handler = SftpPasswordAuthHandler;
+        let handler = SftpPasswordAuthHandler {
+            host_key: format!("{}:{}", self.config.host, self.config.port),
+            known_hosts_path: self.config.known_hosts_path.clone(),
+        };
         let mut session = russh::client::connect(std::sync::Arc::new(config), (self.config.host.as_str(), self.config.port), handler)
             .await
             .map_err(|e| BridgeError::OffsiteBackupFailed(format!("SSH接続失敗: {e}")))?;
