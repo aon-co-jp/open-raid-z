@@ -621,6 +621,34 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-07-27(続き) チェックポイント項目2〜4を消化
+
+1. **`accdc2c7bcd9e2a60`(お勧めLLMダウンロード機能)は完了済みと確認**:
+   `aruaru-llm`の`git status`/`cargo test`を確認したところ、ハードウェア
+   検出(`src/hardware.rs`)・`GET /v1/recommend`・`POST /v1/recommend-and-download`・
+   `static/index.html`のUIまで実装済みで42件全testがgreenだった。ユーザーからの
+   追加指示(「一つ大きなモデルをダウンロードする」/「一つ小さなモデルを
+   ダウロードする」ボタン追加)にも対応し、`model_catalog::next_larger`/
+   `next_smaller`+`POST /v1/download-larger`/`download-smaller`エンドポイントを
+   実装。`cargo test`42件全green(新規2件含む)を確認後、コミット`019d2e2`で
+   push済み。
+2. **`aruaru-db`の未コミット変更を精査・コミット**: GraphQL
+   `cluster_propose` resolverが`RaftWriter`(Raftコンセンサス+
+   disaster-backup配線)を迂回し`engine.execute`へ直接書き込んでいた
+   ギャップを解消する変更だった(`replicator: Option<Arc<dyn
+   ReplicatedWriter>>`を`AdminCtx`へ注入、設定時は`propose_and_wait`
+   経由、未設定時のみ`raft_fallback_no_replicator`として明示フォール
+   バック)。`cargo build`成功、新規テスト2件(`cluster_propose_tests`)を
+   含めビルド・実行して確認後、コミット`c68ed6e`でpush済み。
+3. **`open-runo`(旧open-cosmo)側の内部ドキュメントの自称表記確認**:
+   `.md`/`.rs`/`.toml`全体を`grep -rn "open-cosmo"`で検索した結果、
+   ヒットは0件——別セッションが既に修正済みだったと判明(作業ツリーも
+   `git status`でクリーン)。この項目は**解消済み・追加対応不要**。
+4. **`open-web-server`は不干渉のまま**: `git status`で電源プロファイル
+   (`android/`配下)・`crossrepo_backup.rs`等、別セッションによる未コミット
+   の進行中変更を確認したため、深夜自動アップデート機能の実装は今回も
+   見送った(前回エントリの判断を継続)。
+
 ### 2026-07-27セッション末尾チェックポイント(リミット接近のため記録)
 
 **このセッションで完了したこと**(直前のエントリの詳細も参照):
