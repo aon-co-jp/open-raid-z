@@ -621,6 +621,54 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-07-27 karu.tokyo TLS証明書、恒久修正デプロイと引き換えに再度レート制限に抵触
+(前回チェックポイント「2026-07-26緊急引き継ぎ」の続き)
+
+**完了**: `open-web-server`のTLS証明書永続化の恒久修正
+(`OPEN_WEB_SERVER_TLS_CERT_DIR`、コミット`e21d871`)をVPSへデプロイ済み。
+`disaster_email_backup` featureが新たに`open-raid-z`へのpath依存を
+追加していたため、VPS側にも`/root/open-raid-z`をclone(浅いclone、
+ビルド専用)。`acme,ddns,sftp,upnp,disaster_email_backup` featureを
+指定してビルドし直す必要があった(featureを付け忘れた初回ビルドでは
+`/admin/tenants/:host/tls/acme`が404になる実バグを踏んだ、原因は
+featureゲートの見落とし)。
+
+**21ドメイン中20ドメインは証明書取得・HTTPS復旧・永続化まで完了**
+(aon.tokyo・www.aon.tokyo・aon.co.jp・www.aon.co.jp・e-gov.info・
+www.e-gov.info・easyweb.tokyo・www.easyweb.tokyo・easy-web.tokyo・
+www.easy-web.tokyo・www.karu.tokyo・nasa.tokyo・www.nasa.tokyo・
+icpo.tokyo・www.icpo.tokyo・runo.tokyo・www.runo.tokyo・aruaru.tokyo・
+fbi.tokyo・www.fbi.tokyo)。
+
+**karu.tokyoのみ現在HTTPS応答不能(`curl`で`000`を確認)**。原因は
+このセッション自身の復旧作業(緊急単体取得→ビルド修正のための2回目の
+再起動→一括再取得)で短時間に複数回karu.tokyoの証明書取得を試みて
+しまい、Let's Encryptの「同一ドメイン集合への証明書発行は168時間に
+5件まで」レート制限に到達したこと。**次回取得可能時刻:
+2026-07-28 10:12:54 UTC**。この時刻以降、以下のコマンドを1回だけ
+実行して復旧させること(解除前に何度も試すと制限がさらに延びるため
+絶対に厳禁):
+```
+curl -X POST http://127.0.0.1:80/admin/tenants/karu.tokyo/tls/acme \
+  -H "x-admin-token: <systemdユニットのOPEN_WEB_SERVER_ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"directory_url":"https://acme-v02.api.letsencrypt.org/directory","contact_email":"norukia.jp@gmail.com"}'
+```
+
+**今後の教訓**: 今回の恒久修正(証明書のディスク永続化)により、
+**次回以降はプロセス再起動をしても証明書は消えない**——今回発生した
+ような「再起動のたびに全ドメイン再取得が必要になり、レート制限を
+消費する」という問題自体が今後は起きないはず。ただし今回はその修正を
+デプロイする過程で(featureの付け忘れによる想定外の追加再起動を含め)
+複数回再起動してしまい、皮肉にも修正のデプロイ自体が新たなレート制限
+到達を招いた。次回、同様の恒久修正をデプロイする際は、ビルド前に
+必要なfeatureフラグを`Cargo.toml`の`[features]`節で確実に確認して
+から`cargo build`することを徹底する。
+
+### 2026-07-24(旧) 緊急引き継ぎ内容は上記で解消済み(参考として下記に残置)
+
+
+
 - **2026-07-26 SFTP退避先(`offsite_backup::SftpBackupTarget`)のホスト鍵
   検証をTOFU(Trust On First Use)方式で実装——`check_server_key`が常に
   `Ok(true)`を返すだけだった既知の未検証項目(CLAUDE.mdに以前から正直に
