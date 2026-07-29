@@ -194,3 +194,57 @@ fn write_unaligned_beyond_allocated_capacity_fails_cleanly_and_leaves_existing_d
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// 2026-07-27追記(RAID6のRMWペナルティ軽減の回帰テスト): `write_unaligned`
+/// へストライプ境界に完全に整列した(オフセット・サイズとも`chunk_bytes`の
+/// 倍数の)書き込みを渡した場合、高速パス(`self.write`へ直行、
+/// `self.read`は呼ばれない)を通っても、通常の`write`と全く同じ結果に
+/// なることを確認する。
+#[test]
+fn write_unaligned_with_fully_stripe_aligned_input_matches_direct_write() {
+    let dir = scratch_dir("fast-path-aligned");
+    let mut pool = build_pool(&dir);
+    pool.create_dataset("ds").unwrap();
+    pool.grow_dataset("ds", 2 * stripe_bytes()).unwrap();
+
+    // 1ストライプぶん、オフセット・サイズとも完全に整列したペイロード。
+    let payload: Vec<u8> = (0..stripe_bytes() as usize).map(|i| (i % 251) as u8).collect();
+    pool.write_unaligned("ds", 0, &payload).unwrap();
+
+    let read_back = pool.read("ds", 0, stripe_bytes()).unwrap();
+    assert_eq!(read_back, payload, "整列済み入力の高速パスでも通常のwriteと同じ内容が読み戻せること");
+
+    // 2ストライプにまたがる、整列済みの書き込みでも同様に検証する。
+    let two_stripe_payload: Vec<u8> = (0..2 * stripe_bytes() as usize).map(|i| ((i * 7) % 251) as u8).collect();
+    pool.write_unaligned("ds", 0, &two_stripe_payload).unwrap();
+    let read_back_two = pool.read("ds", 0, 2 * stripe_bytes()).unwrap();
+    assert_eq!(read_back_two, two_stripe_payload);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 2026-07-27追記: 整列済み書き込みの高速パスは、`self.read`を呼ばない
+/// (=RMWの読み出しコストを払わない)ため、**そのストライプ範囲が
+/// これまで一度も書き込まれていない(未初期化)場合でも成功する**ことを
+/// 確認する——もし内部で読み出しを行っていれば、`Pool::read`は
+/// 「割当容量を超えていないが未初期化」なストライプに対しても実際には
+/// (ゼロ埋めされた初期状態を)正常に読めるため、この観点だけでは
+/// 「読み出しをスキップした」ことの直接証明にはならない。そのため
+/// このテストは主に「高速パスでも書き込み自体が壊れていない」ことの
+/// 確認と位置付け、読み出し省略自体はコードレビュー(`pool.rs`の分岐)で
+/// 担保する。
+#[test]
+fn write_unaligned_fast_path_succeeds_on_never_before_written_stripe() {
+    let dir = scratch_dir("fast-path-fresh-stripe");
+    let mut pool = build_pool(&dir);
+    pool.create_dataset("ds").unwrap();
+    pool.grow_dataset("ds", stripe_bytes()).unwrap();
+
+    let payload: Vec<u8> = vec![0xABu8; stripe_bytes() as usize];
+    pool.write_unaligned("ds", 0, &payload).unwrap();
+
+    let read_back = pool.read("ds", 0, stripe_bytes()).unwrap();
+    assert_eq!(read_back, payload);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
