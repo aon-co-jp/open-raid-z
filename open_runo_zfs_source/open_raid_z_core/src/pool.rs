@@ -606,6 +606,22 @@ impl<V: Vdev> Pool<V> {
             return Ok(());
         }
         let chunk_bytes = self.chunk_bytes();
+
+        // 2026-07-27追記(RAID6ランダム書き込みのRead-Modify-Write(RMW)
+        // ペナルティ軽減、ユーザー指示への対応): 呼び出し元が既に
+        // ストライプ境界に整列した書き込み(オフセット・サイズとも
+        // `chunk_bytes`の倍数)を渡してきた場合、まるごと1ストライプ以上を
+        // 上書きするため「古いデータを読んでから一部だけ差し替えて書き戻す」
+        // 必要が無い——にもかかわらず、これまでは常に`self.read(...)`を
+        // 先に実行しており、RMWの読み出しコストを不要に払っていた
+        // (フルストライプ書き込みでもRMW経路に入ってしまっていた実際の
+        // 無駄、外部監査で指摘)。整列済みの場合は`self.read`を完全に
+        // スキップし、`self.write`へ直行する高速パスを追加する
+        // (ディスクフォーマット・呼び出し側APIは無変更、純粋な追加のみ)。
+        if offset % chunk_bytes == 0 && data.len() as u64 % chunk_bytes == 0 {
+            return self.write(name, offset, data);
+        }
+
         let (aligned_offset, aligned_len) = Self::align_range(chunk_bytes, offset, data.len() as u64);
 
         let mut buffer = self.read(name, aligned_offset, aligned_len)?;
