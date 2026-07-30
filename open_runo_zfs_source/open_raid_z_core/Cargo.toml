@@ -71,6 +71,13 @@ async-trait = { version = "0.1", optional = true }
 # `src/accel.rs`参照)。純Rust実装(miniz_oxideバックエンド)でネイティブ
 # ライブラリを要さない。
 flate2 = { version = "1", optional = true, default-features = false, features = ["rust_backend"] }
+# エコシステム共通のJSON層(2026-07-30追記)。`orzctl status`のJSON出力を
+# 手書き文字列組み立てから置き換えるために採用。`aruaru-db`/`open-gitea`/
+# `audiocafe-tokyo-rust`と同じpath依存パターン(`F:\runo\RS-JSON`)。
+# シリアライズ(`to_string_strict`)には`full`feature(serde_json/serde/
+# thiserror依存)が必要——依存ゼロの`light`モジュールはパース専用
+# (JSON.parse相当)で書き出し機能を持たないため。
+rust-json = { path = "../../../RS-JSON", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # 2026-07-23修正: 以前はこの2つが上の`[dependencies]`(全OS共通)に
@@ -146,7 +153,11 @@ winfsp = { version = "0.13", optional = true }
 
 [features]
 # CI環境などWinFspヘッダが無い場合でもビルドできるようダミー実装を切替可能に
-default = ["winfsp_backend", "gpu_accel"]
+default = ["winfsp_backend", "gpu_accel", "json_status"]
+# `orzctl status`のJSON出力(Rust-JSON経由)。CI/組込み向けにこの依存すら
+# 避けたいビルド(`--no-default-features`)では無効のままにできる——
+# その場合`orzctl status`はビルド対象から外れる(`create`/`mount`は影響なし)。
+json_status = ["dep:rust-json"]
 winfsp_backend = ["dep:winfsp", "dep:widestring"]
 # 実際のD3D12/DirectMLディスパッチとHLSLシェーダの事前コンパイル(dxcが必要)。
 # 無効化すると`zfs_accel_hlsl`はCPUフォールバックのみを提供するため、
