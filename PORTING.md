@@ -56,6 +56,30 @@ Linux x86_64・Windows x86_64向け`orzctl`を自動ビルドしGitHub Releases�
 (Windows)/`fuse_backend,foreign_fs`(Linux)のように明示的に除外する
 必要がある。
 
+## 0.5. アンインストーラー + `orzctl status` + Web管理UI(2026-07-30追加)
+
+- `uninstall.sh`/`uninstall.ps1`: `orzctl`バイナリのみ削除(プールデータは
+  完全に分離された場所にあるため一切触れない設計)。
+- `orzctl status`サブコマンド: 保存済みプールを開き(マウントしない)、
+  ストライプ使用状況・データセット一覧をJSON出力(`rust-json`経由、
+  `json_status` feature既定ON)。Web管理UI等からの機械可読な問い合わせ用。
+- `web/`(新規独立クレート): RPoem(`open-runo-poem-compat`)によるWeb
+  管理UI。`orzctl status`をサブプロセス呼び出しし、管理者トークン
+  (`OPEN_RAID_Z_ADMIN_TOKEN`)必須の`POST /api/create`、
+  `OPEN_RAID_Z_READ_ONLY=1`によるread-onlyデモモードに対応。移植先でも
+  同じ「CLIをサブプロセス呼び出しし、Web層は薄いラッパーに徹する」設計
+  パターンを踏襲できる。
+
+## 0.6. RAID6 GPUパリティアクセラレーション(`open-cuda`連携、2026-07-30)
+
+NVMe RAID6のランダムアクセス低速化(parity write penalty)対策として、
+`open-cuda`側にP-parity(XOR)・Q-parity(Reed-Solomon、GF(2^8))のGPU
+カーネルを実装・実機検証済み(詳細は`open-cuda`のCLAUDE.md/PORTING.md
+参照)。本リポジトリ側の実パリティ計算経路(`open_raid_z_core::vdev`)
+への統合はまだ未着手——移植先で統合する場合は、まず`open-cuda`側の
+`raid6_xor_parity`/`raid6_q_parity`カーネルのAPI契約(データレイアウト・
+係数バッファ形式)を確認してから着手すること。
+
 ---
 
 ## 1. open-raid-z とは(30秒版)

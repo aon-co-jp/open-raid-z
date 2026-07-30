@@ -50,9 +50,34 @@ orzctl foreign --format exfat mount /dev/sdc1 /mnt/old_exfat
 # 既存ext2/ext4ボリュームの読み取り(読み取り専用マウントにも対応)
 orzctl foreign --format ext4 ls    /dev/sdd1 /home
 orzctl foreign --format ext4 mount /dev/sdd1 /mnt/old_ext4
+
+# プール状態をJSONで問い合わせ(マウントはしない、Web管理UI等の機械可読な問い合わせ向け、2026-07-30追加)
+orzctl status --level z2 --chunk-size 4096 --stripes 100000 \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
 ```
 
 Windowsでは`\\.\PhysicalDriveN`形式でディスクを指定します。
+
+## アンインストール(2026-07-30追加)
+
+`uninstall.sh`/`uninstall.ps1`が`orzctl`バイナリのみを削除します
+(プールのデータは実ディスク上にあり、インストール先ディレクトリとは
+完全に分離されているため一切触れません)。
+
+## Web管理UI(2026-07-30新設、`web/`)
+
+RPoem(`open-runo-poem-compat`、Poem/Tauri非依存のtokio/hyper直接実装)を
+使った管理UI。`orzctl status`をサブプロセス呼び出しし、プール作成は
+管理者トークン(`OPEN_RAID_Z_ADMIN_TOKEN`)必須。`OPEN_RAID_Z_READ_ONLY=1`
+設定時は正しいトークンでも常に拒否するread-onlyデモモードに対応。
+
+## RAID6 GPUパリティアクセラレーション(`open-cuda`連携、2026-07-30)
+
+NVMe RAID6のランダムアクセス低速化(parity write penalty)対策として、
+P-parity(XOR)・Q-parity(Reed-Solomon、GF(2^8))ともにGPU実装・実機検証
+済み(詳細は[`open-cuda`](https://github.com/aon-co-jp/open-cuda)の
+CLAUDE.md参照)。本リポジトリ側の実パリティ計算経路への統合はまだ
+未着手。
 
 ## ビルド・テスト(実測)
 
