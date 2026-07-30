@@ -1,0 +1,23 @@
+[workspace]
+
+[package]
+name = "open-raid-z-web"
+version = "0.1.0"
+edition = "2021"
+description = "open-raid-z Web管理UI(RPoem/open-runo-poem-compat経由、Poem/Tauri直接依存無し)。orzctl statusをサブプロセス呼び出しし、管理者のみ作成操作を許可、/demoはread-only。"
+
+[[bin]]
+name = "open-raid-z-web"
+path = "src/main.rs"
+
+[dependencies]
+# RPoem(poem-cosmo-tauri)のpoem互換ファサード。実体はtokio/hyper直接実装
+# (open_runo_router::hyper_compat)であり、poem本体には依存しない
+# (2026-07-30、ユーザー指示「Rust + RPoem(tokio/hyper直接実装)」に対応)。
+open-runo-poem-compat = { path = "../../RPoem/crates/open-runo-poem-compat" }
+hyper = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# orzctl statusのJSON出力(Rust-JSON経由)を解析するための共通JSON層。
+rust-json = { path = "../../RS-JSON" }
