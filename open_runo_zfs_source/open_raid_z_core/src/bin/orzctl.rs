@@ -34,6 +34,7 @@ const HELP: &str = r#"orzctl - open-raid-z のプールを作成・マウント�
 使い方:
   orzctl create --level <LEVEL> --chunk-size <BYTES> --stripes <N> --dataset <NAME> <DISK...>
   orzctl mount  --level <LEVEL> --chunk-size <BYTES> --stripes <N> --mountpoint <PATH> <DISK...>
+  orzctl status --level <LEVEL> --chunk-size <BYTES> --stripes <N> <DISK...>
   orzctl help | --help | -h
 
 サブコマンド:
@@ -46,6 +47,9 @@ const HELP: &str = r#"orzctl - open-raid-z のプールを作成・マウント�
             Windowsでは標準入力へEnterキーが押されるまでアンマウントしない。
   foreign   open-raid-z**以外**の既存フォーマット(FAT32/FAT16)を読み書きする
             (`foreign_fs` feature必須。usage: `orzctl help-foreign`)。
+  status    保存済みのプールを開き(マウントはしない)、ストライプ使用状況・
+            データセット一覧をJSON形式で標準出力へ表示する(Web管理UI等、
+            他ツールからの機械可読な問い合わせ向け)。
   help      このヘルプを表示する。
 
 オプション(create/mount共通):
@@ -69,6 +73,7 @@ mountのみ:
 例(Windows、PowerShell。同じコマンド・同じオプション名で操作できる):
   orzctl.exe create --level z2 --chunk-size 4096 --stripes 1000 --dataset tank \\.\PhysicalDrive1 \\.\PhysicalDrive2 \\.\PhysicalDrive3 \\.\PhysicalDrive4 \\.\PhysicalDrive5 \\.\PhysicalDrive6
   orzctl.exe mount  --level z2 --chunk-size 4096 --stripes 1000 --mountpoint Z: \\.\PhysicalDrive1 \\.\PhysicalDrive2 \\.\PhysicalDrive3 \\.\PhysicalDrive4 \\.\PhysicalDrive5 \\.\PhysicalDrive6
+  orzctl.exe status --level z2 --chunk-size 4096 --stripes 1000 \\.\PhysicalDrive1 \\.\PhysicalDrive2 \\.\PhysicalDrive3 \\.\PhysicalDrive4 \\.\PhysicalDrive5 \\.\PhysicalDrive6
 "#;
 
 struct Args {
@@ -186,6 +191,58 @@ fn run_create(args: Args) -> Result<(), String> {
     pool.create_dataset(&dataset).map_err(|e| format!("データセット作成に失敗: {e}"))?;
     pool.save().map_err(|e| format!("メタデータの保存に失敗: {e}"))?;
     println!("プールを新規作成し、データセット'{dataset}'を作成・保存しました。");
+    Ok(())
+}
+
+/// JSON文字列値のエスケープ(データセット名にダブルクォート/バックスラッシュ/
+/// 制御文字が含まれても、生成するJSONが壊れないようにする最小限の実装)。
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// 保存済みのプールを開き(マウントはしない、読み取り専用の問い合わせ)、
+/// ストライプ使用状況・データセット一覧をJSONで標準出力へ表示する。
+/// `create`と同様OS非依存(WinFsp/FUSEどちらも不要)——プールを開いて
+/// メタデータを読むだけで、実際にファイルシステムとしてマウントする
+/// 訳ではないため。Web管理UI等、他ツールからの機械可読な問い合わせ向け
+/// (2026-07-30追記、ユーザー指示によるWeb管理UI構築の前段)。
+fn run_status(args: Args) -> Result<(), String> {
+    let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
+    let devices = open_devices(&args.disks)?;
+    let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
+    let pool = Pool::open(vdev, stripes).map_err(|e| {
+        format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
+    })?;
+    let usage = pool.usage();
+    let dataset_names = pool.dataset_names();
+    let datasets_json: Vec<String> = dataset_names
+        .iter()
+        .map(|name| {
+            let size = pool.dataset_size(name).unwrap_or(0);
+            format!("{{\"name\":\"{}\",\"size_bytes\":{}}}", json_escape(name), size)
+        })
+        .collect();
+    println!(
+        "{{\"level\":\"{:?}\",\"chunk_size\":{},\"total_stripes\":{},\"used_stripes\":{},\"free_stripes\":{},\"datasets\":[{}]}}",
+        args.level,
+        args.chunk_size,
+        usage.total_stripes,
+        usage.used_stripes,
+        usage.free_stripes,
+        datasets_json.join(",")
+    );
     Ok(())
 }
 
@@ -432,6 +489,7 @@ fn main() {
         }
         "create" => parse_args(&raw[1..]).and_then(run_create),
         "mount" => parse_args(&raw[1..]).and_then(run_mount),
+        "status" => parse_args(&raw[1..]).and_then(run_status),
         "foreign" => run_foreign(&raw[1..]),
         "help-foreign" => {
             println!("{HELP_FOREIGN}");
