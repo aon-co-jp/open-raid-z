@@ -74,6 +74,17 @@ FUSE)。
 既存ZFS/NTFS/ext4/他社製RAIDからの移行は必ず「読み出し→通常ファイル
 コピー」というコピーベースになります(詳細は [MIGRATION.md](MIGRATION.md))。
 
+## 今後の構想: NVMe RAID6のGPUパリティアクセラレータ(2026-07-30追記、未実装)
+
+NVMe SSD 4〜8枚でRAID6を構成する際のランダムアクセス低速化
+(Read-Modify-Writeによるパリティ書き込みペナルティ)を、`open-directx`/
+`open-cuda`のGPUハードウェアアクセラレータ(Vulkan Compute経由、
+NVIDIA/AMD/Intel各ベンダー・Windows/Linux/macOS/Android対応、
+iOS/iPadOSはMoltenVK経由)でXOR/Reed-Solomonパリティ計算をオフロード
+することで解決する構想。詳細・技術的な検討状況は`CLAUDE.md`の
+2026-07-30付HANDOFFエントリを参照。**現時点では構想・調査のみで
+実装は未着手**。
+
 ## ワークスペース構成(3クレート + 補助コンポーネント)
 
 | クレート/ディレクトリ | 役割 |

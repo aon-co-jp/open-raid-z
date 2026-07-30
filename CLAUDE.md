@@ -623,6 +623,74 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-07-30 構想メモ: NVMe RAID6(4〜8枚)のランダムアクセス低速化対策としてのGPUパリティアクセラレータ(未実装、ロードマップとして記録)
+
+ユーザーから、open-web-server・RPoem・open-raid-z(ZFS互換)・aruaru-db
+(ACID互換)による4層4重通信+DATABASE対応(オンライン証券・オンライン
+クレジットカード決済等、データ紛失が許されないミッションクリティカル
+用途)の文脈で、以下の追加要望が示された。**今回は構想・調査結果の
+記録のみで、実装には着手していない**(スコープが大きく、GPU側
+[open-directx/open-cuda]との協調設計が必要なため)。
+
+**課題**: NVMe SSD 4〜8枚でRAID6を構成する場合、1回のランダム書き込み
+あたりパリティの読み込み・再計算が2回ずつ発生する
+(Read-Modify-Write)ため、NVMe本来の性能(数百万IOPS)がボトルネック
+化する。
+
+**ユーザーが提示した解決策候補(整理・記録)**:
+1. **GPU/専用ASIC搭載の次世代RAID**(例: Graid SupremeRAID方式):
+   GPUをパリティ計算のアクセラレータとして使い、CPUボトルネックを
+   排除する。本リポジトリの文脈では、**`open-directx`/`open-cuda`の
+   ハードウェアアクセラレータ抽象化(`AccelBackend`: Cpu/Gpu/Npu/
+   HardwareAccelerator、`open-web-server-wire::accel`で既に型として
+   先取り済み)を使い、RAID6のXOR/Reed-Solomonパリティ計算をGPU
+   カーネルとして実装する**、という方向性がユーザーの要望に対応する
+   最も具体的な実装候補。
+2. **ZFS(RAID-Z2)+高速SLOG(ZIL)**: 本リポジトリ自体がZFS互換
+   (RAID-Z2/Z3相当)を謳っているため、この方向性は既存アーキテクチャ
+   との親和性が高い。Copy-on-Writeによるランダム書き込みの最適化+
+   SLOG(高耐久・低レイテンシNVMeを同期書き込み用ログとして前段配置)
+   という組み合わせ。
+3. **ハードウェアRAIDカードのWrite-Backキャッシュ化**(BBU/フラッシュ
+   保護必須)——本リポジトリがソフトウェア実装である以上、直接の
+   実装対象ではないが、実運用時の補完策として記録。
+
+**ユーザーが要望する実装範囲(クロスプラットフォーム)**: Windows・
+Linux・macOS・iOS/iPadOS・Android(スマホ/タブレット)の各プラット
+フォーム、かつNVIDIA/AMD/Intel各GPUベンダーでの互換性。
+
+**現状の技術的土台の棚卸し(このパスで確認、コード変更なし)**:
+- `open-directx`の`directx-graphics-vulkan`クレートは実際に
+  Vulkan(`ash`)経由でGPU描画パイプラインを実装済み(2026-07-30時点、
+  同日のHANDOFF参照)——**Compute Shader経路(XOR/Reed-Solomon演算に
+  使うべきパイプライン)は`opencuda-vulkan`側に既にある**とされている
+  (`open-cuda`のDXBC/DXIL Compute実機テスト群)。Vulkanはプラット
+  フォーム非依存(Windows/Linux/Android/macOS〈MoltenVK経由〉)かつ
+  ベンダー非依存(NVIDIA/AMD/Intelいずれも標準対応)であるため、
+  「Windows限定のDirectX」ではなく「Vulkan経由でDirectX互換の体験を
+  クロスプラットフォームに提供する」という本エコシステムの既存方針
+  (`open-directx`の設計思想そのもの)と、今回の要望(GPU RAID6を
+  多様なプラットフォームで動かしたい)は方向性が一致している。
+  iOS/iPadOSはVulkanネイティブ非対応でMoltenVK経由になる点は
+  `open-directx`側の既存の正直な開示と同じ制約を引き継ぐ。
+- 本リポジトリ(open-raid-z)側には現時点でRAID6のパリティ計算を
+  GPUへオフロードする仕組みは一切無い(CPU実装のみ、要再確認だが
+  このパスでは実装箇所の特定調査までは行っていない)。
+
+**次回セッションで着手すべき第一段階(提案、確認なしに着手可)**:
+1. `open-cuda`(or `open-directx`)側に、RAID6パリティ計算
+   (Galois体上のXOR/Reed-Solomon符号化・復号)専用のCompute
+   Shaderカーネルを実装し、CPU参照実装との数値一致を実機で検証する
+   (このリポジトリのopen-directx側`indexed_scene_with_depth_and_read_back`
+   等、既存の「実GPU上で実際に検証する」開発パターンをそのまま踏襲)。
+2. `open-raid-z`側の既存パリティ計算箇所を特定し、上記GPUカーネルを
+   `AccelBackend::Gpu`実装として接続する(`Cpu`へのフォールバックは
+   既存方針通り安全に維持)。
+3. 4〜8枚のNVMe構成を模したベンチマーク(実SSDが無ければRAMディスク/
+   ファイルベースの疑似ドライブでも、CPU実装 vs GPU実装のIOPS比較
+   自体は意味を持つ)で効果を実測する。
+- 次にすべきこと: 上記1から実際に着手する(次回セッション)。
+
 ### 2026-07-27(続き) チェックポイント項目2〜4を消化
 
 1. **`accdc2c7bcd9e2a60`(お勧めLLMダウンロード機能)は完了済みと確認**:
