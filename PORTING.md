@@ -358,6 +358,20 @@ GitHub上の実装状況調査)して裏付けを取ってから技術選定を�
   フィールドとして宣言する(密なレイアウトになりRust/C++側の詰め込みと
   一致する)。DirectX 12 Compute Shaderを使うあらゆる移植先で
   再発しうる罠として記録。
+- **NVMe RAID6のGPUパリティアクセラレータ構想(2026-07-30追記、
+  未実装・構想メモ)**: RAID6のパリティ計算(XOR/Reed-Solomon)を
+  `open-directx`/`open-cuda`のVulkan Compute経由でGPUオフロードする
+  ことで、NVMe SSD 4〜8枚構成でのランダムアクセス低速化
+  (Read-Modify-Writeのパリティ書き込みペナルティ)を解消するという
+  ユーザー要望。クロスプラットフォーム(Windows/Linux/macOS/Android、
+  iOS/iPadOSはMoltenVK経由)・クロスベンダー(NVIDIA/AMD/Intel)対応が
+  要件。Vulkanベースの`open-directx`は元々この特性(プラットフォーム
+  非依存・ベンダー非依存)を持つため、既存の設計方針とは整合する。
+  詳細・次回の着手候補は`CLAUDE.md`の2026-07-30付HANDOFFエントリ、
+  および`README.md`の該当節を参照。ZFS(RAID-Z2)+高速SLOG(ZIL)や
+  ハードウェアRAIDカードのWrite-Backキャッシュ化も、GPUアクセラレータ
+  導入と並行して検討すべき代替/補完策としてユーザーから提示されている
+  (詳細は同HANDOFFエントリ)。
 - **「どこからでも始められる」相互参照の原則(2026-07-23再確認)**:
   このエコシステムの各リポジトリのCLAUDE.mdは、必ず「関連プロジェクト」
   節でopen-raid-z(正本)への参照を持ち、open-raid-z側も「エコシステム
