@@ -194,22 +194,24 @@ fn run_create(args: Args) -> Result<(), String> {
     Ok(())
 }
 
-/// JSON文字列値のエスケープ(データセット名にダブルクォート/バックスラッシュ/
-/// 制御文字が含まれても、生成するJSONが壊れないようにする最小限の実装)。
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+/// `orzctl status`のJSON出力形状(Rust-JSON経由でシリアライズする、
+/// `serde::Serialize`導出のみでフィールド全体を素直に表現する)。
+#[cfg(feature = "json_status")]
+#[derive(serde::Serialize)]
+struct DatasetStatus {
+    name: String,
+    size_bytes: u64,
+}
+
+#[cfg(feature = "json_status")]
+#[derive(serde::Serialize)]
+struct PoolStatus {
+    level: String,
+    chunk_size: usize,
+    total_stripes: u64,
+    used_stripes: u64,
+    free_stripes: u64,
+    datasets: Vec<DatasetStatus>,
 }
 
 /// 保存済みのプールを開き(マウントはしない、読み取り専用の問い合わせ)、
@@ -217,7 +219,11 @@ fn json_escape(s: &str) -> String {
 /// `create`と同様OS非依存(WinFsp/FUSEどちらも不要)——プールを開いて
 /// メタデータを読むだけで、実際にファイルシステムとしてマウントする
 /// 訳ではないため。Web管理UI等、他ツールからの機械可読な問い合わせ向け
-/// (2026-07-30追記、ユーザー指示によるWeb管理UI構築の前段)。
+/// (2026-07-30追記、ユーザー指示によるWeb管理UI構築の前段)。JSON構築は
+/// `rust-json::to_string_strict`(エコシステム共通のJSON層、`aruaru-db`
+/// 等と同じ`RS-JSON`)へ委譲し、手書きの文字列組み立て・手動エスケープは
+/// 行わない。
+#[cfg(feature = "json_status")]
 fn run_status(args: Args) -> Result<(), String> {
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
@@ -226,24 +232,32 @@ fn run_status(args: Args) -> Result<(), String> {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
     let usage = pool.usage();
-    let dataset_names = pool.dataset_names();
-    let datasets_json: Vec<String> = dataset_names
-        .iter()
+    let datasets = pool
+        .dataset_names()
+        .into_iter()
         .map(|name| {
-            let size = pool.dataset_size(name).unwrap_or(0);
-            format!("{{\"name\":\"{}\",\"size_bytes\":{}}}", json_escape(name), size)
+            let size_bytes = pool.dataset_size(&name).unwrap_or(0);
+            DatasetStatus { name, size_bytes }
         })
         .collect();
-    println!(
-        "{{\"level\":\"{:?}\",\"chunk_size\":{},\"total_stripes\":{},\"used_stripes\":{},\"free_stripes\":{},\"datasets\":[{}]}}",
-        args.level,
-        args.chunk_size,
-        usage.total_stripes,
-        usage.used_stripes,
-        usage.free_stripes,
-        datasets_json.join(",")
-    );
+    let status = PoolStatus {
+        level: format!("{:?}", args.level),
+        chunk_size: args.chunk_size,
+        total_stripes: usage.total_stripes,
+        used_stripes: usage.used_stripes,
+        free_stripes: usage.free_stripes,
+        datasets,
+    };
+    let json = rust_json::to_string_strict(&status).map_err(|e| format!("JSON組み立てに失敗しました: {e}"))?;
+    println!("{json}");
     Ok(())
+}
+
+#[cfg(not(feature = "json_status"))]
+fn run_status(_args: Args) -> Result<(), String> {
+    Err("このビルドには`status`サブコマンドが含まれていません(`json_status` featureを有効にしてビルドしてください)。\
+        `create`/`mount`はこのビルドでも使えます。"
+        .to_string())
 }
 
 #[cfg(all(any(target_os = "linux", target_os = "android"), feature = "fuse_backend"))]
