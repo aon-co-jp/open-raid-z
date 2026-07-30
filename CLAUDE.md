@@ -759,10 +759,71 @@ RAID6のP-parity・Q-parity両方がGPU実装・実機検証済みとなった�
    ディレクトリを意図的に削除しない、という明示的な設計判断が必要
    だったため)。
 - 次にすべきこと: (1) open-raid-z本体の実パリティ計算箇所へのGPU接続
-  (変更なし)、(2) ベンチマーク(変更なし)、(3) Web管理UIデモ
-  (`https://easy-web.tokyo/open-raid-z`本番+`/demo`)の新規構築
-  (ユーザー指示、複数ドメインでバイナリ共有・ログイン/登録/保存は
-  管理者のみ・デモはread-only、rs-syncと同じ構成パターンを踏襲予定)。
+  (変更なし)、(2) ベンチマーク(変更なし)、(3) ~~Web管理UIデモ~~
+  **着手・実機検証済み(下記2026-07-30続き3エントリ参照)**。
+
+### 2026-07-30(続き3) `orzctl status`サブコマンド新設 + Web管理UI(RPoem)を新規実装・実機検証
+
+ユーザー指示「Rust + RPoem(tokio/hyper直接実装)」でWeb管理UIの技術
+スタックを確定。着手前に`orzctl`(`open_raid_z_core`のCLI)の既存
+サブコマンドを確認したところ`create`/`mount`/`foreign`のみで、稼働中
+プールの状態を機械可読に問い合わせる手段が一切無いことが判明したため、
+まずCLI側にその手段を追加してからWeb UIを構築した。
+
+1. **`orzctl status`新設**(`open_runo_zfs_source/open_raid_z_core/src/
+   bin/orzctl.rs`): 保存済みプールを開き(マウントはしない)、
+   `Pool::usage()`(ストライプ使用状況)・`dataset_names()`/
+   `dataset_size()`(データセット一覧)をJSONで出力。JSON組み立ては
+   当初手書き文字列だったが、ユーザーから「rust-json RJSONは導入
+   してますか?」と問われたのを機に、エコシステム共通のJSON層
+   (`RS-JSON`、`aruaru-db`/`open-gitea`等と同じpath依存)の
+   `to_string_strict`へ置き換えた(新規`json_status`feature、既定ON、
+   無効時は`create`/`mount`のみのビルドを維持するフォールバック付き)。
+   実際にloopbackファイル4枚でプール作成→`orzctl status`照会まで実行し、
+   実データを反映したJSON(`{"level":"Z2",...,"datasets":[...]}`)が
+   返ることを確認済み。
+2. **Web管理UI(`open-raid-z/web/`、新規独立クレート)**: RPoem
+   (`F:\runo\RPoem\crates\open-runo-poem-compat`)へのpath依存のみ、
+   `poem`/`tauri`パッケージへの直接依存は無し。`orzctl`をサブプロセス
+   として呼び出し、`status`のJSON出力をそのまま中継する設計
+   (プール操作ロジック自体はCLI側に集約、Web層は薄いラッパーに
+   徹する)。
+   - `GET /`・`GET /demo`: 同じ静的ページ(read-onlyバナーの有無のみ
+     差異)。rs-syncで発生した「相対パス+末尾スラッシュ無し」問題を
+     教訓に、JS側は常に絶対パス(`/api/...`)でfetchする設計にした
+     ——URL構造に依存する曖昧さが構造的に発生しない。
+   - `GET /api/status`: `orzctl status`の出力をそのまま中継。
+   - `POST /api/create`: 管理者トークン(`OPEN_RAID_Z_ADMIN_TOKEN`
+     環境変数、`X-Admin-Token`ヘッダで照合)必須。
+   - **read-onlyデモの多層防御(rs-syncの`ReadOnlyGuard`と同じ設計
+     思想)**: `OPEN_RAID_Z_READ_ONLY=1`環境変数が設定されている場合、
+     `POST /api/create`は**正しい管理者トークンを提示していても**
+     常に403で拒否する(UIのフォーム非表示だけに頼らない、サーバー側
+     での確実な強制)。
+   - **正直なスコープの限界**: `orzctl mount`はフォアグラウンドで
+     FUSE/WinFspループをブロックする一発コマンドのため、Webリクエスト
+     として呼び出すとハングする——今回は`status`/`create`のみに限定し、
+     マウント操作はスコープ外とした(次回以降の課題)。
+3. **実機検証(型チェックのみで完了と報告しない方針を徹底)**:
+   実際にloopbackファイルでプールを作成し、Webサーバーを起動して
+   (a) `GET /api/status`が実プール状態を返す、(b) 管理者トークン無しの
+   `POST /api/create`が401、(c) 正しいトークンでの`POST /api/create`が
+   実際に新しいプールを作成し`status`にも反映される、(d)
+   `OPEN_RAID_Z_READ_ONLY=1`設定時は**正しいトークンでも**403で拒否
+   される、(e) `/demo`ページに読み取り専用デモの日本語バナーが含まれる、
+   の5点をすべて実際のHTTPリクエストで確認した。
+4. **正直な開示・未着手**: (a) VPS(`easy-web.tokyo`)への実デプロイ・
+   nginx設定・ドメイン下でのリバースプロキシ配線は今回未実施
+   (ローカルでの実機能検証のみ)、(b) 複数ドメインでのバイナリ共有
+   (「分身の術」構成)は今回のスコープに含めていない——単一プロセスが
+   複数ホスト名を動的に振り分ける仕組み(RPoem側の
+   `SharedDispatcher`/`appserver_tenants`)との統合は次回の課題、
+   (c) `aruaru-db`側の同種Web管理UIは今回未着手。
+- 次にすべきこと: (1) `easy-web.tokyo/open-raid-z`・
+  `easy-web.tokyo/open-raid-z/demo`としての実VPSデプロイ(nginx
+  reverse proxy設定、`systemd`サービス化)、(2) 複数ドメインでの
+  バイナリ共有(RPoemの`SharedDispatcher`経由)、(3) `aruaru-db`側の
+  同種Web管理UI新規構築。
 
 ### 2026-07-27(続き) チェックポイント項目2〜4を消化
 
