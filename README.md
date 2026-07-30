@@ -52,6 +52,12 @@
 [WinFsp](https://winfsp.dev/)の導入が必要です。詳細は
 [install.sh](install.sh)/[install.ps1](install.ps1)冒頭のコメント参照。
 
+アンインストールは同梱の[uninstall.sh](uninstall.sh)/
+[uninstall.ps1](uninstall.ps1)を使用してください(2026-07-30追加)。
+プールのデータ(RAID Z2/Z3を構成する実ディスク上のデータ)は
+インストール先ディレクトリの外側にあるため、これらのスクリプトは
+`orzctl`バイナリのみを削除し、プールデータには一切触れません。
+
 > 旧来の10ヶ国語版は [`README/`](README/README-Japan.md) フォルダにも
 > 残っていますが(言語セットが異なる: UK/US English・Ukraine・
 > Iran(Persian)を含む旧版)、上記のルート直下 `README-<言語>.md` が
