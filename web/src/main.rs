@@ -17,9 +17,19 @@
 //! 環境変数が設定されている場合、`POST /api/create`は管理者トークンの
 //! 有無に関わらず常に拒否する(UI側で作成フォームを隠すだけでなく、
 //! サーバー側で確実に強制する——rs-syncの`ReadOnlyGuard`と同じ多層防御)。
-//! `/`と`/demo`はどちらも同じ静的ページを返す(相対パスではなく常に
-//! 絶対パス`/api/...`でfetchするため、rs-syncで発生した「相対パス+
-//! 末尾スラッシュ無し」問題は構造的に発生しない)。
+//! `/`と`/demo`はどちらも同じ静的ページを返す。
+//!
+//! **2026-08-01追記(実バグ修正)**: 上記の「絶対パス`/api/...`でfetchする
+//! ため相対パス起因の問題は起きない」という以前の記載は誤りだった——
+//! `open-web-server`の「分身の術」テナントルーティング(`path_prefix`
+//! 剥がし転送)配下にマウントする場合、絶対パス`/api/...`は常に
+//! オリジン直下を叩いてしまい、`aruaru-db`/open-redmine/open-gitea/
+//! RS-Syncが過去に繰り返し踏んだのと全く同じ「絶対パスfetch罠」に
+//! このリポジトリも実際にはまっていた(実際に`https://easy-web.tokyo/
+//! open-raid-z/`を開くと`{"error":"not found"}`と表示されることを
+//! 実ブラウザで確認して発覚)。`OPEN_RAID_Z_WEB_BASE_PATH`環境変数
+//! (既定は空文字列、後方互換)を追加し、ページのJSへ`const BASE_PATH`
+//! として埋め込むことで解消した。
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -38,6 +48,7 @@ struct Config {
     disks: Vec<String>,
     admin_token: Option<String>,
     read_only: bool,
+    base_path: String,
 }
 
 impl Config {
@@ -56,6 +67,7 @@ impl Config {
             disks,
             admin_token: std::env::var("OPEN_RAID_Z_ADMIN_TOKEN").ok(),
             read_only: matches!(std::env::var("OPEN_RAID_Z_READ_ONLY").as_deref(), Ok("1") | Ok("true")),
+            base_path: std::env::var("OPEN_RAID_Z_WEB_BASE_PATH").unwrap_or_default(),
         }
     }
 
@@ -70,7 +82,7 @@ impl Config {
     }
 }
 
-fn page_html(demo: bool) -> String {
+fn page_html(demo: bool, base_path: &str) -> String {
     let banner = if demo {
         r#"<div class="banner demo">これはread-onlyデモです。ログイン・登録・保存(プール作成)は実際には出来ません。</div>"#
     } else {
@@ -111,11 +123,12 @@ fn page_html(demo: bool) -> String {
   <pre id="create-result"></pre>
 </section>
 <script>
+const BASE_PATH = '{base_path}';
 async function refreshStatus() {{
   const el = document.getElementById('status');
   el.textContent = '取得中...';
   try {{
-    const res = await fetch('/api/status');
+    const res = await fetch(BASE_PATH + '/api/status');
     const body = await res.text();
     el.textContent = body;
   }} catch (e) {{
@@ -129,7 +142,7 @@ document.getElementById('create').addEventListener('click', async () => {{
   const el = document.getElementById('create-result');
   el.textContent = '実行中...';
   try {{
-    const res = await fetch('/api/create', {{
+    const res = await fetch(BASE_PATH + '/api/create', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json', 'X-Admin-Token': token }},
       body: JSON.stringify({{ dataset }})
@@ -164,11 +177,15 @@ struct CreateRequest {
 fn main() {
     let config = Arc::new(Config::from_env());
 
+    let index_config = Arc::clone(&config);
     let index_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
-        Box::pin(async move { html_response(StatusCode::OK, page_html(false)) }) as hyper_compat::BoxFuture<Response>
+        let config = Arc::clone(&index_config);
+        Box::pin(async move { html_response(StatusCode::OK, page_html(false, &config.base_path)) }) as hyper_compat::BoxFuture<Response>
     }) as hyper_compat::Handler;
+    let demo_config = Arc::clone(&config);
     let demo_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
-        Box::pin(async move { html_response(StatusCode::OK, page_html(true)) }) as hyper_compat::BoxFuture<Response>
+        let config = Arc::clone(&demo_config);
+        Box::pin(async move { html_response(StatusCode::OK, page_html(true, &config.base_path)) }) as hyper_compat::BoxFuture<Response>
     }) as hyper_compat::Handler;
 
     let status_config = Arc::clone(&config);
