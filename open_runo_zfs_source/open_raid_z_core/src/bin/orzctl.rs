@@ -29,6 +29,41 @@ use open_raid_z_core::block_device::{device_size_bytes, FileBackedDevice};
 use open_raid_z_core::pool::Pool;
 use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 
+/// `RaidZVdev`を構築し、実行環境で実際にGPU/NPUが検出できれば
+/// `with_accelerator`で接続する(2026-08-01追加)。
+///
+/// **背景(実バグ修正)**: `RaidZVdev`/`Pool`側にはP-parity(XOR)・
+/// Q-parity(Reed-Solomon)ともGPU実装・実機検証済みの
+/// `with_accelerator`経路が既に存在していた(`vdev.rs`の
+/// `raidz2_write_read_round_trips_with_gpu_accelerator_when_available`
+/// テスト参照)が、実際に`orzctl`(このCLI、本リポジトリで唯一の実運用
+/// エントリポイント)の4つのサブコマンド(`create`/`status`/`mount`×2)は
+/// いずれも素の`RaidZVdev::new(...)`しか呼んでおらず、実機で
+/// GPUアクセラレータが一度も使われていなかった——GPU実装が「実装済み
+/// だが誰からも呼ばれない死んだコード」になっていた。この関数で
+/// 全サブコマンド共通の生成経路に一本化し、実際に接続する。
+/// **正直な開示**: `detect_best_accelerator()`が失敗した場合、または
+/// `AccelKind::CpuFallback`しか見つからない場合は、既存方針通り黙って
+/// CPU実装へフォールバックする(GPU/NPUが無い環境でも`orzctl`自体が
+/// 使えなくなることはない)。
+fn build_vdev(devices: Vec<FileBackedDevice>, level: RaidLevel, chunk_size: usize) -> RaidZVdev<FileBackedDevice> {
+    let vdev = RaidZVdev::new(devices, level, chunk_size);
+    match zfs_accel_hlsl::device::detect_best_accelerator() {
+        Ok(accel) if accel.kind != zfs_accel_hlsl::device::AccelKind::CpuFallback => {
+            eprintln!("orzctl: パリティ計算にハードウェアアクセラレータを使用します: {:?}", accel.kind);
+            vdev.with_accelerator(accel)
+        }
+        Ok(_) => {
+            eprintln!("orzctl: GPU/NPUが見つからないため、パリティ計算はCPUで行います。");
+            vdev
+        }
+        Err(e) => {
+            eprintln!("orzctl: アクセラレータの検出に失敗したため、パリティ計算はCPUで行います({e})。");
+            vdev
+        }
+    }
+}
+
 const HELP: &str = r#"orzctl - open-raid-z のプールを作成・マウントするコマンドラインツール
 
 使い方:
@@ -186,7 +221,7 @@ fn run_create(args: Args) -> Result<(), String> {
     let dataset = args.dataset.ok_or("createには--datasetが必須です")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size);
     let mut pool = Pool::new(vdev, stripes);
     pool.create_dataset(&dataset).map_err(|e| format!("データセット作成に失敗: {e}"))?;
     pool.save().map_err(|e| format!("メタデータの保存に失敗: {e}"))?;
@@ -227,7 +262,7 @@ struct PoolStatus {
 fn run_status(args: Args) -> Result<(), String> {
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
@@ -266,7 +301,7 @@ fn run_mount(args: Args) -> Result<(), String> {
     let mountpoint = args.mountpoint.ok_or("mountには--mountpointが必須です")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
@@ -284,7 +319,7 @@ fn run_mount(args: Args) -> Result<(), String> {
     let mountpoint = args.mountpoint.ok_or("mountには--mountpointが必須です(例: \"Z:\")")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = RaidZVdev::new(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
