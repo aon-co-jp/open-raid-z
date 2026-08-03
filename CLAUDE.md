@@ -703,6 +703,77 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-08-01 積み残しバックログ3件を消化: GPU接続の実配線+実測ベンチマーク+Web管理UIの実VPSデプロイ(ユーザー指示「Aを進めて」への対応)
+
+以前のHANDOFF(下記2026-07-30系列の各エントリ)で繰り返し「次にすべき
+こと」として残っていた3項目に対応した。
+
+1. **実バグ発見・修正: GPU実装済みだが誰からも呼ばれていなかった
+   (死んだコード)**: `RaidZVdev`/`vdev.rs`にはP-parity(XOR)・Q-parity
+   (Reed-Solomon)ともGPU実装・実機検証済みの`with_accelerator`経路が
+   既に存在していたが、本リポジトリで唯一の実運用エントリポイントである
+   `orzctl`(`create`/`status`/`mount`×2の4サブコマンド)はいずれも素の
+   `RaidZVdev::new(...)`しか呼んでおらず、実機でGPUアクセラレータが
+   一度も使われていなかった。全4箇所を共通の`build_vdev()`経由に
+   一本化し、実際に接続した。
+2. **実測ベンチマークを経た設計修正(誠実なプロセス)**: 上記1をまず
+   「GPUが検出できれば常に使う」設計で入れた直後、新設
+   `examples/raidz2_parity_benchmark.rs`(データ3〜6本+2パリティ、
+   128KiBチャンク×200ストライプ、NVMe 4〜8枚構成を模擬)で実測した
+   ところ、**この環境ではGPU版がCPU版よりおよそ9〜14倍遅い**
+   (CPU 495〜794ms・GPU 6933〜7140ms)ことが判明した——1ストライプ
+   ごとに個別のGPUディスパッチ(コマンドバッファ構築・同期待ち)を行う
+   現在の実装粒度では、GPU側の固定オーバーヘッドが計算時間そのものを
+   上回るため。「実装した・検出できた」だけでGPUを既定にするのは
+   実運用での性能退行であり、これを実測せずに「GPU接続完了」と報告
+   するのは不誠実と判断し、**既定をCPUへ戻し、`orzctl`に新設した
+   `--accel <cpu|gpu>`オプション(既定`cpu`)で明示指定した場合のみ
+   GPUを使う実験的機能**という設計に修正した。
+3. **付随して発見・修正した実バグ: Linux(`fuse_backend`)ビルドが
+   壊れていた**: VPS(Linux)でのデプロイ作業中に
+   `cargo build --no-default-features --features fuse_backend,json_status`
+   (READMEに明記された非Windows向けビルドコマンド)がコンパイルエラーに
+   なることを発見。`src/fuse_mount.rs::errno_from_bridge_error()`が
+   `BridgeError::JournalFailed`/`OffsiteBackupFailed`(ディザスタリカバリ
+   関連で後から追加された2バリアント)を網羅しておらず、Windows側の
+   `mount.rs`には同じ修正が既に入っていた(片方だけ追従漏れ)。通常の
+   開発がこのWindows機で行われ`mount.rs`だけがコンパイル対象になるため、
+   この回帰はこれまで誰にも検出されていなかった。2行追加して解消。
+4. **Web管理UIを実際にVPSへデプロイ(`https://easy-web.tokyo/open-raid-z/`)**:
+   `web/`crate(前回2026-07-30続き3で実装、ローカル検証のみで本番未反映
+   だった)をVPS上でビルド(`gpu_accel`はビルド時に`dxc`必須のためVPSでは
+   無効化——GPUは既定オフになったため実害無し)。ループバックファイル
+   5枚(3データ+2パリティ、64MB×5)で実際にZ2プールを作成し
+   (`orzctl create`、CPU経路)、systemdサービス`open-raid-z-web.service`
+   (port 8110)として常駐化。`open-web-server`の「分身の術」テナント
+   登録(`POST /admin/tenants`、`path_prefix=/open-raid-z`)で
+   `easy-web.tokyo`へ接続。
+5. **検証(実測)**: `cargo test --release`(Windows、既定feature)・
+   `cargo test --release --no-default-features --features
+   fuse_backend,json_status`(VPS、Linux)ともに全green(回帰無し)。
+   実際に`orzctl create`(`--accel`未指定)の標準エラー出力に
+   「パリティ計算はCPUで行います」ログが出ること、`--accel gpu`指定時は
+   このWindows開発機で実際に`ハードウェアアクセラレータを使用します:
+   Gpu`と出ること(実GPU上で実際にディスパッチされていることの直接
+   証拠)を確認。本番では`curl https://easy-web.tokyo/open-raid-z/`→
+   `200`、`curl https://easy-web.tokyo/open-raid-z/api/status`が実際の
+   プール状態(`{"level":"Z2","total_stripes":4000,...,"datasets":
+   [{"name":"demo-dataset",...}]}`)を返すことを確認済み。
+6. **正直な開示・未着手**: (a) `/open-raid-z/demo`という別テナントは
+   今回登録していない——`GET /api/status`自体が元々認証不要(管理者
+   トークンが必須なのは`POST /api/create`のみ)であり、`OPEN_RAID_Z_
+   READ_ONLY`はプロセス全体に効くフラグのため「本番と別のread-only
+   デモ」を同じプロセスから区別して提供する意味が薄いと判断した
+   (他リポジトリのdemoが軒並み「本番と同一バックエンドのエイリアス」
+   に留まっているのと同じ実情)。(b) VPS上での`gpu_accel`(実際の
+   GPU/NPU検出)は`dxc`未導入のため無効化したまま——今回のベンチマーク
+   結果からもGPUを既定にする理由が無いため、意図的にこのままとした。
+   (c) 複数ドメインでのバイナリ共有・`aruaru-db`側同種UIは引き続き
+   未着手。
+- 次にすべきこと: 特に緊急の課題は無し。GPU経路をより粗い粒度
+  (複数ストライプの一括ディスパッチ等)で再実装すれば結果が変わる
+  可能性があるが、現時点ではスコープ外。
+
 ### 2026-07-30 構想メモ: NVMe RAID6(4〜8枚)のランダムアクセス低速化対策としてのGPUパリティアクセラレータ(未実装、ロードマップとして記録)
 
 ユーザーから、open-web-server・RPoem・open-raid-z(ZFS互換)・aruaru-db
