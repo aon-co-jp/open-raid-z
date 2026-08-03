@@ -29,36 +29,66 @@ use open_raid_z_core::block_device::{device_size_bytes, FileBackedDevice};
 use open_raid_z_core::pool::Pool;
 use open_raid_z_core::vdev::{RaidLevel, RaidZVdev};
 
-/// `RaidZVdev`を構築し、実行環境で実際にGPU/NPUが検出できれば
-/// `with_accelerator`で接続する(2026-08-01追加)。
+/// `--accel`の指定値。既定は`Cpu`——理由は下記`build_vdev`のdocを参照。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccelMode {
+    Cpu,
+    Gpu,
+}
+
+fn parse_accel_mode(s: &str) -> Result<AccelMode, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "cpu" => Ok(AccelMode::Cpu),
+        "gpu" => Ok(AccelMode::Gpu),
+        other => Err(format!("未知の--accel指定です: '{other}'(cpu/gpuのいずれか)")),
+    }
+}
+
+/// `RaidZVdev`を構築し、`--accel gpu`が明示指定された場合のみ実行環境で
+/// 実際にGPU/NPUを検出して`with_accelerator`で接続する(2026-08-01追加、
+/// 同日中に実測ベンチマークを経て「既定でGPUを使う」から
+/// 「明示指定時のみGPUを使う」へ設計変更)。
 ///
-/// **背景(実バグ修正)**: `RaidZVdev`/`Pool`側にはP-parity(XOR)・
-/// Q-parity(Reed-Solomon)ともGPU実装・実機検証済みの
-/// `with_accelerator`経路が既に存在していた(`vdev.rs`の
-/// `raidz2_write_read_round_trips_with_gpu_accelerator_when_available`
-/// テスト参照)が、実際に`orzctl`(このCLI、本リポジトリで唯一の実運用
-/// エントリポイント)の4つのサブコマンド(`create`/`status`/`mount`×2)は
-/// いずれも素の`RaidZVdev::new(...)`しか呼んでおらず、実機で
-/// GPUアクセラレータが一度も使われていなかった——GPU実装が「実装済み
-/// だが誰からも呼ばれない死んだコード」になっていた。この関数で
-/// 全サブコマンド共通の生成経路に一本化し、実際に接続する。
-/// **正直な開示**: `detect_best_accelerator()`が失敗した場合、または
-/// `AccelKind::CpuFallback`しか見つからない場合は、既存方針通り黙って
-/// CPU実装へフォールバックする(GPU/NPUが無い環境でも`orzctl`自体が
-/// 使えなくなることはない)。
-fn build_vdev(devices: Vec<FileBackedDevice>, level: RaidLevel, chunk_size: usize) -> RaidZVdev<FileBackedDevice> {
+/// **経緯(実装→実測→設計修正という誠実なプロセス)**:
+/// 1. `RaidZVdev`/`Pool`側にはP-parity(XOR)・Q-parity(Reed-Solomon)とも
+///    GPU実装・実機検証済みの`with_accelerator`経路が既に存在していた
+///    (`vdev.rs`の`accel_tests`参照)が、`orzctl`(本リポジトリで唯一の
+///    実運用エントリポイント)の4サブコマンドはいずれも素の
+///    `RaidZVdev::new(...)`しか呼んでおらず、実機で一度もGPU
+///    アクセラレータが使われていなかった(死んだコード)。
+/// 2. まず「GPUが検出できれば常に使う」設計で接続したが、その直後に
+///    `examples/raidz2_parity_benchmark.rs`で実測したところ、**この
+///    ループバックファイル環境ではGPU版がCPU版よりおよそ9〜14倍遅い**
+///    (データ3〜6本構成、128KiBチャンク×200ストライプ、実測値:
+///    CPU 495〜794ms・GPU 6933〜7140ms)ことが判明した——1ストライプ
+///    ごとに個別にGPUディスパッチ(コマンドバッファ構築・同期待ち)する
+///    現在の実装粒度では、GPU側の固定オーバーヘッドがXOR/Reed-Solomon
+///    計算自体の速さを打ち消してしまうため。「実装した・検出できた」
+///    だけでGPUを既定にすると、実運用ではむしろ性能退行になる
+///    ——これを実測せずに「GPU接続完了」と報告するのは不誠実なため、
+///    既定をCPUへ戻し、GPUは`--accel gpu`で明示指定した場合のみ使う
+///    設計に修正した。
+/// - 次にすべきこと(正直な残課題): ストライプ単位の細粒度ディスパッチ
+///   ではなく、複数ストライプをバッチしてまとめて1回のGPUディスパッチに
+///   する等、GPU側の固定オーバーヘッドを償却できる粒度に実装を見直せば
+///   結果が変わる可能性がある——現時点ではその変更は行っていない。
+fn build_vdev(devices: Vec<FileBackedDevice>, level: RaidLevel, chunk_size: usize, accel_mode: AccelMode) -> RaidZVdev<FileBackedDevice> {
     let vdev = RaidZVdev::new(devices, level, chunk_size);
+    if accel_mode != AccelMode::Gpu {
+        eprintln!("orzctl: パリティ計算はCPUで行います(既定。GPUを使うには--accel gpuを指定してください)。");
+        return vdev;
+    }
     match zfs_accel_hlsl::device::detect_best_accelerator() {
         Ok(accel) if accel.kind != zfs_accel_hlsl::device::AccelKind::CpuFallback => {
             eprintln!("orzctl: パリティ計算にハードウェアアクセラレータを使用します: {:?}", accel.kind);
             vdev.with_accelerator(accel)
         }
         Ok(_) => {
-            eprintln!("orzctl: GPU/NPUが見つからないため、パリティ計算はCPUで行います。");
+            eprintln!("orzctl: --accel gpuが指定されましたが、GPU/NPUが見つからないためCPUで行います。");
             vdev
         }
         Err(e) => {
-            eprintln!("orzctl: アクセラレータの検出に失敗したため、パリティ計算はCPUで行います({e})。");
+            eprintln!("orzctl: --accel gpuが指定されましたが、アクセラレータの検出に失敗したためCPUで行います({e})。");
             vdev
         }
     }
@@ -87,12 +117,21 @@ const HELP: &str = r#"orzctl - open-raid-z のプールを作成・マウント�
             他ツールからの機械可読な問い合わせ向け)。
   help      このヘルプを表示する。
 
-オプション(create/mount共通):
+オプション(create/mount/status共通):
   --level <LEVEL>       raid0 | raid1 | raid5 | raid6 | z2 | z3
   --chunk-size <BYTES>  1ディスクあたりのチャンクサイズ(バイト)
   --stripes <N>         プールの総ストライプ数(全ディスク共通)。省略時は
                         指定した全ディスクの実容量を自動検出し、最小容量を
                         chunk-sizeで割った値を自動算出する。
+  --accel <cpu|gpu>     パリティ計算(XOR/Reed-Solomon)をCPUで行うかGPUへ
+                        オフロードするか(既定: cpu)。正直な開示:
+                        実測ベンチマーク(examples/raidz2_parity_benchmark.rs)
+                        では、現在の1ストライプ単位のディスパッチ粒度だと
+                        GPU版はCPU版よりむしろ数倍〜十数倍遅い(GPU
+                        ディスパッチの固定オーバーヘッドが計算時間を
+                        上回るため)。gpuは実験的オプションとして提供する
+                        (GPU/NPUが見つからない場合は自動的にCPUへ
+                        フォールバックする)。
 
 createのみ:
   --dataset <NAME>      作成するデータセットの名前
@@ -123,6 +162,7 @@ struct Args {
     #[allow(dead_code)]
     mountpoint: Option<String>,
     disks: Vec<String>,
+    accel: AccelMode,
 }
 
 fn parse_level(s: &str) -> Result<RaidLevel, String> {
@@ -144,12 +184,17 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     let mut dataset: Option<String> = None;
     let mut mountpoint: Option<String> = None;
     let mut disks: Vec<String> = Vec::new();
+    let mut accel = AccelMode::Cpu;
 
     let mut i = 0;
     while i < raw.len() {
         match raw[i].as_str() {
             "--level" => {
                 level = Some(parse_level(raw.get(i + 1).ok_or("--levelには値が必要です")?)?);
+                i += 2;
+            }
+            "--accel" => {
+                accel = parse_accel_mode(raw.get(i + 1).ok_or("--accelには値が必要です")?)?;
                 i += 2;
             }
             "--chunk-size" => {
@@ -187,7 +232,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         return Err("ディスクを最低1台指定してください(help参照)".to_string());
     }
 
-    Ok(Args { level, chunk_size, stripes, dataset, mountpoint, disks })
+    Ok(Args { level, chunk_size, stripes, dataset, mountpoint, disks, accel })
 }
 
 fn open_devices(disks: &[String]) -> Result<Vec<FileBackedDevice>, String> {
@@ -221,7 +266,7 @@ fn run_create(args: Args) -> Result<(), String> {
     let dataset = args.dataset.ok_or("createには--datasetが必須です")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = build_vdev(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size, args.accel);
     let mut pool = Pool::new(vdev, stripes);
     pool.create_dataset(&dataset).map_err(|e| format!("データセット作成に失敗: {e}"))?;
     pool.save().map_err(|e| format!("メタデータの保存に失敗: {e}"))?;
@@ -262,7 +307,7 @@ struct PoolStatus {
 fn run_status(args: Args) -> Result<(), String> {
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = build_vdev(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size, args.accel);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
@@ -301,7 +346,7 @@ fn run_mount(args: Args) -> Result<(), String> {
     let mountpoint = args.mountpoint.ok_or("mountには--mountpointが必須です")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = build_vdev(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size, args.accel);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
@@ -319,7 +364,7 @@ fn run_mount(args: Args) -> Result<(), String> {
     let mountpoint = args.mountpoint.ok_or("mountには--mountpointが必須です(例: \"Z:\")")?;
     let stripes = resolve_stripes(args.stripes, &args.disks, args.chunk_size)?;
     let devices = open_devices(&args.disks)?;
-    let vdev = build_vdev(devices, args.level, args.chunk_size);
+    let vdev = build_vdev(devices, args.level, args.chunk_size, args.accel);
     let pool = Pool::open(vdev, stripes).map_err(|e| {
         format!("プールを開けませんでした(保存済みメタデータが無いか、パラメータが保存時と異なります): {e}")
     })?;
