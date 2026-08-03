@@ -57,6 +57,8 @@ fn errno_from_bridge_error(e: &BridgeError) -> Errno {
         | BridgeError::AclTranslationFailed(_)
         | BridgeError::ExFatConversionFailed(_)
         | BridgeError::ForeignFsFailed(_)
+        | BridgeError::JournalFailed(_)
+        | BridgeError::OffsiteBackupFailed(_)
         | BridgeError::Io(_) => Errno::EIO,
     }
 }
