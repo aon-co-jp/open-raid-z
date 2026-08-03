@@ -706,6 +706,39 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
      全て完了またはユーザーにより停止済みになった時点で、監視ループ
      自体も終了する(いたずらに空回りさせない)。
 
+### 2026-08-01(続き3) 「複数ドメインでのバイナリ共有(RPoemのSharedDispatcher統合)」を調査、既に別経路で実現済みと判明・重複実装は見送り
+
+複数箇所のHANDOFF(2026-07-25・27・30)で「次にすべきこと」として残って
+いた本項目を調査した(ユーザー指示「複数ドメインでのバイナリ共有」)。
+
+**調査結果**: `RPoem/crates/open-runo-gateway/src/appserver_tenants.rs`
+(`open_runo_appserver::SharedDispatcher`、`POST /admin/appserver-tenants`
+で動的にHost→backend_addrの対応を追加/更新できる、実装・`main.rs`への
+配線ともに完了済み)を発見したが、**VPS上のどこにも一度もデプロイされて
+いない**(`systemctl list-units`で該当サービス無し)。
+
+一方、`open-web-server`側の`TenantRegistry`/`tenant_router`
+(`crates/open-web-server-gateway/src/tenant_router.rs`)は、**本セッションで
+実際に6件以上の実運用デプロイ**(open-redmine・open-gitea・RS-Sync・
+aruaru-db・open-raid-z/web、いずれも`POST /admin/tenants`でHost+
+`path_prefix`→`backend_addr`を動的登録)に使い、`https://easy-web.tokyo/
+<各パス>`で現に本番稼働している——`SharedDispatcher`が目指していたのと
+**全く同じ機能**(1つの稼働中プロセスが複数ドメイン/パスを動的振り分け、
+アプリごとに個別インストール不要)を、既に証明済みの別の実装で実現して
+しまっている。
+
+**判断**: `open-runo-gateway`+`SharedDispatcher`を今からVPSへ追加
+デプロイするのは、既に本番で機能している`open-web-server`のテナント
+ルーティングと**機能重複するインフラを二重に運用する**ことになり、
+「車輪の再発明を避ける」という本ファイル冒頭の設計方針に反する。
+具体的な新しい要件(例: RPoem固有のアプリのみを束ねる専用の
+「Tomcat層」を`open-web-server`とは別に本当に必要とする場面)が
+出てこない限り、追加デプロイは見送る。
+- 次にすべきこと: 特に緊急の課題は無し。将来、RPoem固有アプリを
+  多数運用する必要が生じ、`open-web-server`のテナントルーティングでは
+  賄えない要件(例: RPoem固有の認証・ミドルウェア層を挟みたい等)が
+  具体的に出てきた時点で、`open-runo-gateway`のデプロイを再検討する。
+
 ## HANDOFF(直近の自動巡回ログ)
 
 ### 2026-08-01(続き2) 実バグ発見・修正: Web管理UIも絶対パスfetch罠を踏んでいた
