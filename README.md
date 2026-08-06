@@ -1,5 +1,7 @@
 # open-raid-z
 
+> 📌 保留タスク(2026-08-06): 東芝SBM・DeepSeek技術の組み込み構想あり。詳細は[CLAUDE.md](CLAUDE.md)参照。
+
 > ⚠️ **2026-07-26 緊急: `karu.tokyo`はHTTPS証明書無しの状態(Let's
 > Encryptレート制限、復旧目安2026-07-27 00:17:48 UTC頃)。次回作業開始時は
 > 必ず`CLAUDE.md`のHANDOFF最新エントリ(お引越し前・緊急チェックポイント)

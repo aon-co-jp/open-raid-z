@@ -1,5 +1,7 @@
 # open-raid-z (English)
 
+> 📌 Pending task (2026-08-06): a plan exists to incorporate Toshiba SBM / DeepSeek techniques. See [CLAUDE.md](CLAUDE.md) for details.
+
 > ⚠️ **Urgent, 2026-07-26**: `karu.tokyo` currently has NO valid HTTPS
 > certificate (Let's Encrypt rate-limited; expected recovery ~2026-07-27
 > 00:17:48 UTC). Whoever resumes work next MUST read `CLAUDE.md`'s latest
