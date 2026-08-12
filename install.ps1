@@ -1,4 +1,4 @@
-# open-raid-z (orzctl) インストールスクリプト(Windows / Windows Server 共通)。
+﻿# open-raid-z (orzctl) インストールスクリプト(Windows / Windows Server 共通)。
 #
 # **正直な開示**: WindowsではWinFsp経由でのマウントになるため、事前に
 # WinFsp(https://winfsp.dev/)がインストールされている必要がある
