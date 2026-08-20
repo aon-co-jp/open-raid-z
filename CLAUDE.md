@@ -775,6 +775,77 @@ aruaru-db・open-raid-z/web、いずれも`POST /admin/tenants`でHost+
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-08-19 自動アップデート機能は見送り(正直な理由の記録)+Web管理UIに/healthzを新設
+
+ユーザー指示「RPoem/open-raid-z/rs-syncへopen-english/server/src/
+self_update.rsと同様の自動アップデート機能を展開」への対応として調査。
+本リポジトリで実際に配布されている実行バイナリは2種類あるが、
+**いずれも`open-english`と同じ「GitHub Releaseの新版でプロセス自身を
+安全に自己置換する」パターンをそのまま適用するのは不適切と判断し、
+実装を見送った**——依頼文中で示唆されていた「実行バイナリを持たない
+かもしれない、その場合は見送ってよい」の対象そのものではないが、
+実行バイナリを持つこと自体が自己更新に適さない設計上の理由がある
+ケースとして正直に記録する。
+
+1. **`orzctl`(`open_raid_z_core`のCLI、`.github/workflows/release.yml`
+   経由でLinux/Windows向けにプリビルド配布済み)**: これはHTTPサーバー
+   のような常駐プロセスではなく、`create`/`mount`/`status`等を都度
+   実行するCLIツール。特に`mount`はFUSE(Linux)/WinFsp(Windows)で
+   実ディスクプールをフォアグラウンドでマウントし続ける——この
+   プロセスを実行中に裏から別バイナリへ差し替える・強制終了する
+   ような自己更新機構は、CLAUDE.md冒頭に記載の「ディレクトリが消えても
+   動き続ける」系の問題(rs-sync側2026-07-27インシデントと同種の
+   ハザード)を、ストレージプールのデータ整合性という、より深刻な
+   領域で再現しかねない。また`open-english`方式の核心である
+   「新バージョンを起動して`/healthz`でヘルスチェックしてから
+   切り替える」は、`orzctl`が常駐サーバーではないため原理的に成立
+   しない。
+2. **`open-raid-z-web`(RPoem/`open-runo-poem-compat`ベースの常駐HTTP
+   管理UI)**: こちらは常駐プロセスでヘルスチェックの概念自体は
+   成立するが、**`.github/workflows/release.yml`にこのバイナリを
+   ビルド・GitHub Releaseへ添付するジョブが存在しない**(現状の
+   本番運用はVPS上で`cargo build --release`するソースビルド方式、
+   2026-08-01のHANDOFF参照)。つまり自己更新の比較対象となる
+   「GitHub Release」自体が存在せず、実装しても常に「リリースが
+   見つからない」で何もしないコードになる——今回は先に`/healthz`
+   エンドポイント(`GET /healthz` → `{"ok":true}`)のみ新設し、将来
+   `release.yml`にこのバイナリの配布ジョブを追加する際の土台とした。
+   既存の`GET /api/status`は`orzctl status`をサブプロセス実行するため
+   プール未作成時等に`BAD_GATEWAY`を返しうる設計であり、単純な
+   プロセス生存確認には使えない(ヘルスチェック用途は`/healthz`側に
+   分離した)。
+3. **検証(実測)**: `open-raid-z-web`へ`/healthz`ハンドラを追加し
+   `cargo build --release`成功を確認(このリポジトリはWindowsCPU
+   フォールバックのデフォルトfeatureでビルド)。実際にHTTPで到達
+   できることの確認は次回セッションで実施すること(このパスでは
+   ビルド成功の確認までにとどまる)。
+   → **2026-08-20追記(検証完了)**: 前回セッションはAPI利用上限で
+   中断していたが、今回再開して`cargo build --release`
+   (3分34秒・警告3件のみ、いずれも`RPoem/crates/open-runo-router`側の
+   `missing-debug-implementations`で本変更と無関係)・`cargo test
+   --release`(既存テスト0件・回帰なし)を実行後、実際に
+   `open-raid-z-web.exe`を`127.0.0.1:8099`で起動し、
+   `GET /healthz`→`{"ok":true}`(HTTP 200)を実HTTPで確認した。
+   比較として`GET /api/status`はプール未作成のためHTTP 500
+   (`orzctl status`失敗起因)を返すことも確認し、CLAUDE.md記載の
+   「`/api/status`は生存確認に使えない」という設計判断が実機でも
+   裏付けられた。
+4. **Windowsインストーラー**: 上記の理由により自己更新の対象がないため、
+   `orzctl-install.exe`/`open-raid-z-web-install.exe`のいずれも今回は
+   作成していない(自己更新機能とインストーラーは本来別物だが、
+   ユーザー依頼が「実行バイナリを持つリポジトリについてのみ」と
+   条件付きだったため、自己更新を見送ったこのリポジトリでは
+   インストーラー新規作成も見送り、rs-sync/RPoem側の実装
+   〈`.iss`ファイル〉を先行させた)。
+- 次にすべきこと: (1) `open-raid-z-web`を`.github/workflows/
+  release.yml`(または新設の別ワークフロー)でビルド・GitHub Releaseへ
+  添付するジョブを追加すれば、`open-english`と同型の自己更新機構を
+  適用できる土台が整う——次回この機能に戻る際の最初の一歩。
+  (2) `orzctl`自体は、`mount`実行中でない瞬間(例: 起動直後や`status`
+  実行時)にのみ新版チェック・通知を行う軽量な「バージョン確認のみ・
+  自動置換はしない」モードなら安全に実装できる可能性があり、
+  次回検討の余地がある。(3) `/healthz`の実HTTP到達確認。
+
 ### 2026-08-01(続き2) 実バグ発見・修正: Web管理UIも絶対パスfetch罠を踏んでいた
 
 `aruaru-db`側で同種のバグ(`fetch('/api/status')`が`path_prefix`マウント

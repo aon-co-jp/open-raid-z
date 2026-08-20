@@ -188,6 +188,17 @@ fn main() {
         Box::pin(async move { html_response(StatusCode::OK, page_html(true, &config.base_path)) }) as hyper_compat::BoxFuture<Response>
     }) as hyper_compat::Handler;
 
+    // 2026-08-19新設: 自動アップデート機能検討の一環でヘルスチェック
+    // エンドポイントを新設(このリポジトリの自動アップデート機能自体は
+    // 見送り、理由はCLAUDE.md HANDOFF参照)。既存の`/api/status`は
+    // `orzctl status`をサブプロセス実行するため、プール未作成時等は
+    // BAD_GATEWAYを返しうる——単純な生存確認用途には使えない
+    // (rs-syncの`/healthz`と同じ思想で、プロセス自体の生存のみを見る
+    // 軽量エンドポイントとして分離)。
+    let healthz_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
+        Box::pin(async move { json_response(StatusCode::OK, &serde_json::json!({ "ok": true })) }) as hyper_compat::BoxFuture<Response>
+    }) as hyper_compat::Handler;
+
     let status_config = Arc::clone(&config);
     let status_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
         let config = Arc::clone(&status_config);
@@ -239,6 +250,7 @@ fn main() {
         let app = Route::new()
             .at("/", get(index_handler))
             .at("/demo", get(demo_handler))
+            .at("/healthz", get(healthz_handler))
             .at("/api/status", get(status_handler))
             .at("/api/create", post(create_handler));
 
