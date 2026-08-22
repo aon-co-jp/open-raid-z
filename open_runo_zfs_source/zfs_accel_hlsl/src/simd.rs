@@ -31,9 +31,11 @@
 //! `open-cpu`は同じ既約多項式0x11d・生成元2を用いるため数値は完全に一致する
 //! (`gf_mul_xor_into_matches_table_reference_for_all_coefficients`テストで
 //! 全256係数について確認済み)。
-//! 一方、ホーナー法の`acc = acc*2 ^ src` / `acc = acc*4 ^ src`
-//! (`mul2_xor_into`/`mul4_xor_into`)は`open-cpu`に対応するAPIが無いため、
-//! 本モジュール内のSIMD実装をそのまま使い続ける。
+//! ホーナー法の`acc = acc*2 ^ src` / `acc = acc*4 ^ src`
+//! (`mul2_xor_into`/`mul4_xor_into`)も、AVX2経路は`open_cpu::gf_mul_pow2_xor`
+//! へ移譲済み。
+//! AVX-512経路とSSE2経路のみ本モジュールの実装を使い続ける
+//! (前者はopen-cpu側も実機未検証、後者はopen-cpuにSSE2実装が無いため)。
 
 /// 実行時に選択されたSIMD経路(ログ・ベンチマーク表示用)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,6 +218,9 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2")]
+    // 【2026-08-22】open-cpuへ移譲したため本モジュールからは呼ばれなくなったが、
+    // 将来open-cpu側の実装を相互検証する際の参照として残す。
+    #[allow(dead_code)]
     unsafe fn mul2_avx2(v: __m256i) -> __m256i {
         let zero = _mm256_setzero_si256();
         let mask = _mm256_cmpgt_epi8(zero, v);
@@ -224,6 +229,9 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2")]
+    // 【2026-08-22】open-cpuへ移譲したため本モジュールからは呼ばれなくなったが、
+    // 将来open-cpu側の実装を相互検証する際の参照として残す。
+    #[allow(dead_code)]
     pub unsafe fn mul2_xor_into_avx2(acc: &mut [u8], src: &[u8], times: u32) -> usize {
         let n = acc.len().min(src.len());
         let mut i = 0;
@@ -407,8 +415,14 @@ fn mul_pow2_xor_into(acc: &mut [u8], src: &[u8], times: u32) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         done = match simd_level() {
+            // AVX-512経路のみ本モジュールの実装を使い続ける
+            // (open-cpu側のAVX-512は既定で無効化されているため)。
             SimdLevel::Avx512 => unsafe { x86::mul2_xor_into_avx512(&mut acc[..n], &src[..n], times) },
-            SimdLevel::Avx2 => unsafe { x86::mul2_xor_into_avx2(&mut acc[..n], &src[..n], times) },
+            // AVX2は open-cpu のホーナー法APIへ移譲する(2026-08-22)。
+            SimdLevel::Avx2 => {
+                open_cpu::gf_mul_pow2_xor(&mut acc[..n], &src[..n], times);
+                n
+            }
             SimdLevel::Sse2 => unsafe { x86::mul2_xor_into(&mut acc[..n], &src[..n], times) },
             SimdLevel::Scalar => 0,
         };
