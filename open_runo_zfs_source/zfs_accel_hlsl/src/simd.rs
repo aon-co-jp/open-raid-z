@@ -22,6 +22,18 @@
 //! そのためAVX-512経路は「コンパイル可能・ロジックはスカラー/AVX2経路と
 //! 同一の定式化」までしか確認できておらず、**実機での実行・ベンチマークは
 //! 未実施**である。AVX2/SSE2/スカラー経路は実機で実行・検証済み。
+//!
+//! 【2026-08-22 open-cpuへの移行】
+//! CPU機能検出そのもの(`std::is_x86_feature_detected!`の呼び出し)と、
+//! 任意係数のGF(2^8)乗算蓄積(`gf_mul_xor_into`)・単純XOR(`xor_into`)は、
+//! エコシステム共通ライブラリ[`open_cpu`](https://github.com/aon-co-jp/open-cpu)
+//! へ移譲した(aruaru-db/aruaru-llm/open-cudaと検出コードを重複させないため)。
+//! `open-cpu`は同じ既約多項式0x11d・生成元2を用いるため数値は完全に一致する
+//! (`gf_mul_xor_into_matches_table_reference_for_all_coefficients`テストで
+//! 全256係数について確認済み)。
+//! 一方、ホーナー法の`acc = acc*2 ^ src` / `acc = acc*4 ^ src`
+//! (`mul2_xor_into`/`mul4_xor_into`)は`open-cpu`に対応するAPIが無いため、
+//! 本モジュール内のSIMD実装をそのまま使い続ける。
 
 /// 実行時に選択されたSIMD経路(ログ・ベンチマーク表示用)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,15 +61,17 @@ impl SimdLevel {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn detect_level() -> SimdLevel {
+    // CPU機能検出は open-cpu へ移譲(内部で OnceLock キャッシュ済み)。
+    let caps = open_cpu::detect();
     // AVX-512はF(基盤)とBW(バイト/ワード演算)の両方が必要
     // (バイト単位の比較・加算・マスク生成にBWを使うため)。
-    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
+    if caps.avx512f && caps.avx512bw {
         return SimdLevel::Avx512;
     }
-    if std::is_x86_feature_detected!("avx2") {
+    if caps.avx2 {
         return SimdLevel::Avx2;
     }
-    if std::is_x86_feature_detected!("sse2") {
+    if caps.sse2 {
         return SimdLevel::Sse2;
     }
     SimdLevel::Scalar
@@ -186,6 +200,9 @@ mod x86 {
 
     // ---- AVX2 ----
     #[target_feature(enable = "avx2")]
+    // 【2026-08-22】open-cpuへ移譲したため本モジュールからは呼ばれなくなったが、
+    // 将来open-cpu側の実装を相互検証する際の参照として残す。
+    #[allow(dead_code)]
     pub unsafe fn xor_into_avx2(dst: &mut [u8], src: &[u8]) -> usize {
         let n = dst.len().min(src.len());
         let mut i = 0;
@@ -270,6 +287,9 @@ mod x86 {
     // 各16要素のテーブルをレジスタへ載せ、PSHUFB(バイト単位テーブル引き)で
     // 16/32/64バイトを一度に変換する。
     #[target_feature(enable = "ssse3")]
+    // 【2026-08-22】open-cpuへ移譲したため本モジュールからは呼ばれなくなったが、
+    // 将来open-cpu側の実装を相互検証する際の参照として残す。
+    #[allow(dead_code)]
     pub unsafe fn gf_mul_xor_into_ssse3(acc: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
         let n = acc.len().min(src.len());
         let lo_v = _mm_loadu_si128(lo.as_ptr() as *const __m128i);
@@ -289,6 +309,9 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2")]
+    // 【2026-08-22】open-cpuへ移譲したため本モジュールからは呼ばれなくなったが、
+    // 将来open-cpu側の実装を相互検証する際の参照として残す。
+    #[allow(dead_code)]
     pub unsafe fn gf_mul_xor_into_avx2(acc: &mut [u8], src: &[u8], lo: &[u8; 16], hi: &[u8; 16]) -> usize {
         let n = acc.len().min(src.len());
         // 128bitテーブルを上下レーンへブロードキャスト(PSHUFBはレーン内で閉じるため)
@@ -345,8 +368,16 @@ pub fn xor_into(dst: &mut [u8], src: &[u8]) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         done = match simd_level() {
+            // AVX-512経路のみ本モジュールの実装を使い続ける
+            // (open-cpuのgf_xorはAVX2までしか実装が無いため)。
             SimdLevel::Avx512 => unsafe { x86::xor_into_avx512(&mut dst[..n], &src[..n]) },
-            SimdLevel::Avx2 => unsafe { x86::xor_into_avx2(&mut dst[..n], &src[..n]) },
+            // AVX2は open-cpu のディスパッチへ移譲する。
+            SimdLevel::Avx2 => {
+                open_cpu::gf_xor(&mut dst[..n], &src[..n]);
+                n
+            }
+            // open-cpuのgf_xorはAVX2非対応機ではスカラーへ落ちるため、
+            // SSE2しか無いCPUでは本モジュールのSSE2実装を使い続ける。
             SimdLevel::Sse2 => unsafe { x86::xor_into(&mut dst[..n], &src[..n]) },
             SimdLevel::Scalar => 0,
         };
@@ -440,24 +471,32 @@ pub fn gf_mul_xor_into(acc: &mut [u8], src: &[u8], coeff: u8, gf: &crate::galois
         xor_into(&mut acc[..n], &src[..n]);
         return;
     }
-    let (lo, hi) = gf_split_tables(gf, coeff);
     #[allow(unused_assignments)]
     let mut done = 0usize;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         done = match simd_level() {
-            SimdLevel::Avx512 => unsafe { x86::gf_mul_xor_into_avx512(&mut acc[..n], &src[..n], &lo, &hi) },
-            SimdLevel::Avx2 => unsafe { x86::gf_mul_xor_into_avx2(&mut acc[..n], &src[..n], &lo, &hi) },
-            // SSSE3(PSHUFB)はSSE2より1世代新しいため、別途検出する。
-            SimdLevel::Sse2 => {
-                if std::is_x86_feature_detected!("ssse3") {
-                    unsafe { x86::gf_mul_xor_into_ssse3(&mut acc[..n], &src[..n], &lo, &hi) }
-                } else {
-                    0
-                }
+            // AVX-512経路のみ本モジュールの実装を使い続ける
+            // (open-cpu側のAVX-512は既定で無効化されているため。
+            //  どちらの実装も開発機では実行未検証である点は変わらない)。
+            SimdLevel::Avx512 => {
+                let (lo, hi) = gf_split_tables(gf, coeff);
+                unsafe { x86::gf_mul_xor_into_avx512(&mut acc[..n], &src[..n], &lo, &hi) }
             }
-            SimdLevel::Scalar => 0,
+            // それ以外は open-cpu のランタイムディスパッチへ完全移譲する
+            // (AVX2 / PCLMULQDQ+SSSE3 / スカラーを自動選択。同じ既約多項式
+            //  0x11d を使うため、従来実装と数値は完全に一致する)。
+            _ => {
+                open_cpu::gf_mul_parity(&mut acc[..n], &src[..n], coeff);
+                n
+            }
         };
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        // 非x86では open-cpu のスカラー実装へ移譲する。
+        open_cpu::gf_mul_parity(&mut acc[..n], &src[..n], coeff);
+        done = n;
     }
     for i in done..n {
         acc[i] ^= gf.mul(src[i], coeff);

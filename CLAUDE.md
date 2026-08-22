@@ -775,6 +775,45 @@ aruaru-db・open-raid-z/web、いずれも`POST /admin/tenants`でHost+
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-08-22 CPU機能検出とGF(2^8)乗算を共通ライブラリ open-cpu へ移譲
+
+ユーザー指示により、エコシステム共通のCPU命令セット検出ライブラリ
+[`open-cpu`](https://github.com/aon-co-jp/open-cpu)を新設し、本リポジトリを
+その最初の利用者として統合した(aruaru-db/aruaru-llm/open-cudaが同じ検出
+コードを重複実装するのを避けるため)。open-cpuは常駐サービスではなく、
+`[dependencies]`でリンクする通常のライブラリクレート。
+
+- `zfs_accel_hlsl/Cargo.toml` に `open-cpu = { path = "../../../open-cpu" }`
+  を追加(パス依存。VPS等 `F:\runo` レイアウトが無い環境でビルドする際は
+  git依存への切り替えが必要)。
+- `simd.rs` の `detect_level()` から `std::is_x86_feature_detected!` の直接
+  呼び出しを排除し、`open_cpu::detect()` の結果を使うよう変更。
+- `gf_mul_xor_into()`(任意係数のGF(2^8)乗算蓄積、復旧経路で使用)を
+  `open_cpu::gf_mul_parity()` へ、`xor_into()` のAVX2経路を
+  `open_cpu::gf_xor()` へ移譲。**既約多項式0x11d・生成元2が一致するため
+  数値は完全に同一**で、全256係数を突き合わせる既存テスト
+  `gf_mul_xor_into_matches_table_reference_for_all_coefficients` が通ることを
+  確認済み。
+- AVX-512経路と、ホーナー法の `mul2_xor_into` / `mul4_xor_into` は
+  open-cpu側に対応APIが無い(またはopen-cpu側も未検証)ため、本モジュールの
+  実装を継続使用する。用済みになったAVX2/SSSE3カーネルは
+  `#[allow(dead_code)]` を付けて相互検証用の参照として残置した。
+
+**検証(実機、AMD Ryzen 9 3950X)**:
+
+- `zfs_accel_hlsl`: `cargo test --no-default-features --release`
+  → **39/39 通過、警告なし**。
+- `open_raid_z_core`: `cargo test --no-default-features --features json_status --release`
+  → 全テストスイート通過(52+3+4+1+7+6+1+5+6+3+2+5+3+5+8 件、失敗0)。
+- `examples/simd_parity_benchmark`(移行後の実測): RAID-Z2 8.74〜18.92倍、
+  RAID-Z3 7.56〜11.86倍、**任意係数GF乗算(open-cpuへ移譲した経路)19.89倍**。
+- AVX-512経路は開発機非搭載のため引き続き**実行未検証**(移行前と同じ)。
+
+**次にすべきこと**: open-cpu側にホーナー法(`acc = acc*2 ^ src`)のAPIを
+追加できれば、`mul2_xor_into` / `mul4_xor_into` も移譲でき、本モジュールの
+x86コードをさらに削減できる。
+
+
 ### 2026-08-22 RAID6(RAID-Z2/Z3)パリティ計算をCPU SIMD化(AVX2実測8.9〜14.9倍、AVX-512パスは実機未検証)
 
 ユーザー指示「AVX-512(および実機で使えるAVX2/PCLMULQDQ/BMI2/FMA3等)で

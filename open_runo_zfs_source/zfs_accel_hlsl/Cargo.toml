@@ -18,6 +18,10 @@ windows = { version = "0.58", optional = true, features = [
     "Win32_System_Threading",
     "Win32_Security",
 ] }
+# CPU命令セット(AVX2/AVX-512/PCLMULQDQ等)のランタイム検出と、
+# GF(2^8)演算の実行時ディスパッチを担う共通ライブラリ
+# (aon-co-jpエコシステム全体で共用、2026-08-22導入)。
+open-cpu = { path = "../../../open-cpu" }
 thiserror = "1.0"
 tracing = "0.1"
 # Windows以外(Linux/Mac/Android等)向けのGPU/NPUアクセラレーション経路
