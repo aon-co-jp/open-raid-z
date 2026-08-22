@@ -20,6 +20,7 @@ pub mod galois;
 pub mod gf_matrix;
 pub mod raidz23_parity;
 pub mod raidz_parity;
+pub mod simd;
 #[cfg(feature = "vulkan")]
 pub mod vulkan_compute;
 #[cfg(feature = "vulkan")]

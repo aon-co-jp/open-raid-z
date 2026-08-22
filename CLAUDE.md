@@ -775,6 +775,133 @@ aruaru-db・open-raid-z/web、いずれも`POST /admin/tenants`でHost+
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-08-22 RAID6(RAID-Z2/Z3)パリティ計算をCPU SIMD化(AVX2実測8.9〜14.9倍、AVX-512パスは実機未検証)
+
+ユーザー指示「AVX-512(および実機で使えるAVX2/PCLMULQDQ/BMI2/FMA3等)で
+RAID6パリティ計算・NVMe RAID6のランダムアクセス・AI処理を高速化する」への
+対応。**開発機のCPUはAMD Ryzen 9 3950X(Zen 2)でAVX-512は非搭載**のため、
+実測できるのはAVX2までである点を最初に明記する。
+
+1. **着手前の実態調査(推測せず`grep`で確認)**: `open-raid-z`のRust
+   コード全体を`avx|simd|is_x86_feature|target_feature`で検索した結果
+   **ヒット0件**——SIMD対応は一切入っておらず、`zfs_accel_hlsl`の
+   RAID-Z2/Z3パリティ計算(`src/raidz23_parity.rs`の`compute_p`/
+   `compute_pq`/`compute_pqr`)は**1バイトずつGF(2^8)のexp/log乗算
+   テーブルを引くスカラーループ**だった。GPU経路のみ既存(2026-08-01の
+   実測でGPUはCPUより9〜14倍**遅い**と判明済み、既定はCPU)。
+2. **新規`zfs_accel_hlsl/src/simd.rs`**: 実行時CPU機能検出
+   (`std::is_x86_feature_detected!`)による多段ディスパッチ
+   (**AVX-512F+BW → AVX2 → SSE2/SSSE3 → スカラー**)。非x86
+   アーキテクチャ・非対応CPUでは必ずスカラーへ落ちるため、ビルドも実行も
+   壊れない(`#[cfg(target_arch)]`でx86専用コードを隔離)。カーネルは
+   3種類:
+   - `xor_into`(Pパリティの畳み込み)
+   - `mul2_xor_into`/`mul4_xor_into`(Q/Rシンドロームのホーナー法1ステップ)
+   - `gf_mul_xor_into`(任意係数のGF(2^8)乗算、復旧〈デコード〉経路用)
+3. **アルゴリズム面の変更(出典付き)**: Q/R生成を「係数`2^i`をテーブルで
+   引いて掛ける」形から、Linuxカーネル`lib/raid6/`およびH. Peter Anvin
+   "The mathematics of RAID-6"と同じ**ホーナー法+「×2 = 1ビット左シフト+
+   最上位ビットが立っていたバイトにだけ0x1DをXOR」**へ変更した。これで
+   テーブル引き(ギャザー)が不要になりバイト並列SIMDで表現できる。
+   任意係数の乗算はIntel ISA-Lの`gf_vect_mad`と同じ
+   **split-table + PSHUFB**(`c·b = c·(b&0x0f) ^ c·(b&0xf0)`)。
+   従来のテーブル実装は`compute_pq_reference`/`compute_pqr_reference`
+   として**残し**、新実装と数値が完全一致することをテストで固定した。
+4. **PCLMULQDQを採用しなかった理由(調査の上での判断、正直な記録)**:
+   PCLMULQDQは64ビット多項式のキャリーレス乗算命令であり、8バイトを
+   1語に詰めたバイト単位GF(2^8)乗算に使うと**隣接バイトへ積のビットが
+   溢れて混入する**ため、そのままでは使えない。実際Linuxカーネルも
+   ISA-LもRAID6のバイト単位GF演算にはPCLMULQDQを使わず、シフト+0x1D
+   XOR(係数2)とPSHUFB split-table(任意係数)を採用している。
+   PCLMULQDQが効くのはCRC32やGF(2^128)(GHASH)のような**単一の広い
+   多項式**であり、本リポジトリのチェックサムはSHA-256のため該当しない。
+   なお**SHA-NIは既に効いている**——`sha2` 0.10は`cpufeatures`クレートで
+   x86のSHA拡張を実行時検出して使うため、`checksum.rs`側に追加実装は
+   不要と判断した(コードを足さないことが正しい、という結論)。
+   BMI1/BMI2/POPCNT/AES-NIについては、本リポジトリのパリティ計算
+   ホットパスに「可変長ビット抽出・ビットカウント・暗号化」に該当する
+   処理が存在しないため、**性能上の意味が無い箇所へ無理に命令を
+   持ち込むことはしなかった**(必要になった時点で追加する)。
+5. **将来のCPU買い替えを見据えた設計方針(ユーザー指示、2026-08-22)**:
+   コードパスは「機能フラグが有効になるだけで自動的に高速パスが使われる」
+   状態を目指す。すなわちAVX-512搭載機に載せ替えた場合、
+   **コードの書き足し無しで`simd_level()`が`Avx512`を返し、64バイト幅の
+   カーネルが自動的に使われる**。AVX-VNNI/AVX-512 VNNI(int8内積)は
+   このリポジトリのGF(2^8)演算とは演算体系が異なり適用先が無いため
+   ここでは用意していない——VNNI系のコードパスはAI推論側
+   (`aruaru-llm`/`open-cuda`)に用意する(同日のそちらのHANDOFF参照)。
+6. **TEST(実測)**: `cargo test --no-default-features`
+   (`zfs_accel_hlsl`)は**39件全green**(SIMD関連の新規7件を含む。従来は
+   32件)。新規テストは (a) `mul2_byte`がGF乗算テーブルの`×2`と全256値で
+   一致、(b) SIMD経路とスカラー経路が長さ0/1/7/…/1000(SIMD幅の倍数に
+   ならない端数を含む)で完全一致、(c) `gf_mul_xor_into`が**全256係数×
+   11通りの長さ**でテーブル実装と完全一致、(d) `compute_pq`/`compute_pqr`
+   がディスク1〜10本×長さ11通りで参照実装と完全一致。
+   `open_raid_z_core`側は`cargo test --no-default-features --features
+   json_status`で**全green(回帰なし、104件相当)**。
+   なお`--features json_status`を付けない場合、既存テスト
+   `orzctl_gpu_accel_cli`が1件failするが、これは`status`サブコマンドが
+   featureゲートされているための**本変更とは無関係な既知の前提条件**
+   (テスト側がfeature要求を宣言していない)。
+7. **ベンチマーク(この実機での実測値、AVX2経路)**:
+   `cargo run --release --no-default-features --example
+   simd_parity_benchmark`(新規、`zfs_accel_hlsl/examples/`)。
+   128KiB/ディスク × 200ストライプ、検出経路は`avx2`。
+
+   | 構成 | テーブル実装 | SIMD(AVX2) | 倍率 |
+   |---|---|---|---|
+   | RAID-Z2 データ2本 | 163.9 ms | 18.3 ms | **8.94x** |
+   | RAID-Z2 データ4本 | 339.9 ms | 33.7 ms | **10.09x** |
+   | RAID-Z2 データ6本 | 494.6 ms | 37.6 ms | **13.14x** |
+   | RAID-Z2 データ8本 | 657.8 ms | 44.2 ms | **14.89x** |
+   | RAID-Z3 データ4本 | 503.2 ms | 54.6 ms | **9.21x** |
+   | RAID-Z3 データ8本 | 981.4 ms | 70.4 ms | **13.95x** |
+   | 任意係数GF乗算(復旧経路) | 31.4 ms | 1.0 ms | **30.96x** |
+
+   **NVMe 4枚以上のRAID6構成で効く根拠**: ディスク本数が増えるほど
+   倍率が上がる(8.9x → 14.9x)。RAID6のランダム書き込みは
+   Read-Modify-Writeでパリティ再計算が都度発生するため、CPU側の
+   パリティ計算がボトルネックになる場面ほどこの改善が直接効く。
+   ただし**実NVMe SSDを4枚以上使った実機IOPS測定は未実施**(この開発機に
+   その構成が無い)——上表はパリティ計算そのものの所要時間であり、
+   「NVMeのランダムアクセス性能がX倍になる」という主張ではない。
+8. **エンドツーエンド(既存の`raidz2_parity_benchmark`、ループバック
+   ファイル経由の`RaidZVdev`書き込み)**: 3+2構成 224.75ms / 4+2
+   267.81ms / 5+2 309.35ms / 6+2 349.22ms。**参考**として、2026-08-01の
+   HANDOFFに記録された同ベンチマークのCPU値は495〜794msだった——
+   セッション・ビルド条件が完全に同一である保証は無いため厳密な比較では
+   ないが、同オーダーの改善(おおよそ2倍強)が出ている。I/O時間を含む
+   ため、パリティ計算単体の8.9〜14.9倍がそのまま出ないのは想定通り。
+9. **正直な開示・未実施**:
+   - **AVX-512経路(`xor_into_avx512`/`mul2_xor_into_avx512`/
+     `gf_mul_xor_into_avx512`)は、この開発機がAVX-512非搭載のため
+     コンパイル確認のみで実行・ベンチマークは未実施**。ロジックはAVX2版と
+     同一の定式化(幅が32→64バイト、マスク生成が`cmpgt`→`movepi8_mask`)。
+   - 実NVMe SSD 4枚以上での実IOPS測定は未実施。
+   - GPU経路には手を入れていない(既定CPUのまま、2026-08-01の判断を維持)。
+10. **将来の共通化(`open-cpu`共有クレートへの移行予定、2026-08-22
+    ユーザー指示)**: CPU機能検出・SIMDディスパッチのロジックは、
+    各リポジトリへ重複実装せず、新設の共有ライブラリクレート
+    `F:\runo\open-cpu`(`aon-co-jp/open-cpu`、常駐サービスではなく
+    通常のRustライブラリ)へ集約する方針が決まった。本セッションでは
+    その`open-cpu`が別セッションで並行作成中のため依存切り替えは
+    行っていないが、**検出ロジックとSIMDカーネルを
+    `zfs_accel_hlsl/src/simd.rs`という独立した1ファイルに閉じ込めてある**
+    ため、後から`open-cpu`への差し替えはこのファイルの中身を
+    再エクスポートに置き換えるだけで済む(呼び出し側
+    `raidz23_parity.rs`は`crate::simd::xor_into`等の関数名にしか
+    依存していない)。
+- 次にすべきこと: (0) `open-cpu`完成後、`simd.rs`の検出ロジック
+  (`detect_level`/`SimdLevel`)を`open-cpu`の`CpuCapabilities`へ
+  差し替える(RAID6固有のカーネル自体をどちらに置くかは`open-cpu`側の
+  APIを見て判断する)。(1) AVX-512搭載機を入手した際に
+  `simd_parity_benchmark`をそのまま実行して実測値を追記する
+  (コード変更は不要な設計にしてある)。(2) 実NVMe 4枚以上での
+  RAID6ランダム書き込みIOPS測定。(3) `zfs_accel_hlsl`の
+  `reconstruct_double_missing`/`triple_missing`(行列求解のバイト
+  ループ)はまだスカラーのまま——`gf_mul_xor_into`で置き換えられる
+  可能性がある(復旧は書き込みほどホットではないため後回しにした)。
+
 ### 2026-08-19 自動アップデート機能は見送り(正直な理由の記録)+Web管理UIに/healthzを新設
 
 ユーザー指示「RPoem/open-raid-z/rs-syncへopen-english/server/src/

@@ -18,21 +18,24 @@ use crate::galois::GaloisTables;
 use crate::gf_matrix::GfMatrix;
 
 /// 全ディスクをXORするだけのPパリティ(RAID-Z1と同じ意味論)。
+///
+/// 2026-08-22: 内側のバイトループを[`crate::simd`]のSIMDカーネル
+/// (AVX-512 / AVX2 / SSE2、実行時CPU機能検出+スカラーフォールバック)へ
+/// 置き換えた。数値結果は従来のスカラー実装と完全一致する
+/// (`simd_paths_match_scalar_for_all_lengths`・本ファイル下部の
+/// 参照実装一致テストで検証済み)。
 pub fn compute_p(data_disks: &[&[u8]]) -> Vec<u8> {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     let mut p = vec![0u8; stripe_len];
     for disk in data_disks {
         debug_assert_eq!(disk.len(), stripe_len, "全ディスクは同じストライプ長である必要があります");
-        for (acc, &b) in p.iter_mut().zip(disk.iter()) {
-            *acc ^= b;
-        }
+        crate::simd::xor_into(&mut p, disk);
     }
     p
 }
 
-/// RAID-Z2用のP/Qパリティを生成する。
-/// P = XOR(D_i)、Q = XOR(D_i * 2^i)
-pub fn compute_pq(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>) {
+/// テーブル引きによる素朴なP/Q参照実装(SIMD版の正しさを検証するための基準)。
+pub fn compute_pq_reference(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>) {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     let mut p = vec![0u8; stripe_len];
     let mut q = vec![0u8; stripe_len];
@@ -49,9 +52,8 @@ pub fn compute_pq(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>)
     (p, q)
 }
 
-/// RAID-Z3用のP/Q/Rパリティを生成する。
-/// P = XOR(D_i)、Q = XOR(D_i * 2^i)、R = XOR(D_i * 4^i)
-pub fn compute_pqr(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+/// テーブル引きによる素朴なP/Q/R参照実装(SIMD版の正しさを検証するための基準)。
+pub fn compute_pqr_reference(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
     let mut p = vec![0u8; stripe_len];
     let mut q = vec![0u8; stripe_len];
@@ -66,6 +68,56 @@ pub fn compute_pqr(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>
             q[byte_idx] ^= gf.mul(b, q_coeff);
             r[byte_idx] ^= gf.mul(b, r_coeff);
         }
+    }
+
+    (p, q, r)
+}
+
+/// RAID-Z2用のP/Qパリティを生成する。
+/// P = XOR(D_i)、Q = XOR(D_i * 2^i)
+///
+/// 2026-08-22: GF乗算テーブルを引く実装から、Linuxカーネル`lib/raid6`と
+/// 同じ**ホーナー法+「×2はシフト+0x1DのXOR」**の定式化へ変更し、
+/// SIMD([`crate::simd`])で畳み込むようにした。`gf`引数は互換性のため
+/// 残しているが、この経路では参照しない(`compute_pq_reference`が
+/// 従来のテーブル実装で、両者が一致することをテストで検証している)。
+pub fn compute_pq(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>) {
+    let _ = gf;
+    let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
+    let mut p = vec![0u8; stripe_len];
+    let mut q = vec![0u8; stripe_len];
+
+    // P: 単純XOR。Q: Σ D_i·2^i をホーナー法で逆順に畳み込む。
+    for disk in data_disks.iter() {
+        debug_assert_eq!(disk.len(), stripe_len, "全ディスクは同じストライプ長である必要があります");
+        crate::simd::xor_into(&mut p, disk);
+    }
+    for disk in data_disks.iter().rev() {
+        crate::simd::mul2_xor_into(&mut q, disk);
+    }
+
+    (p, q)
+}
+
+/// RAID-Z3用のP/Q/Rパリティを生成する。
+/// P = XOR(D_i)、Q = XOR(D_i * 2^i)、R = XOR(D_i * 4^i)
+///
+/// 2026-08-22: `compute_pq`と同様にSIMD+ホーナー法へ置き換えた
+/// (Rは「×4」= ×2を2回、係数 4^i = 2^(2i) と一致する)。
+pub fn compute_pqr(data_disks: &[&[u8]], gf: &GaloisTables) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let _ = gf;
+    let stripe_len = data_disks.first().map(|s| s.len()).unwrap_or(0);
+    let mut p = vec![0u8; stripe_len];
+    let mut q = vec![0u8; stripe_len];
+    let mut r = vec![0u8; stripe_len];
+
+    for disk in data_disks.iter() {
+        debug_assert_eq!(disk.len(), stripe_len, "全ディスクは同じストライプ長である必要があります");
+        crate::simd::xor_into(&mut p, disk);
+    }
+    for disk in data_disks.iter().rev() {
+        crate::simd::mul2_xor_into(&mut q, disk);
+        crate::simd::mul4_xor_into(&mut r, disk);
     }
 
     (p, q, r)
@@ -526,9 +578,10 @@ pub fn reconstruct_missing_data_generic(
     for (row, &exp) in exponents.iter().enumerate() {
         for &(idx, disk) in known_data {
             let coeff = gf.pow2(exp * idx as u32);
-            for b in 0..stripe_len {
-                syndromes[row][b] ^= gf.mul(disk[b], coeff);
-            }
+            // 2026-08-22: バイトごとのテーブル引きから、split-table+PSHUFBの
+            // SIMDカーネル(AVX-512BW/AVX2/SSSE3、実行時検出+スカラー
+            // フォールバック)へ置き換えた。結果は従来と完全一致する。
+            crate::simd::gf_mul_xor_into(&mut syndromes[row][..stripe_len], &disk[..stripe_len], coeff, gf);
         }
     }
 
@@ -1095,5 +1148,62 @@ mod tests {
         let recovered = reconstruct_missing_data_generic(&known, &[2], &available_parity, &gf);
 
         assert_eq!(recovered, vec![(2, disks[2].clone())]);
+    }
+}
+
+#[cfg(test)]
+mod simd_parity_tests {
+    use super::*;
+
+    fn pseudo_random(len: usize, seed: u64) -> Vec<u8> {
+        let mut s = seed | 1;
+        (0..len)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                (s >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// SIMD+ホーナー法版のP/Q/Rが、従来のGF乗算テーブル参照実装と
+    /// 完全に一致することを、ディスク本数・ストライプ長を変えて検証する
+    /// (NVMe 4〜10枚構成を想定した本数レンジ)。
+    #[test]
+    fn simd_pq_pqr_match_table_reference() {
+        let gf = GaloisTables::new();
+        for num_disks in [1usize, 2, 3, 4, 6, 8, 10] {
+            for len in [1usize, 15, 16, 31, 32, 63, 64, 65, 4096, 4097] {
+                let disks: Vec<Vec<u8>> =
+                    (0..num_disks).map(|i| pseudo_random(len, 0x1000 + (i as u64) * 7 + len as u64)).collect();
+                let refs: Vec<&[u8]> = disks.iter().map(|d| d.as_slice()).collect();
+
+                let (p, q) = compute_pq(&refs, &gf);
+                let (rp, rq) = compute_pq_reference(&refs, &gf);
+                assert_eq!(p, rp, "P mismatch disks={num_disks} len={len}");
+                assert_eq!(q, rq, "Q mismatch disks={num_disks} len={len}");
+
+                let (p3, q3, r3) = compute_pqr(&refs, &gf);
+                let (rp3, rq3, rr3) = compute_pqr_reference(&refs, &gf);
+                assert_eq!(p3, rp3, "P(3) mismatch disks={num_disks} len={len}");
+                assert_eq!(q3, rq3, "Q(3) mismatch disks={num_disks} len={len}");
+                assert_eq!(r3, rr3, "R mismatch disks={num_disks} len={len}");
+            }
+        }
+    }
+
+    /// SIMD化後もPパリティが単純XORの定義どおりであること。
+    #[test]
+    fn simd_p_matches_naive_xor() {
+        let disks: Vec<Vec<u8>> = (0..5).map(|i| pseudo_random(1000, 99 + i)).collect();
+        let refs: Vec<&[u8]> = disks.iter().map(|d| d.as_slice()).collect();
+        let mut expect = vec![0u8; 1000];
+        for d in &disks {
+            for (a, &b) in expect.iter_mut().zip(d.iter()) {
+                *a ^= b;
+            }
+        }
+        assert_eq!(compute_p(&refs), expect);
     }
 }
