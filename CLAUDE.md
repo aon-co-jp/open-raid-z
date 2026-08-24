@@ -775,6 +775,63 @@ aruaru-db・open-raid-z/web、いずれも`POST /admin/tenants`でHost+
 
 ## HANDOFF(直近の自動巡回ログ)
 
+### 2026-08-24 open-easy-web向け`/demo`公開機能を実機検証(コード変更は無し、既に実装済みと判明)
+
+ユーザー指示「open-raid-zにデモ機能を実装してほしい(open-easy-webでの
+`/demo`公開)」を受けて着手。まず`open-raid-z-web`(`web/`crate)の実装を
+精読したところ、**2026-07-30の開発で`GET /demo`エンドポイント・
+`OPEN_RAID_Z_READ_ONLY`環境変数による多層防御(管理者トークンの有無に
+関わらず`POST /api/create`を常に拒否)は既に実装済み**だったことが判明
+した。今回新規にコードを書く必要は無かった——**正直な開示**として、
+「実装した」ではなく「既存実装を実機で裏取りした」というのが正確な
+到達点である。
+
+**実機検証(実際に行った内容、型チェック止まりにしない方針を徹底)**:
+1. `web/`crateを`cargo build`(成功、1m12s)。
+2. `open_raid_z_core`を`cargo test --no-default-features --features
+   json_status`で実行し全テストgreen(既存の回帰なし)。
+3. `orzctl`をビルドし、実際にループバックファイル5枚(64MB×5、
+   3データ+2パリティのZ2構成)で実プールを作成
+   (`orzctl create --level z2 ... --dataset demo-dataset`)。
+4. `open-raid-z-web.exe`を`OPEN_RAID_Z_READ_ONLY=1`・
+   `OPEN_RAID_Z_ADMIN_TOKEN=testtoken123`で実際に起動し、以下を実HTTP
+   リクエストで確認:
+   - `GET /demo` → 200、本文に日本語のread-onlyデモバナー
+     (「これはread-onlyデモです。ログイン・登録・保存(プール作成)は
+     実際には出来ません。」)を含むことを確認。
+   - `GET /healthz` → 200 `{"ok":true}`。
+   - `GET /api/status` → 200、実プール状態
+     (`{"level":"Z2",...,"datasets":[{"name":"demo-dataset",...}]}`)を
+     正しく返すことを確認。
+   - `POST /api/create`を**正しい管理者トークン付きで**実行しても
+     403 `{"error":"read-only demo: プール作成は無効化されています..."}`
+     が返り、`/api/status`を再取得してもデータセットが増えていない
+     (実際にプール作成が阻止された)ことを確認——「デモ経路からは
+     破壊的操作を絶対に実行できない」という要件が実際に機能している
+     ことを実測で裏取りした。
+5. 検証に使ったループバックディスクファイル(`web/tmp_disks/`配下)は
+   テスト専用の一時生成物のため、コミット前に削除済み(`git status`が
+   クリーンであることを確認)。
+
+**正直な開示・未着手(過去のHANDOFFから変更なし)**:
+- `easy-web.tokyo`(VPS本番)側の`open-web-server`テナントルーティングに
+  `path_prefix=/open-raid-z/demo`という**別テナントとしての`/demo`登録は
+  今回も行っていない**——2026-08-01のHANDOFFで記録した通り、
+  `GET /api/status`自体が元々認証不要であり、`OPEN_RAID_Z_READ_ONLY`は
+  プロセス全体に効くフラグのため「本番と別のread-onlyデモプロセス」を
+  用意する意味が薄いという既存の判断を踏襲した。現在の本番デプロイ
+  (`https://easy-web.tokyo/open-raid-z/`)は`OPEN_RAID_Z_READ_ONLY`
+  未設定のため、`/open-raid-z/demo`パスへアクセスしても`/`と同一の
+  (read-onlyバナー無しの)ページが返る想定——`open-easy-web`側で
+  本当に「本番と分離した安全なデモ環境」を`/demo`として公開したい場合は、
+  `OPEN_RAID_Z_READ_ONLY=1`を設定した**別プロセス**(別ポート、専用の
+  デモ用ループバックプール)を新たに起動し、`path_prefix=/open-raid-z/demo`
+  で`open-web-server`のテナントルーティングへ登録する追加のVPS作業が
+  必要(コード側の対応は既に完了しているため、この作業自体は
+  インフラ設定のみで完結する)。
+- 次にすべきこと: 上記のVPS側デモ専用プロセスのデプロイ・テナント登録
+  (ユーザーが実際に`/demo`として本番公開したいタイミングで着手)。
+
 ### 2026-08-22 CPU機能検出とGF(2^8)乗算を共通ライブラリ open-cpu へ移譲
 
 ユーザー指示により、エコシステム共通のCPU命令セット検出ライブラリ
