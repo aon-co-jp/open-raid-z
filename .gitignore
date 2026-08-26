@@ -5,3 +5,6 @@ node_modules/
 Cargo.lock
 *.zip
 CLAUDE.md.bak
+
+# Windowsインストーラー(Inno Setup)のビルド成果物。
+installer/windows/dist/
