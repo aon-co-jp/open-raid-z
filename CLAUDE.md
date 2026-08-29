@@ -142,6 +142,60 @@
      リポジトリ(いずれもチェックボックス方式・本番デプロイ済み):
      `open-easy-web`・`open-redmine`・`open-gitea`。
 
+- **REST APIからの脱却は「即時全廃」ではなく段階移行が既定方針
+  (2026-08-29追記、`aruaru-db`/`RPoem`/`open-english`連携経由の
+  ユーザー指示、エコシステム全体の標準方針として記録)** /
+  **Moving off REST APIs is a phased migration, not an instant
+  wholesale ban (added 2026-08-29, established as the ecosystem-wide
+  default policy)**:
+  - **調査結果(日英Web検索、実装事例・論文)**: Shopifyは実際にREST
+    Admin APIを廃止方針とし新機能はGraphQL限定で提供しているが、
+    既存REST機能は年次の廃止波で段階的に縮小している
+    ([Shopify Admin API](https://shopify.dev/docs/api/admin-graphql/2026-04))。
+    日本のJX通信社は「新規APIはGraphQL、改修機会のある既存APIは改修時に
+    GraphQL化、それ以外は段階的」という**9ヶ月がかりの段階移行**で全
+    REST APIを置き換えた実例がある
+    ([がぶちゃんの日記](https://gabu.hatenablog.com/entry/2023/08/02/130000))。
+    2026年時点の実務でも「複数プロトコルを併存させたまま管理する統一
+    コントロールプレーン」が主流であり、「即座に完全撤廃」は支配的
+    パターンではない。 / Shopify has deprecated its REST Admin API and
+    ships new features GraphQL-only, but retires existing REST features
+    gradually via annual sunset waves. Japan's JX Press replaced all
+    REST APIs with GraphQL over a **9-month phased migration** (new
+    APIs GraphQL-first, existing APIs converted opportunistically when
+    touched, everything else migrated incrementally). As of 2026,
+    unified control planes that manage multiple protocols side by side
+    remain the dominant real-world pattern — instant wholesale REST
+    elimination is not.
+  - **確立した方針(全リポジトリ共通)**: (a) **ノード間・プロセス間の
+    低レベルなワイヤプロトコル**(Raftコンセンサス・WALレプリケーション
+    等、単一運用者が管理する信頼済みネットワーク内で完結するRPC)は、
+    REST/JSON-over-HTTPではなく**生TCP上のバイナリフレーム**(またはgRPC
+    相当、外部フレームワークに依存せず自前実装)を使う——実運用の分散
+    合意システム(etcd・TiKV)がgRPC(Protocol Buffers)を使う根拠
+    (JSONより3〜5倍小さく5〜10倍速いパース)がそのまま当てはまる
+    ([TiKV](https://tikv.org/deep-dive/rpc/grpc/)、
+    [etcd](https://etcd.io/docs/v3.4/learning/design-client/))。実装例:
+    `aruaru-db/crates/aruaru-dist/src/raft/binary_transport.rs`
+    (Raft AppendEntries/RequestVote・closed timestamp side transportを
+    単一の非RESTなTCPポートへ統合、実機2プロセス検証済み)。(b)
+    **人間・運用ツール向けの管理/制御プレーンAPI**(バックアップ実行・
+    クラスタ状態閲覧等)は、REST・GraphQLを**併存させたまま**、実際に
+    真のデータソースへ接続できたものから段階的にGraphQLへ寄せていく
+    ——スタブ実装(固定値・空配列を返すだけの見せかけのGraphQL対応)を
+    量産して「移行完了」と装うことは絶対に避ける。実装例:
+    `aruaru-db`の`ClusterTopology::status_snapshot()`(RESTとGraphQLの
+    両方が呼ぶ単一の実装、`aruaru-db/CLAUDE.md`2026-08-29エントリ参照)。
+  - **各リポジトリでの適用**: 独自のノード間プロトコル・管理APIを
+    持つリポジトリ(`RPoem`・`open-web-server`・`open-easy-web`等)は、
+    この方針をCLAUDE.mdの当該箇所に反映し、着手時は上記のaruaru-db実装
+    例と同じ手順(調査→バイナリ/GraphQL実装→実機検証→段階的縮小)を
+    踏むこと。**正直な開示**: 全リポジトリへの一括適用はスコープが
+    大きいため、2026-08-29時点で実際に着手済みなのは`aruaru-db`のみ
+    (Raft/WALプロトコルの完全バイナリ化+`clusterStatus`のGraphQL実装
+    第一歩)。他リポジトリは各CLAUDE.md HANDOFFに次回対応事項として
+    記録し、優先度に応じて順次実装する。
+
 ## 1. 比較的新しい言語・フレームワークの参照資料一覧
 
 Rust自体は歴史があるが、本エコシステムが採用する **Poem** のような
