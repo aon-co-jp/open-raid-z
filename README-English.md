@@ -1,5 +1,14 @@
 # open-raid-z (English)
 
+> 🎯 **aruaru-db × RPoem SET policy (2026-08-29)**: `aruaru-db`'s
+> `CLAUDE.md` opening note ("Most important") explains that aruaru-db
+> only delivers "no REST API needed, compatible with WunderGraph
+> Cosmo's paid Enterprise tier" when paired (SET) with RPoem — and
+> warns against building REST replacements aimlessly. This repository
+> (open-raid-z) is used by aruaru-db as its ZFS-compatible/RAID-Z2
+> storage layer but is out of scope for the REST/API-key work itself
+> (it has no HTTP server surface).
+
 > 📌 Pending task (2026-08-06): a plan exists to incorporate Toshiba SBM / DeepSeek techniques. See [CLAUDE.md](CLAUDE.md) for details.
 
 > ⚠️ **Urgent, 2026-07-26**: `karu.tokyo` currently has NO valid HTTPS

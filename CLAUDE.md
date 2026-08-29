@@ -1,5 +1,17 @@
 # 設計思想・開発方針・開発環境ルール(全リポジトリ共通ヘッダー、2026-07-15追記)
 
+> ## 🎯 aruaru-db×RPoem SET連携方針(2026-08-29、全リポジトリ横展開)
+> **正本はaruaru-db/CLAUDE.md冒頭「🎯最重要・最優先で常に念頭に置く
+> こと」**: aruaru-dbはRPoemとSET(対)で使うことで初めて「REST API
+> 不要・WunderGraph Cosmo有料版(Enterprise)互換」という価値が
+> 成立する設計であり、REST APIの代替をただ闇雲に作ることは避ける
+> べきという戒めが記されている。**このリポジトリ(open-raid-z)は
+> ZFS互換/RAID-Z2ストレージ層としてaruaru-dbのスナップショット連携
+> (`snapshot_pairing.rs`)から利用されるが、REST APIやAPIキー管理の
+> 対象範囲には含まれない**(HTTPサーバー面を持たないため)。
+> 別アカウント/別セッションから再開する場合は、まずaruaru-db/CLAUDE.md
+> 冒頭の「🔄 セッション再開用メモ」を読むこと。
+>
 > **📌 保留タスク(2026-08-06、次回セッションで着手予定)/ Pending task (added 2026-08-06, to be started next session)**:
 > ユーザー指示により、**東芝の疑似量子コンピューター技術(Simulated
 > Bifurcation Machine)**と**DeepSeekの技術**(インターネットニュースだけ

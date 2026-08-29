@@ -1,5 +1,10 @@
 # PORTING.md — open-raid-z お引越しファイル
 
+> 🎯 **移植時の前提(2026-08-29)**: aruaru-dbはRPoemとのSETで初めて
+> 「REST API不要・Cosmo有料版互換」の価値が成立する(正本:
+> aruaru-db/CLAUDE.md冒頭)。open-raid-zはaruaru-dbのZFS互換ストレージ
+> 層としてのみ関与し、REST/APIキー管理の対象外。
+
 > ⚠️ **2026-07-26 緊急引き継ぎ**: VPS上で`karu.tokyo`がHTTPS証明書無しの
 > 状態(Let's Encryptレート制限、復旧目安2026-07-27 00:17:48 UTC頃)。
 > どのリポジトリから作業を再開する場合も、まず本ファイルまたは
