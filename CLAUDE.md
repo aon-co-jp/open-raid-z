@@ -589,6 +589,36 @@ HANDOFF節を参照すること(**どのリポジトリから読んでも、こ�
 
 ## 運用ルール
 
+- **VPS(conoha)のメモリ制約(2026-09-09追記、実インシデントに基づく
+  全リポジトリ共通ルール)**: 本番VPSは物理メモリ1.7GBしか無く(swap
+  2GB)、`cargo build --release`を通常の並列度(既定=CPUコア数)で実行
+  すると、リンク時にメモリを大量消費するRust製の大規模クレート
+  (`aruaru-db`・`aruaru-llm`等)でカーネルのOOM Killerが`rustc`を
+  次々強制終了し、それが連鎖してシステム全体がSSH/HTTPSとも応答不能に
+  なる実障害が2026-09-08〜09に発生した(コンソールログに
+  `Out of memory: Killed process ... rustc`が多発、最終的に
+  コントロールパネルからの再起動が必要になった)。
+  **このVPS上でcargo buildを行う際は、必ず`-j 1`(単一並列)を付けること**
+  (`cargo build --release -j 1`)。多少ビルド時間は伸びる(実測:
+  `aruaru-server`単体で約40分、`aruaru-db-web`で約9分)が、OOM連鎖による
+  システム全体停止のリスクを避けられる。ビルド前に`free -h`で空きメモリ・
+  swap使用量を確認し、余裕が少ない場合はビルド対象以外の重いプロセスを
+  一時停止してから行うこと。
+  **(English)** The production VPS (conoha) has only 1.7GB of physical
+  RAM (2GB swap). Running `cargo build --release` at the default
+  parallelism (CPU core count) on memory-hungry Rust crates
+  (`aruaru-db`, `aruaru-llm`, etc.) triggers the kernel OOM killer to
+  repeatedly kill `rustc` during linking, which cascades into the
+  entire system becoming unresponsive over both SSH and HTTPS — this
+  actually happened on 2026-09-08/09 (console log flooded with
+  `Out of memory: Killed process ... rustc`, requiring a hard reboot
+  from the control panel to recover). **Always pass `-j 1` (single
+  parallelism) when running cargo build on this VPS**
+  (`cargo build --release -j 1`). It takes longer (measured: ~40 min
+  for `aruaru-server` alone, ~9 min for `aruaru-db-web`), but avoids
+  the risk of an OOM cascade taking the whole system down. Check free
+  memory/swap with `free -h` before building, and pause other heavy
+  processes first if headroom is low.
 - **開発中はこの`CLAUDE.md`を、コード変更のコミット/pushと必ず一緒に
   push する**(内容を更新した場合はもちろん、変更が無い場合も他の変更と
   一緒にコミット対象へ含めておくこと)。
