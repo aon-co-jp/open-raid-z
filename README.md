@@ -216,3 +216,7 @@ Multi-Raft(CockroachDB/TiKV方式のRange単位独立合意グループ、
 
 MPL-2.0(`open_raid_z_core`/`zfs_accel_hlsl`/`open_runo_installer_core`の
 `Cargo.toml`参照)。
+
+---
+
+作者 / Author: 石塚正浩（MASAHIRO ISHIZUKA） (https://github.com/aon-co-jp)
