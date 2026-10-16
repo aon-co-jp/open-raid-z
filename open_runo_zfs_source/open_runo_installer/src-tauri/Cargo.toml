@@ -4,7 +4,7 @@
 name = "open_runo_installer"
 version = "0.1.0"
 description = "A Tauri App"
-authors = ["石塚正浩（MASAHIRO ISHIZUKA）"]
+authors = ["石 塚 正 浩（MASAHIRO ISHIZUKA）"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

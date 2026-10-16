@@ -219,4 +219,4 @@ MPL-2.0(`open_raid_z_core`/`zfs_accel_hlsl`/`open_runo_installer_core`の
 
 ---
 
-作者 / Author: 石塚正浩（MASAHIRO ISHIZUKA） (https://github.com/aon-co-jp)
+作者 / Author: 石 塚 正 浩（MASAHIRO ISHIZUKA） (https://github.com/aon-co-jp)
