@@ -252,7 +252,8 @@ fn main() {
             .at("/demo", get(demo_handler))
             .at("/healthz", get(healthz_handler))
             .at("/api/status", get(status_handler))
-            .at("/api/create", post(create_handler));
+            .at("/api/create", post(create_handler))
+            .docs_auto("/api", "open-raid-z web", env!("CARGO_PKG_VERSION"));
 
         let bind_addr: std::net::SocketAddr = std::env::var("OPEN_RAID_Z_WEB_BIND").unwrap_or_else(|_| "127.0.0.1:8099".to_string()).parse().expect("invalid OPEN_RAID_Z_WEB_BIND");
         let (addr, handle) = Server::new(TcpListener::bind(bind_addr)).run(app).await.expect("failed to bind server");
