@@ -169,9 +169,38 @@ async fn run_orzctl(config: &Config, subcommand: &str, extra_args: &[String]) ->
     Ok((output.status.success(), stdout, stderr))
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct CreateRequest {
+    /// 作成するデータセット名
     dataset: String,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct OkResponse {
+    ok: bool,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct ErrorResponse {
+    error: String,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct CreateResponse {
+    ok: bool,
+    message: Option<String>,
+    error: Option<String>,
+}
+
+/// 型付きのAPI宣言(RPoemのopen-runo-openapi)。
+fn api_spec() -> open_runo_poem_compat::openapi::Spec {
+    use open_runo_poem_compat::openapi::{Operation as Op, Spec};
+    Spec::new("open-raid-z web", env!("CARGO_PKG_VERSION"))
+        .op(Op::get("/").id("index").summary("管理画面(HTML)").public().response_empty(200, "text/html"))
+        .op(Op::get("/demo").id("demo").summary("read-onlyデモ画面(HTML)").public().response_empty(200, "text/html"))
+        .op(Op::get("/healthz").summary("プロセス生存確認").public().ok::<OkResponse>("alive"))
+        .op(Op::get("/api/status").summary("orzctl status の結果(JSON)").public().response_empty(200, "orzctl statusのJSON").response::<ErrorResponse>(502, "orzctlが失敗").response::<ErrorResponse>(500, "orzctlを実行できない"))
+        .op(Op::post("/api/create").summary("プールを作成(管理者トークン必須)").public().body::<CreateRequest>().ok::<CreateResponse>("作成した").response::<ErrorResponse>(403, "read-onlyデモ").response::<ErrorResponse>(503, "管理者トークン未設定").response::<CreateResponse>(502, "orzctlが失敗"))
 }
 
 fn main() {
@@ -253,11 +282,22 @@ fn main() {
             .at("/healthz", get(healthz_handler))
             .at("/api/status", get(status_handler))
             .at("/api/create", post(create_handler))
-            .docs_auto("/api", "open-raid-z web", env!("CARGO_PKG_VERSION"));
+            .docs("/api", api_spec());
 
         let bind_addr: std::net::SocketAddr = std::env::var("OPEN_RAID_Z_WEB_BIND").unwrap_or_else(|_| "127.0.0.1:8099".to_string()).parse().expect("invalid OPEN_RAID_Z_WEB_BIND");
         let (addr, handle) = Server::new(TcpListener::bind(bind_addr)).run(app).await.expect("failed to bind server");
         println!("open-raid-z-web listening on http://{addr} (read_only={})", config.read_only);
         handle.await.ok();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn api_spec_has_no_lint_problems_and_declares_every_route() {
+        let spec = super::api_spec();
+        assert!(spec.lint().is_empty(), "{:?}", spec.lint());
+        let missing = spec.undocumented([("GET", "/"), ("GET", "/demo"), ("GET", "/healthz"), ("GET", "/api/status"), ("POST", "/api/create")]);
+        assert!(missing.is_empty(), "{missing:?}");
+    }
 }
