@@ -35,9 +35,10 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use open_runo_poem_compat::hyper_compat::{
-    self, empty_status, html_response, json_response, read_json_body, Params, Request, Response,
+    self, html_response, json_response, Params, Request, Response,
 };
-use open_runo_poem_compat::{get, post, Route, Server, StatusCode, TcpListener};
+use open_runo_poem_compat::openapi::Operation as Op;
+use open_runo_poem_compat::{api, get, ApiError, ApiResult, Ctx, Route, Server, StatusCode, TcpListener};
 use tokio::process::Command;
 
 struct Config {
@@ -192,15 +193,34 @@ struct CreateResponse {
     error: Option<String>,
 }
 
+/// `POST /api/create`。型駆動ハンドラ(本文=`CreateRequest`、成功=`CreateResponse`)。
+/// 失敗時の本文は従来どおり(`{"ok":false,"error":..}` / `{"error":..}`)。
+async fn create_pool(body: CreateRequest, ctx: Ctx) -> ApiResult<CreateResponse> {
+    let config = ctx.state::<Arc<Config>>()?.clone();
+    if config.read_only {
+        return Err(ApiError::forbidden("read-only demo: プール作成は無効化されています / this is a read-only demo, creation is disabled"));
+    }
+    let Some(admin_token) = config.admin_token.clone() else {
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "OPEN_RAID_Z_ADMIN_TOKEN is not configured on this server"));
+    };
+    let provided = ctx.header("x-admin-token").unwrap_or("");
+    if provided.is_empty() || provided != admin_token {
+        return Err(ApiError::unauthorized("invalid or missing X-Admin-Token"));
+    }
+    match run_orzctl(&config, "create", &["--dataset".to_string(), body.dataset.clone()]).await {
+        Ok((true, stdout, _)) => Ok(CreateResponse { ok: true, message: Some(stdout.trim().to_string()), error: None }),
+        Ok((false, _, stderr)) => Err(ApiError::with_body(StatusCode::BAD_GATEWAY, CreateResponse { ok: false, message: None, error: Some(stderr.trim().to_string()) })),
+        Err(e) => Err(ApiError::with_body(StatusCode::INTERNAL_SERVER_ERROR, CreateResponse { ok: false, message: None, error: Some(format!("failed to execute orzctl: {e}")) })),
+    }
+}
+
 /// 型付きのAPI宣言(RPoemのopen-runo-openapi)。
 fn api_spec() -> open_runo_poem_compat::openapi::Spec {
     use open_runo_poem_compat::openapi::{Operation as Op, Spec};
     Spec::new("open-raid-z web", env!("CARGO_PKG_VERSION"))
         .op(Op::get("/").id("index").summary("管理画面(HTML)").public().response_empty(200, "text/html"))
         .op(Op::get("/demo").id("demo").summary("read-onlyデモ画面(HTML)").public().response_empty(200, "text/html"))
-        .op(Op::get("/healthz").summary("プロセス生存確認").public().ok::<OkResponse>("alive"))
         .op(Op::get("/api/status").summary("orzctl status の結果(JSON)").public().response_empty(200, "orzctl statusのJSON").response::<ErrorResponse>(502, "orzctlが失敗").response::<ErrorResponse>(500, "orzctlを実行できない"))
-        .op(Op::post("/api/create").summary("プールを作成(管理者トークン必須)").public().body::<CreateRequest>().ok::<CreateResponse>("作成した").response::<ErrorResponse>(403, "read-onlyデモ").response::<ErrorResponse>(503, "管理者トークン未設定").response::<CreateResponse>(502, "orzctlが失敗"))
 }
 
 fn main() {
@@ -224,9 +244,6 @@ fn main() {
     // BAD_GATEWAYを返しうる——単純な生存確認用途には使えない
     // (rs-syncの`/healthz`と同じ思想で、プロセス自体の生存のみを見る
     // 軽量エンドポイントとして分離)。
-    let healthz_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
-        Box::pin(async move { json_response(StatusCode::OK, &serde_json::json!({ "ok": true })) }) as hyper_compat::BoxFuture<Response>
-    }) as hyper_compat::Handler;
 
     let status_config = Arc::clone(&config);
     let status_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
@@ -247,41 +264,22 @@ fn main() {
         }) as hyper_compat::BoxFuture<Response>
     }) as hyper_compat::Handler;
 
-    let create_config = Arc::clone(&config);
-    let create_handler = std::sync::Arc::new(move |req: Request, _params: Params| {
-        let config = Arc::clone(&create_config);
-        Box::pin(async move {
-            if config.read_only {
-                return json_response(StatusCode::FORBIDDEN, &serde_json::json!({ "error": "read-only demo: プール作成は無効化されています / this is a read-only demo, creation is disabled" }));
-            }
-            let admin_token = match &config.admin_token {
-                Some(t) => t.clone(),
-                None => return json_response(StatusCode::SERVICE_UNAVAILABLE, &serde_json::json!({ "error": "OPEN_RAID_Z_ADMIN_TOKEN is not configured on this server" })),
-            };
-            let provided = req.headers().get("x-admin-token").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-            if provided.is_empty() || provided != admin_token {
-                return empty_status(StatusCode::UNAUTHORIZED);
-            }
-            let body: CreateRequest = match read_json_body(req).await {
-                Ok(b) => b,
-                Err(resp) => return resp,
-            };
-            match run_orzctl(&config, "create", &["--dataset".to_string(), body.dataset.clone()]).await {
-                Ok((true, stdout, _stderr)) => json_response(StatusCode::OK, &serde_json::json!({ "ok": true, "message": stdout.trim() })),
-                Ok((false, _stdout, stderr)) => json_response(StatusCode::BAD_GATEWAY, &serde_json::json!({ "ok": false, "error": stderr.trim() })),
-                Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, &serde_json::json!({ "ok": false, "error": format!("failed to execute orzctl: {e}") })),
-            }
-        }) as hyper_compat::BoxFuture<Response>
-    }) as hyper_compat::Handler;
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to build tokio runtime");
     rt.block_on(async move {
         let app = Route::new()
             .at("/", get(index_handler))
             .at("/demo", get(demo_handler))
-            .at("/healthz", get(healthz_handler))
             .at("/api/status", get(status_handler))
-            .at("/api/create", post(create_handler))
+            .data(Arc::clone(&config))
+            .api(api::plain(Op::get("/healthz").summary("プロセス生存確認").public(), |_ctx| async move { Ok(OkResponse { ok: true }) }))
+            .api(
+                api::json(Op::post("/api/create").summary("プールを作成(管理者トークン必須)").public(), create_pool)
+                    .error(401, "管理者トークンが無い/違う")
+                    .error(403, "read-onlyデモ")
+                    .error(503, "管理者トークン未設定")
+                    .error_as::<CreateResponse>(502, "orzctlが失敗"),
+            )
             .docs("/api", api_spec());
 
         let bind_addr: std::net::SocketAddr = std::env::var("OPEN_RAID_Z_WEB_BIND").unwrap_or_else(|_| "127.0.0.1:8099".to_string()).parse().expect("invalid OPEN_RAID_Z_WEB_BIND");
@@ -297,7 +295,7 @@ mod tests {
     fn api_spec_has_no_lint_problems_and_declares_every_route() {
         let spec = super::api_spec();
         assert!(spec.lint().is_empty(), "{:?}", spec.lint());
-        let missing = spec.undocumented([("GET", "/"), ("GET", "/demo"), ("GET", "/healthz"), ("GET", "/api/status"), ("POST", "/api/create")]);
+        let missing = spec.undocumented([("GET", "/"), ("GET", "/demo"), ("GET", "/api/status")]);
         assert!(missing.is_empty(), "{missing:?}");
     }
 }
