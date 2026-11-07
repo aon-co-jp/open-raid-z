@@ -19,6 +19,10 @@
 //! サーバー側で確実に強制する——rs-syncの`ReadOnlyGuard`と同じ多層防御)。
 //! `/`と`/demo`はどちらも同じ静的ページを返す。
 //!
+//! **2026-11-08(REST全廃)**: `GET /api/status`・`POST /api/create`は Connect の単純呼び出し
+//! `POST /open_raid_z.admin.v1.Admin/Status`・`/CreatePool`(JSON本文、`X-Admin-Token`)へ移した。
+//! 旧経路は削除済み。`/healthz`(生存確認)は例外として残す。
+//!
 //! **2026-08-01追記(実バグ修正)**: 上記の「絶対パス`/api/...`でfetchする
 //! ため相対パス起因の問題は起きない」という以前の記載は誤りだった——
 //! `open-web-server`の「分身の術」テナントルーティング(`path_prefix`
@@ -35,7 +39,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use open_runo_poem_compat::hyper_compat::{
-    self, html_response, json_response, Params, Request, Response,
+    self, html_response, Params, Request, Response,
 };
 use open_runo_poem_compat::openapi::Operation as Op;
 use open_runo_poem_compat::{api, get, ApiError, ApiResult, Ctx, Route, Server, StatusCode, TcpListener};
@@ -129,7 +133,11 @@ async function refreshStatus() {{
   const el = document.getElementById('status');
   el.textContent = '取得中...';
   try {{
-    const res = await fetch(BASE_PATH + '/api/status');
+    const res = await fetch(BASE_PATH + '/open_raid_z.admin.v1.Admin/Status', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: '{{}}'
+    }});
     const body = await res.text();
     el.textContent = body;
   }} catch (e) {{
@@ -143,7 +151,7 @@ document.getElementById('create').addEventListener('click', async () => {{
   const el = document.getElementById('create-result');
   el.textContent = '実行中...';
   try {{
-    const res = await fetch(BASE_PATH + '/api/create', {{
+    const res = await fetch(BASE_PATH + '/open_raid_z.admin.v1.Admin/CreatePool', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json', 'X-Admin-Token': token }},
       body: JSON.stringify({{ dataset }})
@@ -182,18 +190,30 @@ struct OkResponse {
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
-struct ErrorResponse {
-    error: String,
-}
-
-#[derive(serde::Serialize, schemars::JsonSchema)]
 struct CreateResponse {
     ok: bool,
     message: Option<String>,
     error: Option<String>,
 }
 
-/// `POST /api/create`。型駆動ハンドラ(本文=`CreateRequest`、成功=`CreateResponse`)。
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct StatusRequest {}
+
+/// `POST /open_raid_z.admin.v1.Admin/Status`(Connect)。`orzctl status`のJSONをそのまま返す。
+/// 旧`GET /api/status`の置き換え(2026-11-08、REST全廃)。
+async fn pool_status(_body: StatusRequest, ctx: Ctx) -> ApiResult<serde_json::Value> {
+    let config = ctx.state::<Arc<Config>>()?.clone();
+    match run_orzctl(&config, "status", &[]).await {
+        Ok((true, stdout, _)) => match rust_json::light::parse_light(&stdout) {
+            Ok(_) => serde_json::from_str(&stdout).map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("orzctl status returned invalid JSON: {e}"))),
+            Err(e) => Err(ApiError::new(StatusCode::BAD_GATEWAY, format!("orzctl status returned invalid JSON: {e:?}"))),
+        },
+        Ok((false, _, stderr)) => Err(ApiError::new(StatusCode::BAD_GATEWAY, stderr.trim().to_string())),
+        Err(e) => Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("failed to execute orzctl: {e}"))),
+    }
+}
+
+/// `POST /open_raid_z.admin.v1.Admin/CreatePool`(Connect)。旧`POST /api/create`の置き換え。型駆動ハンドラ(本文=`CreateRequest`、成功=`CreateResponse`)。
 /// 失敗時の本文は従来どおり(`{"ok":false,"error":..}` / `{"error":..}`)。
 async fn create_pool(body: CreateRequest, ctx: Ctx) -> ApiResult<CreateResponse> {
     let config = ctx.state::<Arc<Config>>()?.clone();
@@ -220,7 +240,6 @@ fn api_spec() -> open_runo_poem_compat::openapi::Spec {
     Spec::new("open-raid-z web", env!("CARGO_PKG_VERSION"))
         .op(Op::get("/").id("index").summary("管理画面(HTML)").public().response_empty(200, "text/html"))
         .op(Op::get("/demo").id("demo").summary("read-onlyデモ画面(HTML)").public().response_empty(200, "text/html"))
-        .op(Op::get("/api/status").summary("orzctl status の結果(JSON)").public().response_empty(200, "orzctl statusのJSON").response::<ErrorResponse>(502, "orzctlが失敗").response::<ErrorResponse>(500, "orzctlを実行できない"))
 }
 
 fn main() {
@@ -245,36 +264,20 @@ fn main() {
     // (rs-syncの`/healthz`と同じ思想で、プロセス自体の生存のみを見る
     // 軽量エンドポイントとして分離)。
 
-    let status_config = Arc::clone(&config);
-    let status_handler = std::sync::Arc::new(move |_req: Request, _params: Params| {
-        let config = Arc::clone(&status_config);
-        Box::pin(async move {
-            match run_orzctl(&config, "status", &[]).await {
-                Ok((true, stdout, _stderr)) => match rust_json::light::parse_light(&stdout) {
-                    Ok(_) => hyper::Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "application/json")
-                        .body(hyper_compat::fixed_body(stdout.into_bytes().into()))
-                        .unwrap(),
-                    Err(e) => json_response(StatusCode::BAD_GATEWAY, &serde_json::json!({ "error": format!("orzctl status returned invalid JSON: {e:?}") })),
-                },
-                Ok((false, _stdout, stderr)) => json_response(StatusCode::BAD_GATEWAY, &serde_json::json!({ "error": stderr.trim() })),
-                Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, &serde_json::json!({ "error": format!("failed to execute orzctl: {e}") })),
-            }
-        }) as hyper_compat::BoxFuture<Response>
-    }) as hyper_compat::Handler;
-
-
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to build tokio runtime");
     rt.block_on(async move {
         let app = Route::new()
             .at("/", get(index_handler))
             .at("/demo", get(demo_handler))
-            .at("/api/status", get(status_handler))
-            .data(Arc::clone(&config))
+                        .data(Arc::clone(&config))
             .api(api::plain(Op::get("/healthz").summary("プロセス生存確認").public(), |_ctx| async move { Ok(OkResponse { ok: true }) }))
             .api(
-                api::json(Op::post("/api/create").summary("プールを作成(管理者トークン必須)").public(), create_pool)
+                api::json(Op::post("/open_raid_z.admin.v1.Admin/Status").summary("orzctl status の結果(JSON)").public(), pool_status)
+                    .error(502, "orzctlが失敗")
+                    .error(500, "orzctlを実行できない"),
+            )
+            .api(
+                api::json(Op::post("/open_raid_z.admin.v1.Admin/CreatePool").summary("プールを作成(管理者トークン必須)").public(), create_pool)
                     .error(401, "管理者トークンが無い/違う")
                     .error(403, "read-onlyデモ")
                     .error(503, "管理者トークン未設定")
@@ -295,7 +298,7 @@ mod tests {
     fn api_spec_has_no_lint_problems_and_declares_every_route() {
         let spec = super::api_spec();
         assert!(spec.lint().is_empty(), "{:?}", spec.lint());
-        let missing = spec.undocumented([("GET", "/"), ("GET", "/demo"), ("GET", "/api/status")]);
+        let missing = spec.undocumented([("GET", "/"), ("GET", "/demo")]);
         assert!(missing.is_empty(), "{missing:?}");
     }
 }
