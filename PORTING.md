@@ -521,3 +521,8 @@ GitHub上の実装状況調査)して裏付けを取ってから技術選定を�
 - **WASM по-прежнему остаётся технологией для интерфейса.** Изменилось лишь то, что вызываемый им API теперь построен на Connect.
 - Интерфейсы, форма которых задана внешним стандартом (ACME, обратные вызовы OAuth, вебхуки сторонних сервисов, проверки работоспособности, статические файлы, OTLP), остаются обычным HTTP.
 - **Если есть сомнения — выбирайте Connect.**
+
+## 2026-11-08 本番(VPS)反映: /api/status・/api/create → Connect
+- `bb31771` のバイナリをWSL(Ubuntu-24.04, glibc 2.39)でビルドし、VPSの `web/target/release/open-raid-z-web` と入れ替え(旧は `.before-connect-20261108c`)。VPSのクローンの未コミット変更4件は触っていない。
+- 実測: Status=200(公開・読み取り専用)、CreatePool 無認証=401、旧 `/api/status`=404、`/healthz`=200、`easy-web.tokyo/open-raid-z/` は白画面にならず状態が表示される。1・2回目は検証条件の誤り(Statusは公開、CreatePoolは本文検証が先)で自動ロールバックし、3回目で確定。
+- *Deployed bb31771 binary on the VPS; Status 200 (public), CreatePool unauth 401, old route 404, UI renders.*
