@@ -261,7 +261,7 @@ pub fn mount_foreign_volume(volume: ForeignVolume, mount_point: &str) -> std::io
     let fs = ForeignFuseFilesystem::new(volume);
     let mut config = fuser::Config::default();
     config.mount_options = vec![MountOption::FSName("open_raid_z_foreign".to_string()), access];
-    fuser::spawn_mount2(fs, mount_point, &config)
+    fuser::spawn_mount(fs, mount_point, &config)
 }
 
 impl Filesystem for ForeignFuseFilesystem {

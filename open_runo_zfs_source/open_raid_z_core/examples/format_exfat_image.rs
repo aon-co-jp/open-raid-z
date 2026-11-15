@@ -14,7 +14,7 @@ fn main() {
     let file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path).unwrap();
     file.set_len(size).unwrap();
 
-    let options = ExFatFormatOptions::default().with_label("ORZTEST");
+    let options = ExFatFormatOptions::default().volume_label("ORZTEST");
     format_exfat(file, size, &options).unwrap();
     println!("formatted: {path} ({size_mib} MiB, exFAT)");
 }

@@ -11,12 +11,12 @@ license = "MPL-2.0"
 # WinFsp の実Rustバインディング。実際にWindows上へマウント可能なファイル
 # システムを構築するために使用する(mount.rs参照)。
 winfsp = { version = "0.13", optional = true }
-thiserror = "1.0"
+thiserror = "2"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 bitflags = { version = "2.6", features = ["serde"] }
 zfs_accel_hlsl = { path = "../zfs_accel_hlsl", default-features = false }
-sha2 = "0.10"
+sha2 = "0.11"
 # プールのメタデータ(データセット一覧・ストライプ割当等)を予約ストライプへ
 # シリアライズして永続化するために使用する(pool.rs参照)。
 bincode = "1.3"
@@ -29,14 +29,14 @@ fscommon = { version = "0.1", optional = true }
 # exFAT(読み書き両対応)。純Rust実装で追加のネイティブライブラリを要さない
 # (foreign_fs.rs参照)。旧`exfat-fs`(0.1系、読み取り専用)から、書き込みに
 # 対応した`hadris-fat`(`write`+`exfat` feature)へ移行した。
-hadris-fat = { version = "1.2", optional = true, features = ["exfat", "write"] }
+hadris-fat = { version = "2.5", optional = true, features = ["unstable-exfat", "write"] }
 # ext2/ext4(読み取り専用)。純Rust・no_std対応の読み取り実装
 # (foreign_fs.rs参照)。書き込みに対応した成熟済みの純Rustクレートは
 # 2026-07時点で存在しないため、ext4は読み取り専用ブリッジとして提供する
 # (MULTIPLATFORM_ROADMAP.md 目標②の「ext4: 読み取り」に対応)。
 # `std` featureは`Ext4::load_from_path`(std::fs::Fileからの読み込み)に必要
 # (既定はno_stdでこの関数が存在しない)。
-ext4-view = { version = "0.9", optional = true, features = ["std"] }
+ext4-view = { version = "1", optional = true, features = ["std"] }
 
 # --- 切断耐性・一時退避先(offsite_backup feature、任意有効化) ---
 # HDD読み書き中の電源断/USB切断/SATA切断/LAN切断/WiFi切断からの回避策
@@ -59,8 +59,8 @@ ureq = { version = "3", optional = true, default-features = false, features = ["
 # open-web-server が組み込みSFTPサーバーとして採用済みの
 # russh/russh-sftp のクライアント版を流用する(エコシステム内の
 # 既存実績クレートを踏襲、`russh-sftp client rust`で日英検索し確認)。
-russh = { version = "0.62", optional = true, default-features = false, features = ["ring", "rsa"] }
-russh-sftp = { version = "2", optional = true }
+russh = { version = "0.65", optional = true, default-features = false, features = ["ring", "rsa"] }
+russh-sftp = { version = "3", optional = true }
 # russh(SSH)クライアントは非同期(tokio前提)。SMTP/HTTPは同期APIの
 # ままにしつつ、SFTP呼び出し部分だけ内部で使い捨てのtokioランタイムを
 # 起動して同期関数として外へ見せる(呼び出し側APIの一貫性のため)。
@@ -107,7 +107,7 @@ windows = { version = "0.58", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux版の実マウント(fuse_mount.rs参照)。WinFspの`winfsp`クレートに相当する、
 # LinuxのFUSE(Filesystem in Userspace)への実Rustバインディング。
-fuser = { version = "0.17", optional = true }
+fuser = { version = "0.18", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Android版の実マウント(Linux版と同じ`fuse_mount.rs`コードパスを共有)。
@@ -128,10 +128,12 @@ fuser = { version = "0.17", optional = true }
 # Cargoの制約上、`fuser`という同じ依存名を異なるソース(レジストリ/パス)
 # でOSごとに切り替えることはできない(`cargo metadata`がエラーにする)ため、
 # ここでは別名`fuser_android`で依存させ、`lib.rs`側で
-# `extern crate fuser_android_patch as fuser;`により`fuser`という
+# `extern crate fuser_android as fuser;`により`fuser`という
 # クレート名へエイリアスすることで、`fuse_mount.rs`等の`use fuser::...`を
 # Linux/macOSと共通のコードのまま使えるようにしている。
-fuser_android = { package = "fuser_android_patch", path = "../third_party/fuser-0.17.0-android-patch", optional = true }
+# 2026-11-15: third_party内のコピー(0.17.0)をやめ、0.18.0に同じ対応を当てた
+# 独立リポジトリ aon-co-jp/fuser-android(crate名`fuser-android`)へ移した。
+fuser_android = { package = "fuser-android", git = "https://github.com/aon-co-jp/fuser-android", branch = "main", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Mac版の実マウント(fuse_mount.rs参照、Linux版と同じコードパスを共有)。
@@ -141,7 +143,7 @@ fuser_android = { package = "fuser_android_patch", path = "../third_party/fuser-
 # 一時的に`macos-no-mount`(マウント無しスタブ)へ切り替えれば、macFUSE
 # 未インストールのcrossビルド環境でも型チェックだけは通せる
 # (このセッションではその方法で型レベルの正しさのみ確認した)。
-fuser = { version = "0.17", optional = true, features = ["macfuse-4-compat"] }
+fuser = { version = "0.18", optional = true, features = ["macfuse-4-compat"] }
 
 [build-dependencies]
 # NOTE: `dependencies` の winfsp と同じ optional 化が必須。ここを外すと

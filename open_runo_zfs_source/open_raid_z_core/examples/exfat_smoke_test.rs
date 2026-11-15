@@ -24,7 +24,7 @@ fn main() {
         .open(&img_path)
         .expect("イメージ作成に失敗");
     file.set_len(size).expect("サイズ設定に失敗");
-    let options = ExFatFormatOptions::default().with_label("ORZTEST");
+    let options = ExFatFormatOptions::default().volume_label("ORZTEST");
     format_exfat(file, size, &options).expect("フォーマットに失敗");
     println!("[1/4] exFATフォーマット完了: {}", img_path.display());
 

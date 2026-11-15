@@ -495,5 +495,5 @@ where
     let fs = PoolFilesystem::new(pool);
     let mut config = fuser::Config::default();
     config.mount_options = vec![MountOption::FSName("open_raid_z".to_string()), MountOption::RW];
-    fuser::spawn_mount2(fs, mount_point, &config)
+    fuser::spawn_mount(fs, mount_point, &config)
 }

@@ -491,10 +491,20 @@ struct SftpPasswordAuthHandler {
 impl russh::client::Handler for SftpPasswordAuthHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, server_public_key: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        server_key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
         let Some(path) = &self.known_hosts_path else {
             // known_hosts_path未設定なら検証しない(既存動作、後方互換)。
+            // russh 0.65では既定が「拒否」に変わったため、明示的に許可する。
             return Ok(true);
+        };
+        // known_hostsは通常の公開鍵のみ記録するため、証明書によるホスト認証は
+        // 照合できない。安全側(接続拒否)に倒す。
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key: server_public_key, .. } = server_key else {
+            tracing::error!(host = %self.host_key, "SFTPホストが証明書で認証しました。known_hostsでは照合できないため接続を拒否します");
+            return Ok(false);
         };
         let Ok(encoded) = server_public_key.to_openssh() else {
             tracing::warn!(host = %self.host_key, "SFTPホスト鍵のOpenSSH形式へのエンコードに失敗したため、検証をスキップします");

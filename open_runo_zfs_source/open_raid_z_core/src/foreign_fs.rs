@@ -152,9 +152,9 @@ fn normalize(path: &str) -> &str {
 
 /// 既存のexFATボリューム(実デバイスまたはイメージファイル)への読み書き
 /// ハンドル。上流クレートを`exfat-fs`(0.1系、読み取り専用)から
-/// `hadris-fat`(`write`+`exfat` feature、読み書き両対応)へ移行した。
+/// `hadris-fat`(`write`+`unstable-exfat` feature、読み書き両対応)へ移行した。
 pub struct ForeignExfatVolume {
-    fs: hadris_fat::exfat::ExFatFs<std::fs::File>,
+    fs: hadris_fat::exfat::ExFatVolume<std::fs::File>,
 }
 
 impl ForeignExfatVolume {
@@ -162,7 +162,7 @@ impl ForeignExfatVolume {
     /// イメージファイル。
     pub fn open(path: impl AsRef<Path>) -> BridgeResult<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path).map_err(BridgeError::Io)?;
-        let fs = hadris_fat::exfat::ExFatFs::open(file)
+        let fs = hadris_fat::exfat::ExFatVolume::open(file)
             .map_err(|e| BridgeError::ForeignFsFailed(format!("exFATボリュームとして開けませんでした: {e:?}")))?;
         Ok(Self { fs })
     }
