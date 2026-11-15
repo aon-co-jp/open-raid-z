@@ -64,9 +64,34 @@ jobs:
           name: open-raid-z-windows-x86_64
           path: open-raid-z-windows-x86_64.zip
 
+
+  build-windows-arm64:
+    name: Windows ARM64 (Snapdragon, aarch64)
+    runs-on: windows-11-arm
+    continue-on-error: true  # Snapdragon (Windows on ARM64); never blocks the release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        working-directory: ${{ env.CRATE_DIR }}
+        # gpu_accelは既定featureだがdxc(DirectX Shader Compiler)がCIに
+        # 無いため無効化(CPUフォールバックのみになるが、配布バイナリの
+        # 実マウント機能=winfsp_backendには影響しない)。
+        run: cargo build --release --bin orzctl --no-default-features --features winfsp_backend,foreign_fs
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "$env:CRATE_DIR/target/release/orzctl.exe" dist/
+          Copy-Item install.ps1 dist/
+          Compress-Archive -Path dist/* -DestinationPath open-raid-z-windows-aarch64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-raid-z-windows-aarch64
+          path: open-raid-z-windows-aarch64.zip
+
   release:
     name: GitHub Releaseへ添付
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-windows-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
