@@ -2555,5 +2555,5 @@ Apache+Tomcat的な連携が動く。
 - `open_raid_z_core`: thiserror 2 / sha2 0.11 / hadris-fat 2.5(featureは`exfat`→`unstable-exfat`、型は`ExFatFs`→`ExFatVolume`) / ext4-view 1 / russh 0.65(`check_server_key`の引数が`PublicKeyOrCertificate`に。証明書は照合不能のため、known_hosts設定時は拒否) / russh-sftp 3 / fuser 0.18(`spawn_mount2`→`spawn_mount`)。`cargo test`は Windows(foreign_fs,offsite_backup,json_status)・WSL(fuse_backend追加)とも全件成功。
 - **bincode は 1.3 のまま**: 3.0.0 は意図的にコンパイルを拒否する版(保守終了の告知)で使えない。メタデータの保存形式を変えずに置き換える候補(postcard等)は未検討。version-controlの例外台帳へ「更新不可」として登録するのが妥当。
 - `third_party/fuser-0.17.0-android-patch`は廃止し、独立リポジトリ[`aon-co-jp/fuser-android`](https://github.com/aon-co-jp/fuser-android)(fuser 0.18.0ベース、`cargo check --target aarch64-linux-android`成功、実機未検証)へ移した。
-- 未了: インストーラー画面(TypeScript)のRust化(別リポジトリ予定)、typescript 7 への更新は不要になる見込み。
+- インストーラー画面は Rust(Leptos)版を新リポジトリ[`aon-co-jp/open-raid-z-installer`](https://github.com/aon-co-jp/open-raid-z-installer)へ移した(兄弟配置で本リポジトリの`open_runo_installer_core`を利用)。**旧`open_runo_zfs_source/open_runo_installer`(TypeScript/Vite)は互換のためまだ残してある**(実機のTauriウィンドウ・MSIの通し試験が済んだら削除し、npmのtypescript 7更新も不要になる)。
 
