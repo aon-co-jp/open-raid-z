@@ -23,6 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies (sibling-all)
+        shell: bash
+        run: |
+          for r in RS-JSON RPoem RS-SmartTCP open-cpu open-raid-z open-web-server; do
+            [ "$r" = "${GITHUB_REPOSITORY#*/}" ] && continue
+            [ -d "../$r" ] || git clone --depth=1 https://github.com/aon-co-jp/$r.git ../$r
+          done
       - name: Install FUSE headers (fuser crate build-dep)
         run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
       - name: Build
@@ -46,6 +53,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies (sibling-all)
+        shell: bash
+        run: |
+          for r in RS-JSON RPoem RS-SmartTCP open-cpu open-raid-z open-web-server; do
+            [ "$r" = "${GITHUB_REPOSITORY#*/}" ] && continue
+            [ -d "../$r" ] || git clone --depth=1 https://github.com/aon-co-jp/$r.git ../$r
+          done
       - name: Build
         working-directory: ${{ env.CRATE_DIR }}
         # gpu_accelは既定featureだがdxc(DirectX Shader Compiler)がCIに
@@ -71,6 +85,13 @@ jobs:
     continue-on-error: true  # Snapdragon (Windows on ARM64); never blocks the release
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies (sibling-all)
+        shell: bash
+        run: |
+          for r in RS-JSON RPoem RS-SmartTCP open-cpu open-raid-z open-web-server; do
+            [ "$r" = "${GITHUB_REPOSITORY#*/}" ] && continue
+            [ -d "../$r" ] || git clone --depth=1 https://github.com/aon-co-jp/$r.git ../$r
+          done
       - name: Build
         working-directory: ${{ env.CRATE_DIR }}
         # gpu_accelは既定featureだがdxc(DirectX Shader Compiler)がCIに

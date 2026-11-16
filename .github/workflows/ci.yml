@@ -22,6 +22,13 @@ jobs:
         working-directory: open_runo_zfs_source/open_raid_z_core
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies (sibling-all)
+        shell: bash
+        run: |
+          for r in RS-JSON RPoem RS-SmartTCP open-cpu open-raid-z open-web-server; do
+            [ "$r" = "${GITHUB_REPOSITORY#*/}" ] && continue
+            [ -d "../$r" ] || git clone --depth=1 https://github.com/aon-co-jp/$r.git ../$r
+          done
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -48,6 +55,13 @@ jobs:
         working-directory: open_runo_zfs_source/open_raid_z_core
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling path dependencies (sibling-all)
+        shell: bash
+        run: |
+          for r in RS-JSON RPoem RS-SmartTCP open-cpu open-raid-z open-web-server; do
+            [ "$r" = "${GITHUB_REPOSITORY#*/}" ] && continue
+            [ -d "../$r" ] || git clone --depth=1 https://github.com/aon-co-jp/$r.git ../$r
+          done
 
       - name: Install stable Rust with clippy/rustfmt
         uses: dtolnay/rust-toolchain@stable
