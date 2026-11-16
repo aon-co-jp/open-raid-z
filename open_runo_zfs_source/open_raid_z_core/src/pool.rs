@@ -618,7 +618,9 @@ impl<V: Vdev> Pool<V> {
         // 無駄、外部監査で指摘)。整列済みの場合は`self.read`を完全に
         // スキップし、`self.write`へ直行する高速パスを追加する
         // (ディスクフォーマット・呼び出し側APIは無変更、純粋な追加のみ)。
-        if offset % chunk_bytes == 0 && data.len() as u64 % chunk_bytes == 0 {
+        #[allow(clippy::manual_is_multiple_of)]
+        let aligned = offset % chunk_bytes == 0 && data.len() as u64 % chunk_bytes == 0;
+        if aligned {
             return self.write(name, offset, data);
         }
 

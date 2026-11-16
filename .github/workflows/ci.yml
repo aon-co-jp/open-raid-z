@@ -44,10 +44,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo check (no-default-features + foreign_fs)
-        run: cargo check --no-default-features --features foreign_fs
+        run: cargo check --no-default-features --features foreign_fs,json_status
 
       - name: cargo test (no-default-features + foreign_fs)
-        run: cargo test --no-default-features --features foreign_fs
+        run: cargo test --no-default-features --features foreign_fs,json_status
 
   fmt-and-clippy:
     runs-on: ubuntu-latest
@@ -74,4 +74,4 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy (no-default-features + foreign_fs)
-        run: cargo clippy --no-default-features --features foreign_fs -- -D warnings
+        run: cargo clippy --no-default-features --features foreign_fs,json_status -- -D warnings
