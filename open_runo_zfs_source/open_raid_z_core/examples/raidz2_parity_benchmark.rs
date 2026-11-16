@@ -25,7 +25,12 @@ fn scratch_disk(dir: &std::path::Path, name: &str, size_bytes: u64) -> FileBacke
 /// `chunk_size`・`stripe_count`(書き込むストライプ数)を指定して、
 /// CPU実装とGPU実装(利用可能な場合)双方の`write_stripe`合計所要時間を
 /// 計測する。
-fn run_one_config(num_data_disks: usize, chunk_size: usize, stripe_count: u64, accel: Option<&zfs_accel_hlsl::device::AccelDevice>) -> std::time::Duration {
+fn run_one_config(
+    num_data_disks: usize,
+    chunk_size: usize,
+    stripe_count: u64,
+    accel: Option<&zfs_accel_hlsl::device::AccelDevice>,
+) -> std::time::Duration {
     let dir = std::env::temp_dir().join(format!(
         "orz-parity-bench-{}-{}-{}-{}",
         num_data_disks,
@@ -37,7 +42,8 @@ fn run_one_config(num_data_disks: usize, chunk_size: usize, stripe_count: u64, a
 
     let total_disks = num_data_disks + 2; // Z2 = 2パリティ固定
     let disk_size = chunk_size as u64 * (stripe_count + 1);
-    let devices: Vec<FileBackedDevice> = (0..total_disks).map(|i| scratch_disk(&dir, &format!("d{i}"), disk_size)).collect();
+    let devices: Vec<FileBackedDevice> =
+        (0..total_disks).map(|i| scratch_disk(&dir, &format!("d{i}"), disk_size)).collect();
 
     let mut vdev = RaidZVdev::new(devices, RaidLevel::Z2, chunk_size);
     if let Some(accel) = accel {
@@ -57,7 +63,9 @@ fn run_one_config(num_data_disks: usize, chunk_size: usize, stripe_count: u64, a
 }
 
 fn main() {
-    let accel = zfs_accel_hlsl::device::detect_best_accelerator().ok().filter(|a| a.kind != zfs_accel_hlsl::device::AccelKind::CpuFallback);
+    let accel = zfs_accel_hlsl::device::detect_best_accelerator()
+        .ok()
+        .filter(|a| a.kind != zfs_accel_hlsl::device::AccelKind::CpuFallback);
 
     match &accel {
         Some(a) => println!("検出したアクセラレータ: {:?}", a.kind),
@@ -69,10 +77,7 @@ fn main() {
     const CHUNK_SIZE: usize = 128 * 1024;
     const STRIPES: u64 = 200;
 
-    println!(
-        "{:<12} {:>14} {:>14} {:>10}",
-        "データ本数", "CPU (ms)", "GPU (ms)", "GPU倍率"
-    );
+    println!("{:<12} {:>14} {:>14} {:>10}", "データ本数", "CPU (ms)", "GPU (ms)", "GPU倍率");
     for num_data_disks in [3usize, 4, 5, 6] {
         let cpu_elapsed = run_one_config(num_data_disks, CHUNK_SIZE, STRIPES, None);
         let cpu_ms = cpu_elapsed.as_secs_f64() * 1000.0;

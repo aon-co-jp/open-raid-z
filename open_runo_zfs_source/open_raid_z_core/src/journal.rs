@@ -55,18 +55,8 @@ impl JournalEntry {
         let mut hasher = Sha256::new();
         hasher.update(&data);
         let checksum = hasher.finalize().into();
-        let created_at_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        Self {
-            id,
-            dataset: dataset.to_string(),
-            logical_offset,
-            data,
-            checksum,
-            created_at_unix,
-        }
+        let created_at_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        Self { id, dataset: dataset.to_string(), logical_offset, data, checksum, created_at_unix }
     }
 
     /// チェックサムが実データと一致するか(破損したジャーナルエントリの検知)。
@@ -92,8 +82,9 @@ impl DisconnectJournal {
     pub fn open_or_create(dir: impl Into<PathBuf>) -> BridgeResult<Self> {
         let dir = dir.into();
         let pending_dir = dir.join("pending");
-        fs::create_dir_all(&pending_dir)
-            .map_err(|e| BridgeError::JournalFailed(format!("ジャーナルディレクトリ作成失敗 {:?}: {e}", pending_dir)))?;
+        fs::create_dir_all(&pending_dir).map_err(|e| {
+            BridgeError::JournalFailed(format!("ジャーナルディレクトリ作成失敗 {:?}: {e}", pending_dir))
+        })?;
 
         let mut max_id = 0u64;
         for entry in fs::read_dir(&pending_dir)
@@ -167,7 +158,8 @@ impl DisconnectJournal {
             if path.extension().and_then(|e| e.to_str()) != Some("entry") {
                 continue;
             }
-            let bytes = fs::read(&path).map_err(|e| BridgeError::JournalFailed(format!("ジャーナル読み取り失敗: {e}")))?;
+            let bytes =
+                fs::read(&path).map_err(|e| BridgeError::JournalFailed(format!("ジャーナル読み取り失敗: {e}")))?;
             match bincode::deserialize::<JournalEntry>(&bytes) {
                 Ok(entry) if entry.is_intact() => entries.push(entry),
                 Ok(entry) => {

@@ -42,10 +42,10 @@ pub mod fs_ops;
 pub mod id_mapping;
 pub mod journal;
 pub mod migrate;
-#[cfg(feature = "offsite_backup")]
-pub mod offsite_backup;
 #[cfg(feature = "winfsp_backend")]
 pub mod mount;
+#[cfg(feature = "offsite_backup")]
+pub mod offsite_backup;
 // Linux・macOS(macFUSE/FUSE-T経由)・Android(パッチ済み`fuser`フォーク
 // 経由、Cargo.tomlの`fuser_android`コメント参照)で同じFUSEマウント実装を
 // 共有する。

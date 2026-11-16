@@ -331,10 +331,7 @@ impl DisasterRecoveryManager {
                 Err(e) => last_err = Some(e),
             }
         }
-        Err(BridgeError::JournalFailed(format!(
-            "全ての緊急退避先への書き込みに失敗しました: {:?}",
-            last_err
-        )))
+        Err(BridgeError::JournalFailed(format!("全ての緊急退避先への書き込みに失敗しました: {:?}", last_err)))
     }
 
     /// ローカルジャーナルにまだ残っている未反映エントリを再生する
@@ -444,7 +441,11 @@ impl DisasterRecoveryManager {
     ///   良く、通常の読み書き機能(呼び出し元スレッド)には影響しない
     ///   (このエコシステムの「補助機能の失敗は権威パスをブロックしない」
     ///   という既存方針を踏襲)。
-    pub fn spawn_background_auto_recovery<F>(self: &Arc<Self>, already_applied_ids: HashSet<u64>, apply: F) -> JoinHandle<BridgeResult<usize>>
+    pub fn spawn_background_auto_recovery<F>(
+        self: &Arc<Self>,
+        already_applied_ids: HashSet<u64>,
+        apply: F,
+    ) -> JoinHandle<BridgeResult<usize>>
     where
         F: FnMut(&JournalEntry) -> BridgeResult<()> + Send + 'static,
     {

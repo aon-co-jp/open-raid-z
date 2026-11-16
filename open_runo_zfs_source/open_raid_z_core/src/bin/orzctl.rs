@@ -72,7 +72,12 @@ fn parse_accel_mode(s: &str) -> Result<AccelMode, String> {
 ///   ではなく、複数ストライプをバッチしてまとめて1回のGPUディスパッチに
 ///   する等、GPU側の固定オーバーヘッドを償却できる粒度に実装を見直せば
 ///   結果が変わる可能性がある——現時点ではその変更は行っていない。
-fn build_vdev(devices: Vec<FileBackedDevice>, level: RaidLevel, chunk_size: usize, accel_mode: AccelMode) -> RaidZVdev<FileBackedDevice> {
+fn build_vdev(
+    devices: Vec<FileBackedDevice>,
+    level: RaidLevel,
+    chunk_size: usize,
+    accel_mode: AccelMode,
+) -> RaidZVdev<FileBackedDevice> {
     let vdev = RaidZVdev::new(devices, level, chunk_size);
     if accel_mode != AccelMode::Gpu {
         eprintln!("orzctl: パリティ計算はCPUで行います(既定。GPUを使うには--accel gpuを指定してください)。");

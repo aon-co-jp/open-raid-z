@@ -10,8 +10,8 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use open_raid_z_core::offsite_backup::{
-    EmailBackupTarget, EmailBackupTargetConfig, GoogleDriveBackupTarget, GoogleDriveBackupTargetConfig, OffsiteBackupTarget,
-    SftpBackupTarget, SftpBackupTargetConfig,
+    EmailBackupTarget, EmailBackupTargetConfig, GoogleDriveBackupTarget, GoogleDriveBackupTargetConfig,
+    OffsiteBackupTarget, SftpBackupTarget, SftpBackupTargetConfig,
 };
 
 // ============================= Email (モックSMTP) =============================
@@ -138,7 +138,9 @@ fn google_drive_backup_target_full_roundtrip_via_wiremock() {
         // OAuth2リフレッシュトークン->アクセストークン交換。
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "access_token": "fake-access-token" })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "access_token": "fake-access-token" })),
+            )
             .mount(&server)
             .await;
 
@@ -176,10 +178,7 @@ fn google_drive_backup_target_full_roundtrip_via_wiremock() {
         // ラベル指定でのファイル検索(ダウンロード・削除用)。
         Mock::given(method("GET"))
             .and(path("/drive/v3/files"))
-            .and(query_param(
-                "q",
-                "'folder-123' in parents and name='00000000000000000001.entry.gz' and trashed=false",
-            ))
+            .and(query_param("q", "'folder-123' in parents and name='00000000000000000001.entry.gz' and trashed=false"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "files": [{ "id": "file-456", "name": "00000000000000000001.entry.gz" }]
             })))
@@ -220,24 +219,25 @@ fn google_drive_backup_target_full_roundtrip_via_wiremock() {
         tokio::task::spawn_blocking(move || t1.ensure_ready().unwrap()).await.unwrap();
 
         let t2 = std::sync::Arc::clone(&target);
-        tokio::task::spawn_blocking(move || t2.upload_segment("00000000000000000001.entry.gz", b"unused-in-this-mock").unwrap())
-            .await
-            .unwrap();
+        tokio::task::spawn_blocking(move || {
+            t2.upload_segment("00000000000000000001.entry.gz", b"unused-in-this-mock").unwrap()
+        })
+        .await
+        .unwrap();
 
         let t3 = std::sync::Arc::clone(&target);
         let labels = tokio::task::spawn_blocking(move || t3.list_segments().unwrap()).await.unwrap();
         assert_eq!(labels, vec!["00000000000000000001.entry.gz".to_string()]);
 
         let t4 = std::sync::Arc::clone(&target);
-        let downloaded = tokio::task::spawn_blocking(move || t4.download_segment("00000000000000000001.entry.gz").unwrap())
-            .await
-            .unwrap();
+        let downloaded =
+            tokio::task::spawn_blocking(move || t4.download_segment("00000000000000000001.entry.gz").unwrap())
+                .await
+                .unwrap();
         assert_eq!(downloaded, b"downloaded-journal-bytes".to_vec());
 
         let t5 = std::sync::Arc::clone(&target);
-        tokio::task::spawn_blocking(move || t5.delete_segment("00000000000000000001.entry.gz").unwrap())
-            .await
-            .unwrap();
+        tokio::task::spawn_blocking(move || t5.delete_segment("00000000000000000001.entry.gz").unwrap()).await.unwrap();
     });
 }
 
@@ -294,10 +294,16 @@ mod fake_sftp_server {
             Ok(())
         }
 
-        async fn subsystem_request(&mut self, channel_id: ChannelId, name: &str, session: &mut Session) -> Result<(), Self::Error> {
+        async fn subsystem_request(
+            &mut self,
+            channel_id: ChannelId,
+            name: &str,
+            session: &mut Session,
+        ) -> Result<(), Self::Error> {
             if name == "sftp" {
                 let channel = self.clients.lock().await.remove(&channel_id).unwrap();
-                let sftp = FakeSftpSession { root: self.root.clone(), files: StdHashMap::new(), dirs_read: StdHashMap::new() };
+                let sftp =
+                    FakeSftpSession { root: self.root.clone(), files: StdHashMap::new(), dirs_read: StdHashMap::new() };
                 session.channel_success(channel_id)?;
                 russh_sftp::server::run(channel.into_stream(), sftp).await;
             } else {
@@ -327,7 +333,11 @@ mod fake_sftp_server {
             StatusCode::OpUnsupported
         }
 
-        async fn init(&mut self, _version: u32, _extensions: StdHashMap<String, String>) -> Result<Version, Self::Error> {
+        async fn init(
+            &mut self,
+            _version: u32,
+            _extensions: StdHashMap<String, String>,
+        ) -> Result<Version, Self::Error> {
             Ok(Version::new())
         }
 
@@ -378,7 +388,13 @@ mod fake_sftp_server {
             }
         }
 
-        async fn open(&mut self, id: u32, filename: String, pflags: OpenFlags, _attrs: FileAttributes) -> Result<Handle, Self::Error> {
+        async fn open(
+            &mut self,
+            id: u32,
+            filename: String,
+            pflags: OpenFlags,
+            _attrs: FileAttributes,
+        ) -> Result<Handle, Self::Error> {
             let resolved = self.resolve(&filename);
             let write_requested = pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::CREATE);
 
@@ -405,7 +421,13 @@ mod fake_sftp_server {
             Ok(ok_status(id))
         }
 
-        async fn read(&mut self, id: u32, handle: String, offset: u64, len: u32) -> Result<russh_sftp::protocol::Data, Self::Error> {
+        async fn read(
+            &mut self,
+            id: u32,
+            handle: String,
+            offset: u64,
+            len: u32,
+        ) -> Result<russh_sftp::protocol::Data, Self::Error> {
             let file = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
             file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| StatusCode::Failure)?;
             let mut buf = vec![0u8; len as usize];
@@ -519,7 +541,10 @@ fn sftp_host_key_tofu_trusts_first_connection_and_rejects_a_later_mismatched_key
     assert!(!known_hosts_path.exists());
     make_target().ensure_ready().expect("first connection should be trusted and recorded (TOFU)");
     let recorded = std::fs::read_to_string(&known_hosts_path).expect("known_hosts file should have been created");
-    assert!(recorded.contains(&format!("127.0.0.1:{port} ssh-")), "recorded entry should contain the host:port key and an OpenSSH-formatted public key, got: {recorded}");
+    assert!(
+        recorded.contains(&format!("127.0.0.1:{port} ssh-")),
+        "recorded entry should contain the host:port key and an OpenSSH-formatted public key, got: {recorded}"
+    );
 
     // (2) 記録済みの鍵と一致する再接続は成功する。
     make_target().ensure_ready().expect("reconnecting with the same server key should succeed");
@@ -527,9 +552,13 @@ fn sftp_host_key_tofu_trusts_first_connection_and_rejects_a_later_mismatched_key
     // (3) known_hostsの記録を、実際のサーバー鍵とは異なる値へ意図的に
     // 書き換える(鍵のすり替え・中間者攻撃の代替)。同じhost:port識別子で、
     // 明らかに異なるダミーのOpenSSH公開鍵行に差し替える。
-    let tampered = format!("127.0.0.1:{port} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINTENTIONALLYWRONGKEYFORTOFUTEST0000000000000\n");
+    let tampered =
+        format!("127.0.0.1:{port} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINTENTIONALLYWRONGKEYFORTOFUTEST0000000000000\n");
     std::fs::write(&known_hosts_path, tampered).unwrap();
 
     let result = make_target().ensure_ready();
-    assert!(result.is_err(), "connecting when the recorded host key no longer matches the server's actual key must be rejected");
+    assert!(
+        result.is_err(),
+        "connecting when the recorded host key no longer matches the server's actual key must be rejected"
+    );
 }

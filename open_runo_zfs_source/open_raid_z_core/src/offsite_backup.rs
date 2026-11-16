@@ -63,10 +63,7 @@ pub trait OffsiteBackupTarget: Send + Sync {
     /// 退避先に残っている(まだローカルへ反映済みでない可能性がある)
     /// セグメントのラベル一覧を返す。自動復帰モードで使用。
     fn list_segments(&self) -> BridgeResult<Vec<String>> {
-        Err(BridgeError::OffsiteBackupFailed(format!(
-            "{} は一覧取得(自動復帰)に対応していません",
-            self.target_name()
-        )))
+        Err(BridgeError::OffsiteBackupFailed(format!("{} は一覧取得(自動復帰)に対応していません", self.target_name())))
     }
 
     /// 指定ラベルのセグメント本体を取得する。自動復帰モードで使用。
@@ -149,9 +146,7 @@ impl OffsiteBackupTarget for EmailBackupTarget {
         use lettre::transport::smtp::SmtpTransport;
 
         let transport: SmtpTransport = self.build_transport()?;
-        transport
-            .test_connection()
-            .map_err(|e| BridgeError::OffsiteBackupFailed(format!("SMTP接続確認失敗: {e}")))?;
+        transport.test_connection().map_err(|e| BridgeError::OffsiteBackupFailed(format!("SMTP接続確認失敗: {e}")))?;
         Ok(())
     }
 
@@ -161,12 +156,17 @@ impl OffsiteBackupTarget for EmailBackupTarget {
         use lettre::{Message, Transport};
 
         let email = Message::builder()
-            .from(self.config.from_address.parse().map_err(|e| {
-                BridgeError::OffsiteBackupFailed(format!("差出人アドレスが不正です: {e}"))
-            })?)
-            .to(self.config.to_address.parse().map_err(|e| {
-                BridgeError::OffsiteBackupFailed(format!("宛先アドレスが不正です: {e}"))
-            })?)
+            .from(
+                self.config
+                    .from_address
+                    .parse()
+                    .map_err(|e| BridgeError::OffsiteBackupFailed(format!("差出人アドレスが不正です: {e}")))?,
+            )
+            .to(self
+                .config
+                .to_address
+                .parse()
+                .map_err(|e| BridgeError::OffsiteBackupFailed(format!("宛先アドレスが不正です: {e}")))?)
             .subject(format!("[open-raid-z] 切断時ジャーナル退避: {label}"))
             .multipart(
                 MultiPart::mixed()
@@ -177,14 +177,15 @@ impl OffsiteBackupTarget for EmailBackupTarget {
                          (自動復帰モードには対応していません。手動でIMAP等から取得・保存してください)",
                         data.len()
                     )))
-                    .singlepart(Attachment::new(label.to_string()).body(data.to_vec(), ContentType::parse("application/octet-stream").unwrap())),
+                    .singlepart(
+                        Attachment::new(label.to_string())
+                            .body(data.to_vec(), ContentType::parse("application/octet-stream").unwrap()),
+                    ),
             )
             .map_err(|e| BridgeError::OffsiteBackupFailed(format!("メール構築失敗: {e}")))?;
 
         let transport = self.build_transport()?;
-        transport
-            .send(&email)
-            .map_err(|e| BridgeError::OffsiteBackupFailed(format!("メール送信失敗: {e}")))?;
+        transport.send(&email).map_err(|e| BridgeError::OffsiteBackupFailed(format!("メール送信失敗: {e}")))?;
         Ok(())
     }
 
@@ -231,17 +232,11 @@ impl GoogleDriveBackupTarget {
     }
 
     fn api_base(&self) -> String {
-        self.config
-            .api_base_url_override
-            .clone()
-            .unwrap_or_else(|| "https://www.googleapis.com".to_string())
+        self.config.api_base_url_override.clone().unwrap_or_else(|| "https://www.googleapis.com".to_string())
     }
 
     fn oauth_token_base(&self) -> String {
-        self.config
-            .api_base_url_override
-            .clone()
-            .unwrap_or_else(|| "https://oauth2.googleapis.com".to_string())
+        self.config.api_base_url_override.clone().unwrap_or_else(|| "https://oauth2.googleapis.com".to_string())
     }
 
     /// リフレッシュトークンからアクセストークンを取得する
@@ -318,7 +313,9 @@ impl GoogleDriveBackupTarget {
         let id = created
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| BridgeError::OffsiteBackupFailed("Googleドライブフォルダ作成応答にidがありません".to_string()))?
+            .ok_or_else(|| {
+                BridgeError::OffsiteBackupFailed("Googleドライブフォルダ作成応答にidがありません".to_string())
+            })?
             .to_string();
         *self.folder_id.lock().unwrap() = Some(id.clone());
         Ok(id)
@@ -345,7 +342,9 @@ impl OffsiteBackupTarget for GoogleDriveBackupTarget {
         let boundary = "open_raid_z_offsite_boundary";
         let metadata = serde_json::json!({ "name": label, "parents": [folder_id] }).to_string();
         let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n").as_bytes(),
+        );
         body.extend_from_slice(format!("--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
         body.extend_from_slice(data);
         body.extend_from_slice(format!("\r\n--{boundary}--").as_bytes());
@@ -377,9 +376,7 @@ impl OffsiteBackupTarget for GoogleDriveBackupTarget {
             .get("files")
             .and_then(|f| f.as_array())
             .map(|arr| {
-                arr.iter()
-                    .filter_map(|f| f.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                    .collect()
+                arr.iter().filter_map(|f| f.get("name").and_then(|v| v.as_str()).map(|s| s.to_string())).collect()
             })
             .unwrap_or_default())
     }
@@ -591,9 +588,10 @@ impl SftpBackupTarget {
             host_key: format!("{}:{}", self.config.host, self.config.port),
             known_hosts_path: self.config.known_hosts_path.clone(),
         };
-        let mut session = russh::client::connect(std::sync::Arc::new(config), (self.config.host.as_str(), self.config.port), handler)
-            .await
-            .map_err(|e| BridgeError::OffsiteBackupFailed(format!("SSH接続失敗: {e}")))?;
+        let mut session =
+            russh::client::connect(std::sync::Arc::new(config), (self.config.host.as_str(), self.config.port), handler)
+                .await
+                .map_err(|e| BridgeError::OffsiteBackupFailed(format!("SSH接続失敗: {e}")))?;
 
         let authenticated = session
             .authenticate_password(&self.config.username, &password)
@@ -636,7 +634,9 @@ impl OffsiteBackupTarget for SftpBackupTarget {
                 Ok(()) => Ok(()),
                 Err(_) => match sftp.metadata(&self.config.remote_backup_dir).await {
                     Ok(_) => Ok(()),
-                    Err(e) => Err(BridgeError::OffsiteBackupFailed(format!("SFTPバックアップフォルダ作成/確認失敗: {e}"))),
+                    Err(e) => {
+                        Err(BridgeError::OffsiteBackupFailed(format!("SFTPバックアップフォルダ作成/確認失敗: {e}")))
+                    }
                 },
             }
         })

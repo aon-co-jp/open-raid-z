@@ -63,12 +63,8 @@ pub fn compress(backend: AccelBackend, data: &[u8]) -> BridgeResult<Vec<u8>> {
         );
     }
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(data)
-        .map_err(|e| BridgeError::OffsiteBackupFailed(format!("圧縮に失敗しました: {e}")))?;
-    encoder
-        .finish()
-        .map_err(|e| BridgeError::OffsiteBackupFailed(format!("圧縮の完了処理に失敗しました: {e}")))
+    encoder.write_all(data).map_err(|e| BridgeError::OffsiteBackupFailed(format!("圧縮に失敗しました: {e}")))?;
+    encoder.finish().map_err(|e| BridgeError::OffsiteBackupFailed(format!("圧縮の完了処理に失敗しました: {e}")))
 }
 
 /// 選択したバックエンドで圧縮済みデータを展開する。
@@ -81,9 +77,7 @@ pub fn decompress(backend: AccelBackend, compressed: &[u8]) -> BridgeResult<Vec<
     }
     let mut decoder = GzDecoder::new(compressed);
     let mut out = Vec::new();
-    decoder
-        .read_to_end(&mut out)
-        .map_err(|e| BridgeError::OffsiteBackupFailed(format!("展開に失敗しました: {e}")))?;
+    decoder.read_to_end(&mut out).map_err(|e| BridgeError::OffsiteBackupFailed(format!("展開に失敗しました: {e}")))?;
     Ok(out)
 }
 

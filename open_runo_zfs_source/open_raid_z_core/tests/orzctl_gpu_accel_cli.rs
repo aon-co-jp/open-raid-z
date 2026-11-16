@@ -31,7 +31,11 @@ fn scratch_disk(dir: &std::path::Path, name: &str, size_bytes: u64) -> std::path
 
 fn run_orzctl(args: &[&str]) -> (bool, String, String) {
     let output = Command::new(orzctl_bin()).args(args).output().expect("failed to spawn orzctl");
-    (output.status.success(), String::from_utf8_lossy(&output.stdout).to_string(), String::from_utf8_lossy(&output.stderr).to_string())
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
 }
 
 #[test]
@@ -46,12 +50,16 @@ fn orzctl_defaults_to_cpu_and_accel_gpu_flag_actually_changes_the_dispatch_path(
     let disk_args_ref: Vec<&str> = disk_args.iter().map(String::as_str).collect();
 
     // 既定(--accel未指定)は必ずCPU経路を通ることを確認する。
-    let mut args = vec!["create", "--level", "z2", "--chunk-size", "4096", "--stripes", "8", "--dataset", "test-dataset"];
+    let mut args =
+        vec!["create", "--level", "z2", "--chunk-size", "4096", "--stripes", "8", "--dataset", "test-dataset"];
     args.extend(disk_args_ref.iter().copied());
     let (ok, stdout, stderr) = run_orzctl(&args);
     assert!(ok, "orzctl create (default) failed: stdout={stdout:?} stderr={stderr:?}");
     assert!(stderr.contains("パリティ計算はCPUで行います"), "expected CPU-default log, got: {stderr:?}");
-    assert!(!stderr.contains("ハードウェアアクセラレータを使用します"), "GPU must not be used without --accel gpu, got: {stderr:?}");
+    assert!(
+        !stderr.contains("ハードウェアアクセラレータを使用します"),
+        "GPU must not be used without --accel gpu, got: {stderr:?}"
+    );
 
     // `--accel gpu`を明示指定した場合のみ、実行環境に応じたGPU検出ログ
     // (実際に使う/見つからずCPUへフォールバック)のいずれかが出ることを
