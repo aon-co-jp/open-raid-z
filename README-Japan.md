@@ -1,0 +1,136 @@
+# open-raid-z(日本語版)
+
+**Rust製の実マウント可能なRAID-Z/Z2/Z3ストレージプール実装**。
+ZFS(OpenZFS)の「パリティ分散ストライピング・チェックサム自己修復・
+Copy-on-Write・スナップショット/クローン」という設計思想を、
+**OpenZFS自体には一切依存せず**Rustで一から実装したものです。
+CLIツール`orzctl`でプールを作成し、Windows(WinFsp)・Linux/macOS/Android
+(FUSE)へ**実際にマウント**できます。
+
+> [ルートREADME](README.md) / [English](README-English.md) /
+> [中文](README-Chinese.md) / [한국어](README-Korea.md) / [Español](README-Spain.md) /
+> [Français](README-France.md) / [Deutsch](README-Germany.md) / [Italiano](README-Italy.md) /
+> [Русский](README-Russia.md) / [العربية](README-Arabic.md)
+
+## 重要な前提
+
+open-raid-zは**独自のオンディスクフォーマット**(ZFS風のCoW/ストライピング)
+であり、実際のZFSのオンディスク構造(uberblock/ZIL等)とは互換性が
+ありません。既存ZFS/NTFS/ext4/他社製RAIDから移行する場合は必ず
+「①既存フォーマットから読み出し → ②open-raid-zプールへ通常の
+ファイルコピー」という手順になります。詳細は [MIGRATION.md](MIGRATION.md)。
+
+## 構成(3クレート + 補助コンポーネント)
+
+| コンポーネント | 役割・現状 |
+|---|---|
+| `open_raid_z_core` | 中核ライブラリ。RAIDレベル(`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`。`vdev.rs`の`RaidLevel` enum)、sha2チェックサム、Copy-on-Write、スナップショット/クローン、ACLエミュレーション、FAT32/exFAT相互運用(`foreign_fs` feature、書き込み対応)+ext2/ext4読み取り(同featureに含む、読み取り専用)、実マウント(Windows=WinFsp、Linux/macOS/Android=FUSE)、`orzctl`CLIバイナリを含む |
+| `zfs_accel_hlsl` | RAID-Z/Z2/Z3のガロア体(GF)パリティ計算をHLSLシェーダ+D3D12/DirectMLでGPU高速化。`gpu_accel` feature無効時は純Rust CPUフォールバックのみで動作(CI等WinFsp/dxc無し環境向け) |
+| `open_runo_installer_core` | ディスク検出・zpool構成助言・プレビューのOS非依存ロジック。Tauri本体が要求しうるedition2024制約に巻き込まれないよう、意図的にTauri非依存の独立クレートとして切り出し済み |
+| `open_runo_installer`(Tauri GUI) | 上記installer_coreを使うTauri 2 + TypeScriptデスクトップアプリ。**このエコシステムで唯一Tauriパッケージへ直接依存する箇所**(Web系リポジトリ群のTauri自前再現方針とは別枠) |
+| `wdk_driver/orzflt` | Windowsカーネルモードドライバの最小スケルトン(WDF/KMDF 1.35)。ロード/アンロードのみのビルド確認済み、**実ロードテストは隔離VM前提**でまだ実施していない開発初期段階 |
+| `third_party/fuser-0.17.0-android-patch` | `fuser`0.17をAndroidのpure-rustビルドに対応させたパッチ済みフォーク。`cargo ndk`によるarm64-v8aクロスコンパイルは成功済みだが実機検証は未実施 |
+
+## `orzctl` コマンドライン
+
+```sh
+# Z2(6台構成)でプール作成
+orzctl create --level z2 --chunk-size 4096 --stripes 100000 --dataset tank \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
+
+# 実マウント(フォアグラウンドで待機し続ける)
+orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tank \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
+
+# 既存FAT32/exFATボリュームとの相互運用(移行・疎通確認用)
+orzctl foreign ls /dev/sdb1
+orzctl foreign cat /dev/sdb1 /DCIM/100ANDRO/IMG_0001.JPG ./IMG_0001.JPG
+orzctl foreign --format exfat mount /dev/sdc1 /mnt/old_exfat
+
+# 既存ext2/ext4ボリュームの読み取り(読み取り専用マウントにも対応)
+orzctl foreign --format ext4 ls    /dev/sdd1 /home
+orzctl foreign --format ext4 mount /dev/sdd1 /mnt/old_ext4
+
+# プール状態をJSONで問い合わせ(マウントはしない、Web管理UI等の機械可読な問い合わせ向け、2026-07-30追加)
+orzctl status --level z2 --chunk-size 4096 --stripes 100000 \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
+```
+
+Windowsでは`\\.\PhysicalDriveN`形式でディスクを指定します。
+
+## アンインストール(2026-07-30追加)
+
+`uninstall.sh`/`uninstall.ps1`が`orzctl`バイナリのみを削除します
+(プールのデータは実ディスク上にあり、インストール先ディレクトリとは
+完全に分離されているため一切触れません)。
+
+## Web管理UI(2026-07-30新設、`web/`)
+
+RPoem(`open-runo-poem-compat`、Poem/Tauri非依存のtokio/hyper直接実装)を
+使った管理UI。`orzctl status`をサブプロセス呼び出しし、プール作成は
+管理者トークン(`OPEN_RAID_Z_ADMIN_TOKEN`)必須。`OPEN_RAID_Z_READ_ONLY=1`
+設定時は正しいトークンでも常に拒否するread-onlyデモモードに対応。
+
+## RAID6 GPUパリティアクセラレーション(`open-cuda`連携、2026-07-30)
+
+NVMe RAID6のランダムアクセス低速化(parity write penalty)対策として、
+P-parity(XOR)・Q-parity(Reed-Solomon、GF(2^8))ともにGPU実装・実機検証
+済み(詳細は[`open-cuda`](https://github.com/aon-co-jp/open-cuda)の
+CLAUDE.md参照)。本リポジトリ側の実パリティ計算経路への統合はまだ
+未着手。
+
+## ビルド・テスト(実測)
+
+```sh
+cd open_runo_zfs_source/open_raid_z_core
+cargo test --no-default-features
+```
+
+WinFsp SDK・dxc・Windows SDKいずれも不要な**CPUフォールバック構成**で、
+2026-07-11時点の実測値:
+
+| クレート | passed | failed |
+|---|---|---|
+| `open_raid_z_core`(`--no-default-features`) | 101 | 0 |
+| `zfs_accel_hlsl`(`--no-default-features`、CPUフォールバック) | 32 | 0 |
+| `open_runo_installer_core` | 30 | 0 |
+| **合計** | **163** | **0** |
+
+`default` feature(`winfsp_backend` + `gpu_accel`)を有効にした実マウント・
+実GPU計算経路は、Windows実機+WinFsp SDK+dxc環境が必要なため別途確認が
+必要です。
+
+## ドキュメント
+
+- [MIGRATION.md](MIGRATION.md) — 既存ZFS/NTFS/ext4/他社製RAIDからの移行手順
+- [PORTING.md](PORTING.md) — 他プロジェクトへの導入・お引越し1枚ガイド
+- [CLAUDE.md](CLAUDE.md) — 開発ルール・技術スタック(このエコシステムの正本)
+- [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — 開発経緯・引き継ぎ記録
+
+## 関連プロジェクト
+
+`open-web-server` を中心に、`poem-cosmo-tauri`/`open-runo`・PostgreSQL・
+`aruaru-db`・このリポジトリを組み合わせ、3Dオンラインゲームの課金アイテム・
+金融/証券データをネットワーク上で紛失させないための目標アーキテクチャ
+(通信層四重化・DB書き込み四重化、2026-07-11改訂)がある。open-raid-zは
+このディスク冗長化基盤として関与し、実装するZFS類似のチェックサム/
+Copy-on-Write/スナップショット特性はDATABASE(PostgreSQL・aruaru-db)の
+読み書き信頼性とも実務上の関連性がある(詳細・出典は
+[open-web-server](https://github.com/aon-co-jp/open-web-server)の
+`README.md`/`CLAUDE.md`参照)。
+
+## ライセンス
+
+MPL-2.0。
+
+## 2026-11-15 別アカウントでの再開用メモ(依存更新・Rust化)
+**日本語**: (1) `open_raid_z_core`の依存を更新して push 済み(`0dd19d4`): thiserror 2 / sha2 0.11 / hadris-fat 2.5 / ext4-view 1 / russh 0.65 / russh-sftp 3 / fuser 0.18。**bincode は 1.3 のまま**(3.0.0 は意図的にコンパイル不可。置き換え候補 postcard 等は未検討、version-control の例外台帳へ「更新不可」登録が妥当)。(2) `fuser`のAndroid版は新リポジトリ[`fuser-android`](https://github.com/aon-co-jp/fuser-android)(fuser 0.18.0ベース、`cargo check --target aarch64-linux-android`成功・実機未検証)へ移し、`third_party/fuser-0.17.0-android-patch`は削除済み。(3) インストーラー画面はRust(Leptos)版の新リポジトリ[`open-raid-z-installer`](https://github.com/aon-co-jp/open-raid-z-installer)へ移した。**旧TypeScript版`open_runo_zfs_source/open_runo_installer`は、通し試験(実ウィンドウ・MSI/NSISのインストール/アンインストール)が済むまで削除しない**(ユーザー指示)。
+**再開用メッセージ(そのまま貼り付け)**: 「`F:\open-raid-z-installer`の`CLAUDE.md`の再開用メッセージに従い、`cargo tauri build`→実ウィンドウとMSI/NSISの通し試験を行い、全て通ったら`F:\open-raid-z`の旧`open_runo_zfs_source/open_runo_installer`を削除してpushし、結果を正直に報告して。失敗が残るなら削除しない。」
+**English**: (1) `open_raid_z_core` dependencies updated and pushed (`0dd19d4`): thiserror 2 / sha2 0.11 / hadris-fat 2.5 / ext4-view 1 / russh 0.65 / russh-sftp 3 / fuser 0.18. **bincode stays at 1.3** (3.0.0 deliberately fails to compile; replacements such as postcard are unevaluated; register it as "cannot update" in the version-control exception ledger). (2) The Android `fuser` fork moved to the new repo [`fuser-android`](https://github.com/aon-co-jp/fuser-android) (fuser 0.18.0 based; `cargo check --target aarch64-linux-android` passes, not verified on a device); `third_party/fuser-0.17.0-android-patch` was removed. (3) The installer UI now lives in the new Rust (Leptos) repo [`open-raid-z-installer`](https://github.com/aon-co-jp/open-raid-z-installer). **The old TypeScript `open_runo_zfs_source/open_runo_installer` must not be deleted until the end-to-end tests (real window, MSI/NSIS install/uninstall) pass** (user instruction).
+**Resume message (paste as is)**: "Follow the resume message in `F:\open-raid-z-installer\CLAUDE.md`: run `cargo tauri build`, do the real-window and MSI/NSIS install/uninstall tests, and if all pass delete the old `open_runo_zfs_source/open_runo_installer` in `F:\open-raid-z`, push, and report honestly. If failures remain, do not delete."
+
+## 2026-11-17 更新: 通し試験の結果と再開用メッセージ / Update: end-to-end test results and resume message
+**日本語**: 通し試験(NSISセットアップ、ユーザー単位・UAC不要): 静かなインストール→起動→アンインストールが成功(終了コード0、アンインストール後にフォルダ消滅)。実ウィンドウで「対応状況」ボタンの開閉・実データ表示・ページ最下部まで到達を確認。1600x1200/1000x1300/700x1100で表示を確認。**横スクロールバーはヘッダーの折り返し不足が原因**で、`ui/styles.css`の`.app_header`と`.header_actions`に`flex-wrap: wrap`を追加して解消(直した版をビルド→インストール→目視で消えたことを確認→アンインストール)。**未実施**: MSIのインストール/アンインストール(MSIは全ユーザー用でUAC昇格が必要、Claudeは昇格できない。ユーザーが管理者で実行する)、非管理者では物理ディスクが列挙されないため管理者実行時の実ディスク表示、文字サイズ変更、主要ボタンの「下部固定」(この画面は縦スクロール構成で固定ボタン無し、仕様として許容するか要判断)。**旧TypeScript版`open_runo_zfs_source/open_runo_installer`は未削除**(MSI未試験のため。MSIも通ったら削除してpush)。
+**再開用メッセージ(そのまま貼り付け)**: 「`F:\open-raid-z-installer`で、MSI(`F:db-target\oritaurieleaseundle\msi\`、無ければ`src-tauri`で`cargo tauri build`)を管理者権限でインストール→起動→アンインストールして結果を確認し、管理者実行でのディスク一覧も確認して。全て通ったら`F:\open-raid-z`の旧`open_runo_zfs_source/open_runo_installer`を削除してpushし、`F:uno`の`PORTING.md`の該当記述を更新して。通らない項目があれば削除せず原因を報告して。」
+**English**: End-to-end results (NSIS setup, per-user, no UAC): silent install, launch and uninstall succeeded (exit code 0; the folder is gone afterwards). In the real window the "Compatibility" panel opens and closes, shows real data, and the page bottom is reachable; checked at 1600x1200 / 1000x1300 / 700x1100. **The horizontal scrollbar was caused by the header not wrapping**; fixed by adding `flex-wrap: wrap` to `.app_header` and `.header_actions` in `ui/styles.css` (rebuilt, installed, visually confirmed gone, uninstalled). **Not done**: MSI install/uninstall (the MSI is per-machine and needs UAC elevation, which Claude cannot do; the user must run it as administrator), the real-disk list when run as administrator (non-elevated runs enumerate no physical disks), font-size changes, and "pinned bottom button" (this UI scrolls vertically and has no pinned button; decide whether that is acceptable). **The old TypeScript `open_runo_zfs_source/open_runo_installer` is NOT deleted** (the MSI is untested; delete and push once it passes).
+**Resume message (paste as is)**: "In `F:\open-raid-z-installer`, install the MSI (`F:db-target\oritaurieleaseundle\msi\`, or run `cargo tauri build` in `src-tauri` if missing) as administrator, launch, uninstall and check the result, and also check the disk list when run as administrator. If everything passes, delete the old `open_runo_zfs_source/open_runo_installer` in `F:\open-raid-z`, push, and update the matching entry in `F:uno`'s `PORTING.md`. If anything fails, do not delete and report the cause."

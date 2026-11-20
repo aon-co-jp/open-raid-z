@@ -1,0 +1,158 @@
+# open-raid-z (English)
+
+> 🎯 **aruaru-db × RPoem SET policy (2026-08-29)**: `aruaru-db`'s
+> `CLAUDE.md` opening note ("Most important") explains that aruaru-db
+> only delivers "no REST API needed, compatible with WunderGraph
+> Cosmo's paid Enterprise tier" when paired (SET) with RPoem — and
+> warns against building REST replacements aimlessly. This repository
+> (open-raid-z) is used by aruaru-db as its ZFS-compatible/RAID-Z2
+> storage layer but is out of scope for the REST/API-key work itself
+> (it has no HTTP server surface).
+
+> 📌 Pending task (2026-08-06): a plan exists to incorporate Toshiba SBM / DeepSeek techniques. See [CLAUDE.md](CLAUDE.md) for details.
+
+> ⚠️ **Urgent, 2026-07-26**: `karu.tokyo` currently has NO valid HTTPS
+> certificate (Let's Encrypt rate-limited; expected recovery ~2026-07-27
+> 00:17:48 UTC). Whoever resumes work next MUST read `CLAUDE.md`'s latest
+> HANDOFF entry ("pre-relocation emergency checkpoint") first. Do NOT
+> casually restart `open-web-server` — its TLS certs are memory-only (not
+> yet persisted to disk), so a restart wipes HTTPS for every domain it
+> serves; a permanent fix is in progress in the `open-web-server` repo.
+
+> **Updated 2026-07-25**: The dev-policy file (`CLAUDE.md`) heading was
+> renamed from "Development Policy & Dev Environment Rules" to
+> "Design Philosophy & Development Policy & Dev Environment Rules",
+> to more clearly separate the project's design philosophy (what we
+> value), development policy (how we work), and dev environment rules
+> (concrete operational conventions). See `CLAUDE.md` for details.
+
+> **Session checkpoint, 2026-07-25**: the "SET" of open-easy-web /
+> open-web-server / open-raid-z / aruaru-db now all have a standalone
+> email disaster-backup capability (reusing this repo's own
+> `offsite_backup.rs`). In parallel, the sibling `open-directx` project
+> reached real-hardware-verified parity between DirectX D3D11 (DXBC)
+> and D3D12 (DXIL): a real compiled shader is translated to SPIR-V and
+> dispatched on real Vulkan hardware, matching a CPU reference exactly.
+> See `CLAUDE.md`'s HANDOFF section for the full detail.
+
+> **Checkpoint before shutdown, 2026-07-26**: `RS-Red` was fully renamed
+> to `open-redmine` (GitHub, local drive, and VPS all done). `aruaru-db`
+> closed its remaining disaster-backup gaps, `open-web-server` gained
+> live (no-restart) power/low-memory profile switching, and
+> `open-directx`'s DXBC decoder was generalized while its DXIL
+> workgroup-size extraction was fixed to read real metadata instead of
+> a hardcoded value. See `CLAUDE.md`'s HANDOFF section for details.
+
+
+**A Rust implementation of a real, mountable RAID-Z/Z2/Z3 storage pool.**
+It reimplements ZFS/OpenZFS's design ideas — parity-distributed striping,
+self-healing checksums, copy-on-write, snapshots/clones — **from scratch in
+Rust, with zero dependency on OpenZFS itself**. The `orzctl` CLI creates
+pools and **actually mounts them** on Windows (WinFsp) and Linux/macOS/
+Android (FUSE).
+
+> [Root README](README.md) / [日本語](README-Japan.md) /
+> [中文](README-Chinese.md) / [한국어](README-Korea.md) / [Español](README-Spain.md) /
+> [Français](README-France.md) / [Deutsch](README-Germany.md) / [Italiano](README-Italy.md) /
+> [Русский](README-Russia.md) / [العربية](README-Arabic.md)
+
+## Important caveat
+
+open-raid-z uses its **own on-disk format** (a ZFS-style CoW/striping
+layout) and is **not on-disk compatible with real ZFS** (no uberblock, no
+ZIL, etc.). Migrating from existing ZFS/NTFS/ext4/other RAID always means
+"① read from the existing format → ② plain file-copy into an open-raid-z
+pool." See [MIGRATION.md](MIGRATION.md) for the full procedure.
+
+## Workspace layout (3 crates + supporting components)
+
+| Component | Role / status |
+|---|---|
+| `open_raid_z_core` | Core library: RAID levels (`Raid0`/`Raid1`/`Raid5`/`Raid6`≡`Z2`/`Z3`, see the `RaidLevel` enum in `vdev.rs`), sha2 checksums, copy-on-write, snapshots/clones, ACL emulation, FAT32/exFAT interop (`foreign_fs` feature, read+write) plus read-only ext2/ext4 access (same feature), real mounting (WinFsp on Windows, FUSE on Linux/macOS/Android), and the `orzctl` CLI binary |
+| `zfs_accel_hlsl` | GPU-accelerates the Galois-field parity math for RAID-Z/Z2/Z3 via HLSL shaders + D3D12/DirectML. With the `gpu_accel` feature disabled it falls back to a pure-Rust CPU implementation only (useful for CI without WinFsp/dxc) |
+| `open_runo_installer_core` | OS-independent disk-detection / zpool-advisor / preview logic, deliberately split out as a Tauri-independent crate so it isn't caught by Tauri's edition2024 constraints |
+| `open_runo_installer` (Tauri GUI) | A Tauri 2 + TypeScript desktop app that uses `installer_core`. **This is the one place in the whole ecosystem that depends directly on the Tauri package** (separate from the web-ecosystem repos' policy of reimplementing Tauri from scratch) |
+| `wdk_driver/orzflt` | A minimal Windows kernel-mode driver skeleton (WDF/KMDF 1.35). Only load/unload has been build-verified; **actual load testing is intentionally deferred to an isolated VM** — early-stage |
+| `third_party/fuser-0.17.0-android-patch` | A patched fork of the `fuser` crate that enables pure-Rust builds for Android. Cross-compiles to arm64-v8a via `cargo ndk`; not yet verified on a real device |
+
+## `orzctl` command line
+
+```sh
+# create a Z2 pool across 6 disks
+orzctl create --level z2 --chunk-size 4096 --stripes 100000 --dataset tank \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
+
+# actually mount it (stays in the foreground)
+orzctl mount --level z2 --chunk-size 4096 --stripes 100000 --mountpoint /mnt/tank \
+  /dev/sdb /dev/sdc /dev/sdd /dev/sde /dev/sdf /dev/sdg
+
+# read/write an existing FAT32/exFAT volume (migration helper)
+orzctl foreign ls /dev/sdb1
+orzctl foreign --format exfat cat /dev/sdc1 /video.mp4 ./video.mp4
+
+# read an existing ext2/ext4 volume (read-only)
+orzctl foreign --format ext4 ls  /dev/sdd1 /home
+orzctl foreign --format ext4 cat /dev/sdd1 /etc/hostname
+```
+
+Supported RAID levels: `Raid0` / `Raid1` (mirror) / `Raid5` / `Raid6`
+(same as `Z2`) / `Z2` / `Z3`. RAID10 is provided separately as a bundle of
+`Raid1` mirror groups (`raid10.rs`).
+
+## Build & test (measured)
+
+```sh
+cd open_runo_zfs_source/open_raid_z_core
+cargo test --no-default-features
+```
+
+This is a CPU-fallback build requiring neither the WinFsp SDK, `dxc`, nor
+the Windows SDK. Measured on 2026-07-11:
+
+| Crate | passed | failed |
+|---|---|---|
+| `open_raid_z_core` (`--no-default-features`) | 101 | 0 |
+| `zfs_accel_hlsl` (`--no-default-features`, CPU fallback) | 32 | 0 |
+| `open_runo_installer_core` | 30 | 0 |
+| **Total** | **163** | **0** |
+
+The `default` feature set (`winfsp_backend` + `gpu_accel`, real mounting
+and real GPU compute) requires a Windows machine with the WinFsp SDK and
+`dxc` and must be verified separately.
+
+## Documentation
+
+- [MIGRATION.md](MIGRATION.md) — migrating from ZFS/NTFS/ext4/other RAID
+- [PORTING.md](PORTING.md) — one-file guide to adopting this in another project
+- [CLAUDE.md](CLAUDE.md) — dev rules / tech stack (canonical for this ecosystem)
+- [CHAT_HANDOFF.md](CHAT_HANDOFF.md) — development history / handoff notes
+
+## Related Projects
+
+There is a target architecture combining `open-web-server` with
+`poem-cosmo-tauri`/`open-runo`, PostgreSQL, `aruaru-db`, and this
+repository, designed to prevent network loss of paid items and
+financial/securities data in 3D online games (quadruple-redundant
+transport and quadruple-redundant DB writes, revised 2026-07-11).
+open-raid-z participates as the disk-redundancy foundation, and its
+ZFS-like checksum/copy-on-write/snapshot characteristics have real,
+documented relevance to database (PostgreSQL/aruaru-db) read/write
+reliability as well (see
+[open-web-server](https://github.com/aon-co-jp/open-web-server)'s
+`README.md`/`CLAUDE.md` for the full picture with sources).
+
+## License
+
+MPL-2.0.
+
+## 2026-11-15 別アカウントでの再開用メモ(依存更新・Rust化)
+**日本語**: (1) `open_raid_z_core`の依存を更新して push 済み(`0dd19d4`): thiserror 2 / sha2 0.11 / hadris-fat 2.5 / ext4-view 1 / russh 0.65 / russh-sftp 3 / fuser 0.18。**bincode は 1.3 のまま**(3.0.0 は意図的にコンパイル不可。置き換え候補 postcard 等は未検討、version-control の例外台帳へ「更新不可」登録が妥当)。(2) `fuser`のAndroid版は新リポジトリ[`fuser-android`](https://github.com/aon-co-jp/fuser-android)(fuser 0.18.0ベース、`cargo check --target aarch64-linux-android`成功・実機未検証)へ移し、`third_party/fuser-0.17.0-android-patch`は削除済み。(3) インストーラー画面はRust(Leptos)版の新リポジトリ[`open-raid-z-installer`](https://github.com/aon-co-jp/open-raid-z-installer)へ移した。**旧TypeScript版`open_runo_zfs_source/open_runo_installer`は、通し試験(実ウィンドウ・MSI/NSISのインストール/アンインストール)が済むまで削除しない**(ユーザー指示)。
+**再開用メッセージ(そのまま貼り付け)**: 「`F:\open-raid-z-installer`の`CLAUDE.md`の再開用メッセージに従い、`cargo tauri build`→実ウィンドウとMSI/NSISの通し試験を行い、全て通ったら`F:\open-raid-z`の旧`open_runo_zfs_source/open_runo_installer`を削除してpushし、結果を正直に報告して。失敗が残るなら削除しない。」
+**English**: (1) `open_raid_z_core` dependencies updated and pushed (`0dd19d4`): thiserror 2 / sha2 0.11 / hadris-fat 2.5 / ext4-view 1 / russh 0.65 / russh-sftp 3 / fuser 0.18. **bincode stays at 1.3** (3.0.0 deliberately fails to compile; replacements such as postcard are unevaluated; register it as "cannot update" in the version-control exception ledger). (2) The Android `fuser` fork moved to the new repo [`fuser-android`](https://github.com/aon-co-jp/fuser-android) (fuser 0.18.0 based; `cargo check --target aarch64-linux-android` passes, not verified on a device); `third_party/fuser-0.17.0-android-patch` was removed. (3) The installer UI now lives in the new Rust (Leptos) repo [`open-raid-z-installer`](https://github.com/aon-co-jp/open-raid-z-installer). **The old TypeScript `open_runo_zfs_source/open_runo_installer` must not be deleted until the end-to-end tests (real window, MSI/NSIS install/uninstall) pass** (user instruction).
+**Resume message (paste as is)**: "Follow the resume message in `F:\open-raid-z-installer\CLAUDE.md`: run `cargo tauri build`, do the real-window and MSI/NSIS install/uninstall tests, and if all pass delete the old `open_runo_zfs_source/open_runo_installer` in `F:\open-raid-z`, push, and report honestly. If failures remain, do not delete."
+
+## 2026-11-17 更新: 通し試験の結果と再開用メッセージ / Update: end-to-end test results and resume message
+**日本語**: 通し試験(NSISセットアップ、ユーザー単位・UAC不要): 静かなインストール→起動→アンインストールが成功(終了コード0、アンインストール後にフォルダ消滅)。実ウィンドウで「対応状況」ボタンの開閉・実データ表示・ページ最下部まで到達を確認。1600x1200/1000x1300/700x1100で表示を確認。**横スクロールバーはヘッダーの折り返し不足が原因**で、`ui/styles.css`の`.app_header`と`.header_actions`に`flex-wrap: wrap`を追加して解消(直した版をビルド→インストール→目視で消えたことを確認→アンインストール)。**未実施**: MSIのインストール/アンインストール(MSIは全ユーザー用でUAC昇格が必要、Claudeは昇格できない。ユーザーが管理者で実行する)、非管理者では物理ディスクが列挙されないため管理者実行時の実ディスク表示、文字サイズ変更、主要ボタンの「下部固定」(この画面は縦スクロール構成で固定ボタン無し、仕様として許容するか要判断)。**旧TypeScript版`open_runo_zfs_source/open_runo_installer`は未削除**(MSI未試験のため。MSIも通ったら削除してpush)。
+**再開用メッセージ(そのまま貼り付け)**: 「`F:\open-raid-z-installer`で、MSI(`F:db-target\oritaurieleaseundle\msi\`、無ければ`src-tauri`で`cargo tauri build`)を管理者権限でインストール→起動→アンインストールして結果を確認し、管理者実行でのディスク一覧も確認して。全て通ったら`F:\open-raid-z`の旧`open_runo_zfs_source/open_runo_installer`を削除してpushし、`F:uno`の`PORTING.md`の該当記述を更新して。通らない項目があれば削除せず原因を報告して。」
+**English**: End-to-end results (NSIS setup, per-user, no UAC): silent install, launch and uninstall succeeded (exit code 0; the folder is gone afterwards). In the real window the "Compatibility" panel opens and closes, shows real data, and the page bottom is reachable; checked at 1600x1200 / 1000x1300 / 700x1100. **The horizontal scrollbar was caused by the header not wrapping**; fixed by adding `flex-wrap: wrap` to `.app_header` and `.header_actions` in `ui/styles.css` (rebuilt, installed, visually confirmed gone, uninstalled). **Not done**: MSI install/uninstall (the MSI is per-machine and needs UAC elevation, which Claude cannot do; the user must run it as administrator), the real-disk list when run as administrator (non-elevated runs enumerate no physical disks), font-size changes, and "pinned bottom button" (this UI scrolls vertically and has no pinned button; decide whether that is acceptable). **The old TypeScript `open_runo_zfs_source/open_runo_installer` is NOT deleted** (the MSI is untested; delete and push once it passes).
+**Resume message (paste as is)**: "In `F:\open-raid-z-installer`, install the MSI (`F:db-target\oritaurieleaseundle\msi\`, or run `cargo tauri build` in `src-tauri` if missing) as administrator, launch, uninstall and check the result, and also check the disk list when run as administrator. If everything passes, delete the old `open_runo_zfs_source/open_runo_installer` in `F:\open-raid-z`, push, and update the matching entry in `F:uno`'s `PORTING.md`. If anything fails, do not delete and report the cause."
