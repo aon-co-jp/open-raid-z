@@ -30,7 +30,7 @@ open_raid_z_core = { path = "../open_raid_z_core", default-features = false }
 # `#[cfg(windows)]`で実装を、`#[cfg(not(windows))]`でポータブルな
 # フォールバックを提供する)。
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Ioctl",

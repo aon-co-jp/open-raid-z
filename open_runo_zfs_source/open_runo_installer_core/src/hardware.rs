@@ -203,7 +203,7 @@ mod imp {
         if !ok {
             return None;
         }
-        Some(result.IncursSeekPenalty.as_bool())
+        Some(result.IncursSeekPenalty)
     }
 }
 

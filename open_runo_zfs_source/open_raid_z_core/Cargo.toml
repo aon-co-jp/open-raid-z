@@ -95,7 +95,7 @@ rust-json = { path = "../../../RS-JSON", optional = true }
 # (optionalにすると`winfsp_backend`feature off時にリンクエラーになる)。
 # ターゲットをWindows限定にするだけでLinux/CIビルドから除外される。
 widestring = { version = "1", optional = true }
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security",
     "Win32_Foundation",

@@ -8,7 +8,7 @@ description = "OpenRuno: ZFS向けNPU/GPUハードウェアアクセラレータ
 license = "MPL-2.0"
 
 [dependencies]
-windows = { version = "0.58", optional = true, features = [
+windows = { version = "0.62", optional = true, features = [
     "Win32_Graphics_Direct3D12",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Dxgi",
@@ -22,7 +22,7 @@ windows = { version = "0.58", optional = true, features = [
 # GF(2^8)演算の実行時ディスパッチを担う共通ライブラリ
 # (aon-co-jpエコシステム全体で共用、2026-08-22導入)。
 open-cpu = { path = "../../../open-cpu" }
-thiserror = "1.0"
+thiserror = "2"
 tracing = "0.1"
 # Windows以外(Linux/Mac/Android等)向けのGPU/NPUアクセラレーション経路
 # (`vulkan`feature、vulkan_device.rs/vulkan_compute.rs参照)。DirectX/
