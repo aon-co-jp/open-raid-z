@@ -60,7 +60,7 @@ ureq = { version = "3", optional = true, default-features = false, features = ["
 # russh/russh-sftp のクライアント版を流用する(エコシステム内の
 # 既存実績クレートを踏襲、`russh-sftp client rust`で日英検索し確認)。
 russh = { version = "0.65", optional = true, default-features = false, features = ["ring", "rsa"] }
-russh-sftp = { version = "3", optional = true }
+russh-sftp = { version = "4", optional = true }
 # russh(SSH)クライアントは非同期(tokio前提)。SMTP/HTTPは同期APIの
 # ままにしつつ、SFTP呼び出し部分だけ内部で使い捨てのtokioランタイムを
 # 起動して同期関数として外へ見せる(呼び出し側APIの一貫性のため)。

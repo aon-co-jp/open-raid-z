@@ -351,10 +351,11 @@ mod fake_sftp_server {
                 return Err(StatusCode::NoSuchFile);
             }
             self.dirs_read.insert(path.clone(), false);
-            Ok(Handle { id, handle: path })
+            Ok(Handle { id, handle: path.into() })
         }
 
-        async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
+        async fn readdir(&mut self, id: u32, handle: russh_sftp::protocol::SftpHandle) -> Result<Name, Self::Error> {
+            let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
             let done = self.dirs_read.get(&handle).copied().unwrap_or(true);
             if done {
                 return Err(StatusCode::Eof);
@@ -411,10 +412,11 @@ mod fake_sftp_server {
             };
 
             self.files.insert(filename.clone(), file);
-            Ok(Handle { id, handle: filename })
+            Ok(Handle { id, handle: filename.into() })
         }
 
-        async fn write(&mut self, id: u32, handle: String, offset: u64, data: Vec<u8>) -> Result<Status, Self::Error> {
+        async fn write(&mut self, id: u32, handle: russh_sftp::protocol::SftpHandle, offset: u64, data: Vec<u8>) -> Result<Status, Self::Error> {
+            let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
             let file = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
             file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| StatusCode::Failure)?;
             file.write_all(&data).await.map_err(|_| StatusCode::Failure)?;
@@ -424,10 +426,11 @@ mod fake_sftp_server {
         async fn read(
             &mut self,
             id: u32,
-            handle: String,
+            handle: russh_sftp::protocol::SftpHandle,
             offset: u64,
             len: u32,
         ) -> Result<russh_sftp::protocol::Data, Self::Error> {
+            let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
             let file = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
             file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| StatusCode::Failure)?;
             let mut buf = vec![0u8; len as usize];
@@ -439,7 +442,8 @@ mod fake_sftp_server {
             Ok(russh_sftp::protocol::Data { id, data: buf })
         }
 
-        async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
+        async fn close(&mut self, id: u32, handle: russh_sftp::protocol::SftpHandle) -> Result<Status, Self::Error> {
+            let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
             self.files.remove(&handle);
             self.dirs_read.remove(&handle);
             Ok(ok_status(id))
