@@ -650,6 +650,26 @@ impl OffsiteBackupTarget for SftpBackupTarget {
             use tokio::io::AsyncWriteExt as _;
 
             let sftp = self.connect_session().await?;
+            // ラベルに`site/相対パス`のようなサブフォルダーが含まれる場合、実SFTPサーバー
+            // (open-web-serverの組み込みSFTP等)は親フォルダーを自動では作らないため、
+            // 先頭から順に`mkdir -p`相当で作る(既に在る場合の失敗は無視する)。
+            // モックのSFTPサーバーは親を自動作成するため、この不足は実サーバー相手の
+            // 通し確認(2026-11-23)で初めて見つかった。
+            {
+                let mut acc = String::new();
+                let parts: Vec<&str> = path.split('/').collect();
+                for part in &parts[..parts.len().saturating_sub(1)] {
+                    if part.is_empty() {
+                        acc.push('/');
+                        continue;
+                    }
+                    if !acc.is_empty() && !acc.ends_with('/') {
+                        acc.push('/');
+                    }
+                    acc.push_str(part);
+                    let _ = sftp.create_dir(acc.clone()).await;
+                }
+            }
             // `SftpSession::write()`(の便利ラッパー)は内部で
             // `AsyncWriteExt::write_all`のみ呼び、書き込み確認応答(ack)の
             // 完了待ち・SSH_FXP_CLOSE送信を行わずに戻ってしまうため、
